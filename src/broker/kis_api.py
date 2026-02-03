@@ -9,12 +9,16 @@ import asyncio
 import hashlib
 import json
 import logging
+import ssl
 import time
 from typing import Any
 
 import aiohttp
 
 from src.config import Settings
+
+# KIS virtual trading server has a known SSL certificate hostname mismatch.
+_KIS_VTS_HOST = "openapivts.koreainvestment.com"
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +63,15 @@ class KISBroker:
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             timeout = aiohttp.ClientTimeout(total=10)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            connector: aiohttp.BaseConnector | None = None
+            if _KIS_VTS_HOST in self._base_url:
+                ssl_ctx = ssl.create_default_context()
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = ssl.CERT_NONE
+                connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+            self._session = aiohttp.ClientSession(
+                timeout=timeout, connector=connector,
+            )
         return self._session
 
     async def close(self) -> None:
