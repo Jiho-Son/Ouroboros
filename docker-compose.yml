@@ -1,0 +1,30 @@
+services:
+  ouroboros:
+    build:
+      context: .
+      target: production
+    container_name: ouroboros
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - trade_data:/app/data
+    command: ["--mode=paper"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Run tests (one-shot)
+  test:
+    build:
+      context: .
+      target: base
+    container_name: ouroboros-test
+    command: ["pytest", "-v", "--cov=src", "--cov-report=term-missing"]
+    profiles:
+      - test
+
+volumes:
+  trade_data:

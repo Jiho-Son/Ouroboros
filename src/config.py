@@ -1,0 +1,44 @@
+"""Strictly typed configuration loaded from environment variables."""
+
+from __future__ import annotations
+
+from pydantic import Field
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    """Application settings — loaded from .env or environment variables."""
+
+    # KIS Open API
+    KIS_APP_KEY: str
+    KIS_APP_SECRET: str
+    KIS_ACCOUNT_NO: str  # format: "XXXXXXXX-XX"
+    KIS_BASE_URL: str = "https://openapivts.koreainvestment.com:9443"
+
+    # Google Gemini
+    GEMINI_API_KEY: str
+    GEMINI_MODEL: str = "gemini-pro"
+
+    # Risk Management
+    CIRCUIT_BREAKER_PCT: float = Field(default=-3.0, le=0.0)
+    FAT_FINGER_PCT: float = Field(default=30.0, gt=0.0, le=100.0)
+    CONFIDENCE_THRESHOLD: int = Field(default=80, ge=0, le=100)
+
+    # Database
+    DB_PATH: str = "data/trade_logs.db"
+
+    # Rate Limiting (requests per second for KIS API)
+    RATE_LIMIT_RPS: float = 10.0
+
+    # Trading mode
+    MODE: str = Field(default="paper", pattern="^(paper|live)$")
+
+    model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
+
+    @property
+    def account_number(self) -> str:
+        return self.KIS_ACCOUNT_NO.split("-")[0]
+
+    @property
+    def account_product_code(self) -> str:
+        return self.KIS_ACCOUNT_NO.split("-")[1]
