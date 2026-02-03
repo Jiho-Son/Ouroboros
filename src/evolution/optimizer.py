@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import google.generativeai as genai
+from google import genai
 
 from src.config import Settings
 
@@ -51,8 +51,8 @@ class EvolutionOptimizer:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._db_path = settings.DB_PATH
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        self._model = genai.GenerativeModel(settings.GEMINI_MODEL)
+        self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        self._model_name = settings.GEMINI_MODEL
 
     # ------------------------------------------------------------------
     # Analysis
@@ -122,7 +122,9 @@ class EvolutionOptimizer:
         )
 
         try:
-            response = await self._model.generate_content_async(prompt)
+            response = await self._client.aio.models.generate_content(
+                model=self._model_name, contents=prompt,
+            )
             body = response.text.strip()
         except Exception as exc:
             logger.error("Failed to generate strategy: %s", exc)

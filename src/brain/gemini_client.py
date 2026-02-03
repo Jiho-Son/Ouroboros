@@ -12,7 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-import google.generativeai as genai
+from google import genai
 
 from src.config import Settings
 
@@ -36,8 +36,8 @@ class GeminiClient:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._confidence_threshold = settings.CONFIDENCE_THRESHOLD
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-        self._model = genai.GenerativeModel(settings.GEMINI_MODEL)
+        self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        self._model_name = settings.GEMINI_MODEL
 
     # ------------------------------------------------------------------
     # Prompt Construction
@@ -133,7 +133,9 @@ class GeminiClient:
         logger.info("Requesting trade decision from Gemini")
 
         try:
-            response = await self._model.generate_content_async(prompt)
+            response = await self._client.aio.models.generate_content(
+                model=self._model_name, contents=prompt,
+            )
             raw = response.text
         except Exception as exc:
             logger.error("Gemini API error: %s", exc)

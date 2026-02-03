@@ -35,6 +35,7 @@ RUN mkdir -p data
 
 # Non-root user
 RUN useradd --create-home appuser
+RUN chown appuser:appuser data
 USER appuser
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

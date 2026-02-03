@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 
 def init_db(db_path: str) -> sqlite3.Connection:
     """Initialize the trade logs database and return a connection."""
+    if db_path != ":memory:":
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.execute(
         """
