@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git Workflow Policy
+
+**CRITICAL: All code changes MUST follow this workflow. Direct pushes to `main` are ABSOLUTELY PROHIBITED.**
+
+1. **Create Gitea Issue First** — All features, bug fixes, and policy changes require a Gitea issue before any code is written
+2. **Create Feature Branch** — Branch from `main` using format `feature/issue-{N}-{short-description}`
+3. **Implement Changes** — Write code, tests, and documentation on the feature branch
+4. **Create Pull Request** — Submit PR to `main` branch referencing the issue number
+5. **Review & Merge** — After approval, merge via PR (squash or merge commit)
+
+**Never commit directly to `main`.** This policy applies to all changes, no exceptions.
+
 ## Build & Test Commands
 
 ```bash
