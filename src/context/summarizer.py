@@ -176,9 +176,6 @@ class ContextSummarizer:
         Returns:
             Dictionary with recent (detailed) and historical (summary) data
         """
-        now = datetime.now(UTC)
-        cutoff = now - timedelta(days=window_days)
-
         result: dict[str, Any] = {
             "window_days": window_days,
             "recent_data": {},

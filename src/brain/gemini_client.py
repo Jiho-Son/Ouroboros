@@ -19,9 +19,9 @@ from typing import Any
 
 from google import genai
 
-from src.config import Settings
 from src.brain.cache import DecisionCache
 from src.brain.prompt_optimizer import PromptOptimizer
+from src.config import Settings
 
 logger = logging.getLogger(__name__)
 

@@ -14,7 +14,6 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-
 # Abbreviation mapping for common terms
 ABBREVIATIONS = {
     "price": "P",

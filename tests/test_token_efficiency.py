@@ -12,18 +12,16 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from src.brain.cache import CacheMetrics, DecisionCache
+from src.brain.cache import DecisionCache
 from src.brain.context_selector import ContextSelector, DecisionType
 from src.brain.gemini_client import TradeDecision
 from src.brain.prompt_optimizer import PromptOptimizer, TokenMetrics
 from src.context.layer import ContextLayer
 from src.context.store import ContextStore
 from src.context.summarizer import ContextSummarizer, SummaryStats
-
 
 # ============================================================================
 # Prompt Optimizer Tests
@@ -294,7 +292,7 @@ class TestContextSelector:
         # Should only select high-relevance layers
         assert len(selection.layers) >= 1
         assert ContextLayer.L7_REALTIME in selection.layers
-        assert all(selection.relevance_scores[l] >= 0.5 for l in selection.layers)
+        assert all(selection.relevance_scores[layer] >= 0.5 for layer in selection.layers)
 
     def test_get_context_data(self, store):
         """Test context data retrieval."""

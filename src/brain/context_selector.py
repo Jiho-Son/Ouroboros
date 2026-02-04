@@ -191,7 +191,7 @@ class ContextSelector:
         selected_layers = [layer for layer, score in scores.items() if score >= min_score]
 
         # Sort by score (descending)
-        selected_layers.sort(key=lambda l: scores[l], reverse=True)
+        selected_layers.sort(key=lambda layer: scores[layer], reverse=True)
 
         total_score = sum(scores[layer] for layer in selected_layers)
 
