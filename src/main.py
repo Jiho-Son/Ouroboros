@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import logging
 import signal
+import sys
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,11 +24,12 @@ from src.context.layer import ContextLayer
 from src.context.store import ContextStore
 from src.core.criticality import CriticalityAssessor
 from src.core.priority_queue import PriorityTaskQueue
-from src.core.risk_manager import CircuitBreakerTripped, RiskManager
+from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
 from src.db import init_db, log_trade
 from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
 from src.markets.schedule import MarketInfo, get_next_market_open, get_open_markets
+from src.notifications.telegram_client import TelegramClient
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +64,7 @@ async def trading_cycle(
     decision_logger: DecisionLogger,
     context_store: ContextStore,
     criticality_assessor: CriticalityAssessor,
+    telegram: TelegramClient,
     market: MarketInfo,
     stock_code: str,
 ) -> None:
@@ -199,11 +202,23 @@ async def trading_cycle(
         order_amount = current_price * quantity
 
         # 4. Risk check BEFORE order
-        risk.validate_order(
-            current_pnl_pct=pnl_pct,
-            order_amount=order_amount,
-            total_cash=total_cash,
-        )
+        try:
+            risk.validate_order(
+                current_pnl_pct=pnl_pct,
+                order_amount=order_amount,
+                total_cash=total_cash,
+            )
+        except FatFingerRejected as exc:
+            try:
+                await telegram.notify_fat_finger(
+                    stock_code=stock_code,
+                    order_amount=exc.order_amount,
+                    total_cash=exc.total_cash,
+                    max_pct=exc.max_pct,
+                )
+            except Exception as notify_exc:
+                logger.warning("Fat finger notification failed: %s", notify_exc)
+            raise  # Re-raise to prevent trade
 
         # 5. Send order
         if market.is_domestic:
@@ -222,6 +237,19 @@ async def trading_cycle(
                 price=0.0,  # market order
             )
         logger.info("Order result: %s", result.get("msg1", "OK"))
+
+        # 5.5. Notify trade execution
+        try:
+            await telegram.notify_trade_execution(
+                stock_code=stock_code,
+                market=market.name,
+                action=decision.action,
+                quantity=quantity,
+                price=current_price,
+                confidence=decision.confidence,
+            )
+        except Exception as exc:
+            logger.warning("Telegram notification failed: %s", exc)
 
     # 6. Log trade
     log_trade(
@@ -266,6 +294,13 @@ async def run(settings: Settings) -> None:
     decision_logger = DecisionLogger(db_conn)
     context_store = ContextStore(db_conn)
 
+    # Initialize Telegram notifications
+    telegram = TelegramClient(
+        bot_token=settings.TELEGRAM_BOT_TOKEN,
+        chat_id=settings.TELEGRAM_CHAT_ID,
+        enabled=settings.TELEGRAM_ENABLED,
+    )
+
     # Initialize volatility hunter
     volatility_analyzer = VolatilityAnalyzer(min_volume_surge=2.0, min_price_change=1.0)
     market_scanner = MarketScanner(
@@ -289,6 +324,9 @@ async def run(settings: Settings) -> None:
     # Track last scan time for each market
     last_scan_time: dict[str, float] = {}
 
+    # Track market open/close state for notifications
+    _market_states: dict[str, bool] = {}  # market_code -> is_open
+
     shutdown = asyncio.Event()
 
     def _signal_handler() -> None:
@@ -302,12 +340,31 @@ async def run(settings: Settings) -> None:
     logger.info("The Ouroboros is alive. Mode: %s", settings.MODE)
     logger.info("Enabled markets: %s", settings.enabled_market_list)
 
+    # Notify system startup
+    try:
+        await telegram.notify_system_start(settings.MODE, settings.enabled_market_list)
+    except Exception as exc:
+        logger.warning("System startup notification failed: %s", exc)
+
     try:
         while not shutdown.is_set():
             # Get currently open markets
             open_markets = get_open_markets(settings.enabled_market_list)
 
             if not open_markets:
+                # Notify market close for any markets that were open
+                for market_code, is_open in list(_market_states.items()):
+                    if is_open:
+                        try:
+                            from src.markets.schedule import MARKETS
+
+                            market_info = MARKETS.get(market_code)
+                            if market_info:
+                                await telegram.notify_market_close(market_info.name, 0.0)
+                        except Exception as exc:
+                            logger.warning("Market close notification failed: %s", exc)
+                        _market_states[market_code] = False
+
                 # No markets open — wait until next market opens
                 try:
                     next_market, next_open_time = get_next_market_open(
@@ -332,6 +389,14 @@ async def run(settings: Settings) -> None:
             for market in open_markets:
                 if shutdown.is_set():
                     break
+
+                # Notify market open if it just opened
+                if not _market_states.get(market.code, False):
+                    try:
+                        await telegram.notify_market_open(market.name)
+                    except Exception as exc:
+                        logger.warning("Market open notification failed: %s", exc)
+                    _market_states[market.code] = True
 
                 # Volatility Hunter: Scan market periodically to update watchlist
                 now_timestamp = asyncio.get_event_loop().time()
@@ -391,12 +456,22 @@ async def run(settings: Settings) -> None:
                                 decision_logger,
                                 context_store,
                                 criticality_assessor,
+                                telegram,
                                 market,
                                 stock_code,
                             )
                             break  # Success — exit retry loop
-                        except CircuitBreakerTripped:
+                        except CircuitBreakerTripped as exc:
                             logger.critical("Circuit breaker tripped — shutting down")
+                            try:
+                                await telegram.notify_circuit_breaker(
+                                    pnl_pct=exc.pnl_pct,
+                                    threshold=exc.threshold,
+                                )
+                            except Exception as notify_exc:
+                                logger.warning(
+                                    "Circuit breaker notification failed: %s", notify_exc
+                                )
                             raise
                         except ConnectionError as exc:
                             if attempt < MAX_CONNECTION_RETRIES:
