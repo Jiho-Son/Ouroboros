@@ -126,7 +126,7 @@ class TestPromptConstruction:
             "orderbook": {"asks": [], "bids": []},
             "foreigner_net": -50000,
         }
-        prompt = client.build_prompt(market_data)
+        prompt = client.build_prompt_sync(market_data)
         assert "005930" in prompt
 
     def test_prompt_contains_price(self, settings):
@@ -137,7 +137,7 @@ class TestPromptConstruction:
             "orderbook": {"asks": [], "bids": []},
             "foreigner_net": -50000,
         }
-        prompt = client.build_prompt(market_data)
+        prompt = client.build_prompt_sync(market_data)
         assert "72000" in prompt
 
     def test_prompt_enforces_json_output_format(self, settings):
@@ -148,7 +148,7 @@ class TestPromptConstruction:
             "orderbook": {"asks": [], "bids": []},
             "foreigner_net": 0,
         }
-        prompt = client.build_prompt(market_data)
+        prompt = client.build_prompt_sync(market_data)
         assert "JSON" in prompt
         assert "action" in prompt
         assert "confidence" in prompt

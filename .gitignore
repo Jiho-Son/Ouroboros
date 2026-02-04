@@ -174,4 +174,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+# Data files (trade logs, databases)
+# But NOT src/data/ which contains source code
 data/
+!src/data/
