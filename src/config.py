@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     S3_BUCKET_NAME: str | None = None
     S3_REGION: str = "us-east-1"
 
+    # Telegram Notifications (optional)
+    TELEGRAM_BOT_TOKEN: str | None = None
+    TELEGRAM_CHAT_ID: str | None = None
+    TELEGRAM_ENABLED: bool = True
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @property
