@@ -19,7 +19,10 @@ from src.brain.gemini_client import GeminiClient
 from src.broker.kis_api import KISBroker
 from src.broker.overseas import OverseasBroker
 from src.config import Settings
+from src.context.layer import ContextLayer
 from src.context.store import ContextStore
+from src.core.criticality import CriticalityAssessor, CriticalityLevel
+from src.core.priority_queue import PriorityTaskQueue
 from src.core.risk_manager import CircuitBreakerTripped, RiskManager
 from src.db import init_db, log_trade
 from src.logging.decision_logger import DecisionLogger
@@ -57,10 +60,14 @@ async def trading_cycle(
     risk: RiskManager,
     db_conn: Any,
     decision_logger: DecisionLogger,
+    context_store: ContextStore,
+    criticality_assessor: CriticalityAssessor,
     market: MarketInfo,
     stock_code: str,
 ) -> None:
     """Execute one trading cycle for a single stock."""
+    cycle_start_time = asyncio.get_event_loop().time()
+
     # 1. Fetch market data
     if market.is_domestic:
         orderbook = await broker.get_orderbook(stock_code)
@@ -105,6 +112,42 @@ async def trading_cycle(
         "current_price": current_price,
         "foreigner_net": foreigner_net,
     }
+
+    # 1.5. Get volatility metrics from context store (L7_REALTIME)
+    latest_timeframe = context_store.get_latest_timeframe(ContextLayer.L7_REALTIME)
+    volatility_score = 50.0  # Default normal volatility
+    volume_surge = 1.0
+    price_change_1m = 0.0
+
+    if latest_timeframe:
+        volatility_data = context_store.get_context(
+            ContextLayer.L7_REALTIME,
+            latest_timeframe,
+            f"volatility_{stock_code}",
+        )
+        if volatility_data:
+            volatility_score = volatility_data.get("momentum_score", 50.0)
+            volume_surge = volatility_data.get("volume_surge", 1.0)
+            price_change_1m = volatility_data.get("price_change_1m", 0.0)
+
+    # 1.6. Assess criticality based on market conditions
+    criticality = criticality_assessor.assess_market_conditions(
+        pnl_pct=pnl_pct,
+        volatility_score=volatility_score,
+        volume_surge=volume_surge,
+        price_change_1m=price_change_1m,
+        is_market_open=True,
+    )
+
+    logger.info(
+        "Criticality for %s (%s): %s (pnl=%.2f%%, volatility=%.1f, volume_surge=%.1fx)",
+        stock_code,
+        market.name,
+        criticality.value,
+        pnl_pct,
+        volatility_score,
+        volume_surge,
+    )
 
     # 2. Ask the brain for a decision
     decision = await brain.decide(market_data)
@@ -191,6 +234,27 @@ async def trading_cycle(
         exchange_code=market.exchange_code,
     )
 
+    # 7. Latency monitoring
+    cycle_end_time = asyncio.get_event_loop().time()
+    cycle_latency = cycle_end_time - cycle_start_time
+    timeout = criticality_assessor.get_timeout(criticality)
+
+    if timeout and cycle_latency > timeout:
+        logger.warning(
+            "Trading cycle exceeded timeout for %s (criticality=%s, latency=%.2fs, timeout=%.2fs)",
+            stock_code,
+            criticality.value,
+            cycle_latency,
+            timeout,
+        )
+    else:
+        logger.debug(
+            "Trading cycle completed within timeout for %s (criticality=%s, latency=%.2fs)",
+            stock_code,
+            criticality.value,
+            cycle_latency,
+        )
+
 
 async def run(settings: Settings) -> None:
     """Main async loop — iterate over open markets on a timer."""
@@ -211,6 +275,16 @@ async def run(settings: Settings) -> None:
         context_store=context_store,
         top_n=5,
     )
+
+    # Initialize latency control system
+    criticality_assessor = CriticalityAssessor(
+        critical_pnl_threshold=-2.5,  # Near circuit breaker at -3.0%
+        critical_price_change_threshold=5.0,  # 5% in 1 minute
+        critical_volume_surge_threshold=10.0,  # 10x average
+        high_volatility_threshold=70.0,
+        low_volatility_threshold=30.0,
+    )
+    priority_queue = PriorityTaskQueue(max_size=1000)
 
     # Track last scan time for each market
     last_scan_time: dict[str, float] = {}
@@ -315,6 +389,8 @@ async def run(settings: Settings) -> None:
                                 risk,
                                 db_conn,
                                 decision_logger,
+                                context_store,
+                                criticality_assessor,
                                 market,
                                 stock_code,
                             )
@@ -342,6 +418,18 @@ async def run(settings: Settings) -> None:
                         except Exception as exc:
                             logger.exception("Unexpected error for %s: %s", stock_code, exc)
                             break  # Don't retry on unexpected errors
+
+            # Log priority queue metrics periodically
+            metrics = await priority_queue.get_metrics()
+            if metrics.total_enqueued > 0:
+                logger.info(
+                    "Priority queue metrics: enqueued=%d, dequeued=%d, size=%d, timeouts=%d, errors=%d",
+                    metrics.total_enqueued,
+                    metrics.total_dequeued,
+                    metrics.current_size,
+                    metrics.total_timeouts,
+                    metrics.total_errors,
+                )
 
             # Wait for next cycle or shutdown
             try:
