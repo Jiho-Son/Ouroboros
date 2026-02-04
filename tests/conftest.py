@@ -20,4 +20,5 @@ def settings() -> Settings:
         FAT_FINGER_PCT=30.0,
         CONFIDENCE_THRESHOLD=80,
         DB_PATH=":memory:",
+        ENABLED_MARKETS="KR",
     )

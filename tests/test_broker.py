@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import aiohttp
 import pytest
 
 from src.broker.kis_api import KISBroker
-
 
 # ---------------------------------------------------------------------------
 # Token Management
@@ -68,7 +66,7 @@ class TestNetworkErrorHandling:
 
         with patch(
             "aiohttp.ClientSession.get",
-            side_effect=asyncio.TimeoutError(),
+            side_effect=TimeoutError(),
         ):
             with pytest.raises(ConnectionError):
                 await broker.get_orderbook("005930")

@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # Trading mode
     MODE: str = Field(default="paper", pattern="^(paper|live)$")
 
+    # Market selection (comma-separated market codes)
+    ENABLED_MARKETS: str = "KR"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @property
@@ -42,3 +45,8 @@ class Settings(BaseSettings):
     @property
     def account_product_code(self) -> str:
         return self.KIS_ACCOUNT_NO.split("-")[1]
+
+    @property
+    def enabled_market_list(self) -> list[str]:
+        """Parse ENABLED_MARKETS into list of market codes."""
+        return [m.strip() for m in self.ENABLED_MARKETS.split(",") if m.strip()]

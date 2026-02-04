@@ -7,7 +7,6 @@ Changes require human approval and two passing test suites.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 
 from src.config import Settings
 
