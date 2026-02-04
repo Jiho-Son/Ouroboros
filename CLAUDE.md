@@ -14,6 +14,68 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Never commit directly to `main`.** This policy applies to all changes, no exceptions.
 
+## Agent Workflow
+
+**Modern AI development leverages specialized agents for concurrent, efficient task execution.**
+
+### Parallel Execution Strategy
+
+Use **git worktree** or **subagents** (via the Task tool) to handle multiple requirements simultaneously:
+
+- Each task runs in independent context
+- Parallel branches for concurrent features
+- Isolated test environments prevent interference
+- Faster iteration with distributed workload
+
+### Specialized Agent Roles
+
+Deploy task-specific agents as needed instead of handling everything in the main conversation:
+
+- **Conversational Agent** (main) — Interface with user, coordinate other agents
+- **Ticket Management Agent** — Create/update Gitea issues, track task status
+- **Design Agent** — Architectural planning, RFC documents, API design
+- **Code Writing Agent** — Implementation following specs
+- **Testing Agent** — Write tests, verify coverage, run test suites
+- **Documentation Agent** — Update docs, docstrings, CLAUDE.md, README
+- **Review Agent** — Code review, lint checks, security audits
+- **Custom Agents** — Created dynamically for specialized tasks (performance analysis, migration scripts, etc.)
+
+### When to Use Agents
+
+**Prefer spawning specialized agents for:**
+
+1. Complex multi-file changes requiring exploration
+2. Tasks with clear, isolated scope (e.g., "write tests for module X")
+3. Parallel work streams (feature A + bugfix B simultaneously)
+4. Long-running analysis (codebase search, dependency audit)
+5. Tasks requiring different contexts (multiple git worktrees)
+
+**Use the main conversation for:**
+
+1. User interaction and clarification
+2. Quick single-file edits
+3. Coordinating agent work
+4. High-level decision making
+
+### Implementation
+
+```python
+# Example: Spawn parallel test and documentation agents
+task_tool(
+    subagent_type="general-purpose",
+    prompt="Write comprehensive tests for src/markets/schedule.py",
+    description="Write schedule tests"
+)
+
+task_tool(
+    subagent_type="general-purpose",
+    prompt="Update README.md with global market feature documentation",
+    description="Update README"
+)
+```
+
+Use `run_in_background=True` for independent tasks that don't block subsequent work.
+
 ## Build & Test Commands
 
 ```bash
@@ -72,8 +134,9 @@ Pydantic Settings loaded from `.env` (see `.env.example`). Required vars: `KIS_A
 
 ## Test Structure
 
-35 tests across three files. `asyncio_mode = "auto"` in pyproject.toml — async tests need no special decorator. The `settings` fixture in `conftest.py` provides safe defaults with test credentials and in-memory DB.
+54 tests across four files. `asyncio_mode = "auto"` in pyproject.toml — async tests need no special decorator. The `settings` fixture in `conftest.py` provides safe defaults with test credentials and in-memory DB.
 
 - `test_risk.py` (11) — Circuit breaker boundaries, fat-finger edge cases
 - `test_broker.py` (6) — Token lifecycle, rate limiting, hash keys, network errors
 - `test_brain.py` (18) — JSON parsing, confidence threshold, malformed responses, prompt construction
+- `test_market_schedule.py` (19) — Market open/close logic, timezone handling, DST, lunch breaks
