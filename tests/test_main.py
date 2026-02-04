@@ -6,7 +6,43 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
-from src.main import trading_cycle
+from src.main import safe_float, trading_cycle
+
+
+class TestSafeFloat:
+    """Test safe_float() helper function."""
+
+    def test_converts_valid_string(self):
+        """Test conversion of valid numeric string."""
+        assert safe_float("123.45") == 123.45
+        assert safe_float("0") == 0.0
+        assert safe_float("-99.9") == -99.9
+
+    def test_handles_empty_string(self):
+        """Test empty string returns default."""
+        assert safe_float("") == 0.0
+        assert safe_float("", 99.0) == 99.0
+
+    def test_handles_none(self):
+        """Test None returns default."""
+        assert safe_float(None) == 0.0
+        assert safe_float(None, 42.0) == 42.0
+
+    def test_handles_invalid_string(self):
+        """Test invalid string returns default."""
+        assert safe_float("invalid") == 0.0
+        assert safe_float("not_a_number", 100.0) == 100.0
+        assert safe_float("12.34.56") == 0.0
+
+    def test_handles_float_input(self):
+        """Test float input passes through."""
+        assert safe_float(123.45) == 123.45
+        assert safe_float(0.0) == 0.0
+
+    def test_custom_default(self):
+        """Test custom default value."""
+        assert safe_float("", -1.0) == -1.0
+        assert safe_float(None, 999.0) == 999.0
 
 
 class TestTradingCycleTelegramIntegration:
