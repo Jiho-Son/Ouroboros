@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     NEWS_API_PROVIDER: str = "alphavantage"  # "alphavantage" or "newsapi"
     MARKET_DATA_API_KEY: str | None = None
 
+    # Legacy field names (for backward compatibility)
+    ALPHA_VANTAGE_API_KEY: str | None = None
+    NEWSAPI_KEY: str | None = None
+
     # Risk Management
     CIRCUIT_BREAKER_PCT: float = Field(default=-3.0, le=0.0)
     FAT_FINGER_PCT: float = Field(default=30.0, gt=0.0, le=100.0)
