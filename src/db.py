@@ -55,6 +55,28 @@ def init_db(db_path: str) -> sqlite3.Connection:
         """
     )
 
+    # Decision logging table for comprehensive audit trail
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS decision_logs (
+            decision_id TEXT PRIMARY KEY,
+            timestamp TEXT NOT NULL,
+            stock_code TEXT NOT NULL,
+            market TEXT NOT NULL,
+            exchange_code TEXT NOT NULL,
+            action TEXT NOT NULL,
+            confidence INTEGER NOT NULL,
+            rationale TEXT NOT NULL,
+            context_snapshot TEXT NOT NULL,
+            input_data TEXT NOT NULL,
+            outcome_pnl REAL,
+            outcome_accuracy INTEGER,
+            reviewed INTEGER DEFAULT 0,
+            review_notes TEXT
+        )
+        """
+    )
+
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS context_metadata (
@@ -71,6 +93,16 @@ def init_db(db_path: str) -> sqlite3.Connection:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_contexts_timeframe ON contexts(timeframe)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_contexts_updated ON contexts(updated_at)")
 
+    # Create indices for efficient decision log queries
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_decision_logs_timestamp ON decision_logs(timestamp)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_decision_logs_reviewed ON decision_logs(reviewed)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_decision_logs_confidence ON decision_logs(confidence)"
+    )
     conn.commit()
     return conn
 
