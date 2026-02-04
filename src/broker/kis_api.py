@@ -56,6 +56,8 @@ class KISBroker:
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
         self._token_lock = asyncio.Lock()
+        self._last_refresh_attempt: float = 0.0
+        self._refresh_cooldown: float = 60.0  # Seconds (matches KIS 1/minute limit)
         self._rate_limiter = LeakyBucket(settings.RATE_LIMIT_RPS)
 
     def _get_session(self) -> aiohttp.ClientSession:
@@ -98,7 +100,19 @@ class KISBroker:
             if self._access_token and now < self._token_expires_at:
                 return self._access_token
 
+            # Check cooldown period (prevents hitting EGW00133: 1/minute limit)
+            time_since_last_attempt = now - self._last_refresh_attempt
+            if time_since_last_attempt < self._refresh_cooldown:
+                remaining = self._refresh_cooldown - time_since_last_attempt
+                error_msg = (
+                    f"Token refresh on cooldown. "
+                    f"Retry in {remaining:.1f}s (KIS allows 1/minute)"
+                )
+                logger.warning(error_msg)
+                raise ConnectionError(error_msg)
+
             logger.info("Refreshing KIS access token")
+            self._last_refresh_attempt = now
             session = self._get_session()
             url = f"{self._base_url}/oauth2/tokenP"
             body = {
