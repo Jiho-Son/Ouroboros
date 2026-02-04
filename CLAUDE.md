@@ -22,6 +22,7 @@ python -m src.main --mode=paper
 - **[Workflow Guide](docs/workflow.md)** — Git workflow policy and agent-based development
 - **[Command Reference](docs/commands.md)** — Common failures, build commands, troubleshooting
 - **[Architecture](docs/architecture.md)** — System design, components, data flow
+- **[Context Tree](docs/context-tree.md)** — L1-L7 hierarchical memory system
 - **[Testing](docs/testing.md)** — Test structure, coverage requirements, writing tests
 - **[Agent Policies](docs/agents.md)** — Prime directives, constraints, prohibited actions
 

@@ -39,6 +39,38 @@ def init_db(db_path: str) -> sqlite3.Connection:
     if "exchange_code" not in columns:
         conn.execute("ALTER TABLE trades ADD COLUMN exchange_code TEXT DEFAULT 'KRX'")
 
+    # Context tree tables for multi-layered memory management
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS contexts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            layer TEXT NOT NULL,
+            timeframe TEXT NOT NULL,
+            key TEXT NOT NULL,
+            value TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(layer, timeframe, key)
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS context_metadata (
+            layer TEXT PRIMARY KEY,
+            description TEXT NOT NULL,
+            retention_days INTEGER,
+            aggregation_source TEXT
+        )
+        """
+    )
+
+    # Create indices for efficient context queries
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_contexts_layer ON contexts(layer)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_contexts_timeframe ON contexts(timeframe)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_contexts_updated ON contexts(updated_at)")
+
     conn.commit()
     return conn
 
