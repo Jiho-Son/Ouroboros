@@ -45,6 +45,15 @@ class Settings(BaseSettings):
     # Market selection (comma-separated market codes)
     ENABLED_MARKETS: str = "KR"
 
+    # Backup and Disaster Recovery (optional)
+    BACKUP_ENABLED: bool = True
+    BACKUP_DIR: str = "data/backups"
+    S3_ENDPOINT_URL: str | None = None  # For MinIO, Backblaze B2, etc.
+    S3_ACCESS_KEY: str | None = None
+    S3_SECRET_KEY: str | None = None
+    S3_BUCKET_NAME: str | None = None
+    S3_REGION: str = "us-east-1"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @property
