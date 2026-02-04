@@ -341,3 +341,221 @@ class TestRunFunctionTelegramIntegration:
             pnl_pct=-3.5,
             threshold=-3.0,
         )
+
+
+class TestOverseasBalanceParsing:
+    """Test overseas balance output2 parsing handles different formats."""
+
+    @pytest.fixture
+    def mock_overseas_broker_with_list(self) -> MagicMock:
+        """Create mock overseas broker returning list format."""
+        broker = MagicMock()
+        broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "150.50"}}
+        )
+        broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output2": [
+                    {
+                        "frcr_evlu_tota": "10000.00",
+                        "frcr_dncl_amt_2": "5000.00",
+                        "frcr_buy_amt_smtl": "4500.00",
+                    }
+                ]
+            }
+        )
+        return broker
+
+    @pytest.fixture
+    def mock_overseas_broker_with_dict(self) -> MagicMock:
+        """Create mock overseas broker returning dict format."""
+        broker = MagicMock()
+        broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "150.50"}}
+        )
+        broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output2": {
+                    "frcr_evlu_tota": "10000.00",
+                    "frcr_dncl_amt_2": "5000.00",
+                    "frcr_buy_amt_smtl": "4500.00",
+                }
+            }
+        )
+        return broker
+
+    @pytest.fixture
+    def mock_overseas_broker_with_empty(self) -> MagicMock:
+        """Create mock overseas broker returning empty output2."""
+        broker = MagicMock()
+        broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "150.50"}}
+        )
+        broker.get_overseas_balance = AsyncMock(return_value={"output2": []})
+        return broker
+
+    @pytest.fixture
+    def mock_domestic_broker(self) -> MagicMock:
+        """Create minimal mock domestic broker."""
+        broker = MagicMock()
+        return broker
+
+    @pytest.fixture
+    def mock_overseas_market(self) -> MagicMock:
+        """Create mock overseas market info."""
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+        return market
+
+    @pytest.fixture
+    def mock_brain_hold(self) -> MagicMock:
+        """Create mock brain that always holds."""
+        brain = MagicMock()
+        decision = MagicMock()
+        decision.action = "HOLD"
+        decision.confidence = 50
+        decision.rationale = "Testing balance parsing"
+        brain.decide = AsyncMock(return_value=decision)
+        return brain
+
+    @pytest.fixture
+    def mock_risk(self) -> MagicMock:
+        """Create mock risk manager."""
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_db(self) -> MagicMock:
+        """Create mock database."""
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_decision_logger(self) -> MagicMock:
+        """Create mock decision logger."""
+        return MagicMock()
+
+    @pytest.fixture
+    def mock_context_store(self) -> MagicMock:
+        """Create mock context store."""
+        store = MagicMock()
+        store.get_latest_timeframe = MagicMock(return_value=None)
+        return store
+
+    @pytest.fixture
+    def mock_criticality_assessor(self) -> MagicMock:
+        """Create mock criticality assessor."""
+        assessor = MagicMock()
+        assessor.assess_market_conditions = MagicMock(
+            return_value=MagicMock(value="NORMAL")
+        )
+        assessor.get_timeout = MagicMock(return_value=5.0)
+        return assessor
+
+    @pytest.fixture
+    def mock_telegram(self) -> MagicMock:
+        """Create mock telegram client."""
+        return MagicMock()
+
+    @pytest.mark.asyncio
+    async def test_overseas_balance_list_format(
+        self,
+        mock_domestic_broker: MagicMock,
+        mock_overseas_broker_with_list: MagicMock,
+        mock_brain_hold: MagicMock,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """Test overseas balance parsing with list format (output2=[{...}])."""
+        with patch("src.main.log_trade"):
+            # Should not raise KeyError
+            await trading_cycle(
+                broker=mock_domestic_broker,
+                overseas_broker=mock_overseas_broker_with_list,
+                brain=mock_brain_hold,
+                risk=mock_risk,
+                db_conn=mock_db,
+                decision_logger=mock_decision_logger,
+                context_store=mock_context_store,
+                criticality_assessor=mock_criticality_assessor,
+                telegram=mock_telegram,
+                market=mock_overseas_market,
+                stock_code="AAPL",
+            )
+
+        # Verify balance API was called
+        mock_overseas_broker_with_list.get_overseas_balance.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_overseas_balance_dict_format(
+        self,
+        mock_domestic_broker: MagicMock,
+        mock_overseas_broker_with_dict: MagicMock,
+        mock_brain_hold: MagicMock,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """Test overseas balance parsing with dict format (output2={...})."""
+        with patch("src.main.log_trade"):
+            # Should not raise KeyError
+            await trading_cycle(
+                broker=mock_domestic_broker,
+                overseas_broker=mock_overseas_broker_with_dict,
+                brain=mock_brain_hold,
+                risk=mock_risk,
+                db_conn=mock_db,
+                decision_logger=mock_decision_logger,
+                context_store=mock_context_store,
+                criticality_assessor=mock_criticality_assessor,
+                telegram=mock_telegram,
+                market=mock_overseas_market,
+                stock_code="AAPL",
+            )
+
+        # Verify balance API was called
+        mock_overseas_broker_with_dict.get_overseas_balance.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_overseas_balance_empty_format(
+        self,
+        mock_domestic_broker: MagicMock,
+        mock_overseas_broker_with_empty: MagicMock,
+        mock_brain_hold: MagicMock,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """Test overseas balance parsing with empty output2."""
+        with patch("src.main.log_trade"):
+            # Should not raise KeyError, should default to 0
+            await trading_cycle(
+                broker=mock_domestic_broker,
+                overseas_broker=mock_overseas_broker_with_empty,
+                brain=mock_brain_hold,
+                risk=mock_risk,
+                db_conn=mock_db,
+                decision_logger=mock_decision_logger,
+                context_store=mock_context_store,
+                criticality_assessor=mock_criticality_assessor,
+                telegram=mock_telegram,
+                market=mock_overseas_market,
+                stock_code="AAPL",
+            )
+
+        # Verify balance API was called
+        mock_overseas_broker_with_empty.get_overseas_balance.assert_called_once()
