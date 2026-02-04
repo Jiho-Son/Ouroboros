@@ -549,7 +549,9 @@ async def run(settings: Settings) -> None:
             except TimeoutError:
                 pass  # Normal — timeout means it's time for next cycle
     finally:
+        # Clean up resources
         await broker.close()
+        await telegram.close()
         db_conn.close()
         logger.info("The Ouroboros rests.")
 
