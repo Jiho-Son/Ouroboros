@@ -95,9 +95,17 @@ async def trading_cycle(
         balance_data = await overseas_broker.get_overseas_balance(market.exchange_code)
 
         output2 = balance_data.get("output2", [{}])
-        total_eval = float(output2[0].get("frcr_evlu_tota", "0")) if output2 else 0
-        total_cash = float(output2[0].get("frcr_dncl_amt_2", "0")) if output2 else 0
-        purchase_total = float(output2[0].get("frcr_buy_amt_smtl", "0")) if output2 else 0
+        # Handle both list and dict response formats
+        if isinstance(output2, list) and output2:
+            balance_info = output2[0]
+        elif isinstance(output2, dict):
+            balance_info = output2
+        else:
+            balance_info = {}
+
+        total_eval = float(balance_info.get("frcr_evlu_tota", "0") or "0")
+        total_cash = float(balance_info.get("frcr_dncl_amt_2", "0") or "0")
+        purchase_total = float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
 
         current_price = float(price_data.get("output", {}).get("last", "0"))
         foreigner_net = 0.0  # Not available for overseas
