@@ -76,6 +76,10 @@ class MarketScanner:
             if market.is_domestic:
                 orderbook = await self.broker.get_orderbook(stock_code)
             else:
+                # Rate limiting: Add 200ms delay for overseas API calls
+                # to prevent hitting KIS API rate limit (EGW00201)
+                await asyncio.sleep(0.2)
+
                 # For overseas, we need to adapt the price data structure
                 price_data = await self.overseas_broker.get_overseas_price(
                     market.exchange_code, stock_code
