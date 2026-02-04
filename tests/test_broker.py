@@ -49,6 +49,46 @@ class TestTokenManagement:
 
         await broker.close()
 
+    @pytest.mark.asyncio
+    async def test_concurrent_token_refresh_calls_api_once(self, settings):
+        """Multiple concurrent token requests should only call API once."""
+        broker = KISBroker(settings)
+
+        # Track how many times the mock API is called
+        call_count = [0]
+
+        def create_mock_resp():
+            call_count[0] += 1
+            mock_resp = AsyncMock()
+            mock_resp.status = 200
+            mock_resp.json = AsyncMock(
+                return_value={
+                    "access_token": "tok_concurrent",
+                    "token_type": "Bearer",
+                    "expires_in": 86400,
+                }
+            )
+            mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+            mock_resp.__aexit__ = AsyncMock(return_value=False)
+            return mock_resp
+
+        with patch("aiohttp.ClientSession.post", return_value=create_mock_resp()):
+            # Launch 5 concurrent token requests
+            tokens = await asyncio.gather(
+                broker._ensure_token(),
+                broker._ensure_token(),
+                broker._ensure_token(),
+                broker._ensure_token(),
+                broker._ensure_token(),
+            )
+
+            # All should get the same token
+            assert all(t == "tok_concurrent" for t in tokens)
+            # API should be called only once (due to lock)
+            assert call_count[0] == 1
+
+        await broker.close()
+
 
 # ---------------------------------------------------------------------------
 # Network Error Handling
