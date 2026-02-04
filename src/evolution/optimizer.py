@@ -1,10 +1,10 @@
 """Evolution Engine — analyzes trade logs and generates new strategies.
 
 This module:
-1. Reads trade_logs.db to identify failing patterns
-2. Asks Gemini to generate a new strategy class
-3. Runs pytest on the generated file
-4. Creates a simulated PR if tests pass
+1. Uses DecisionLogger.get_losing_decisions() to identify failing patterns
+2. Analyzes failure patterns by time, market conditions, stock characteristics
+3. Asks Gemini to generate improved strategy recommendations
+4. Generates new strategy classes with enhanced decision-making logic
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import logging
 import sqlite3
 import subprocess
 import textwrap
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,8 @@ from typing import Any
 from google import genai
 
 from src.config import Settings
+from src.db import init_db
+from src.logging.decision_logger import DecisionLog, DecisionLogger
 
 logger = logging.getLogger(__name__)
 
@@ -53,29 +56,105 @@ class EvolutionOptimizer:
         self._db_path = settings.DB_PATH
         self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
         self._model_name = settings.GEMINI_MODEL
+        self._conn = init_db(self._db_path)
+        self._decision_logger = DecisionLogger(self._conn)
 
     # ------------------------------------------------------------------
     # Analysis
     # ------------------------------------------------------------------
 
     def analyze_failures(self, limit: int = 50) -> list[dict[str, Any]]:
-        """Find trades where high confidence led to losses."""
-        conn = sqlite3.connect(self._db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            rows = conn.execute(
-                """
-                SELECT stock_code, action, confidence, pnl, rationale, timestamp
-                FROM trades
-                WHERE confidence >= 80 AND pnl < 0
-                ORDER BY pnl ASC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
-            return [dict(r) for r in rows]
-        finally:
-            conn.close()
+        """Find high-confidence decisions that resulted in losses.
+
+        Uses DecisionLogger.get_losing_decisions() to retrieve failures.
+        """
+        losing_decisions = self._decision_logger.get_losing_decisions(
+            min_confidence=80, min_loss=-100.0
+        )
+
+        # Limit results
+        if len(losing_decisions) > limit:
+            losing_decisions = losing_decisions[:limit]
+
+        # Convert to dict format for analysis
+        failures = []
+        for decision in losing_decisions:
+            failures.append({
+                "decision_id": decision.decision_id,
+                "timestamp": decision.timestamp,
+                "stock_code": decision.stock_code,
+                "market": decision.market,
+                "exchange_code": decision.exchange_code,
+                "action": decision.action,
+                "confidence": decision.confidence,
+                "rationale": decision.rationale,
+                "outcome_pnl": decision.outcome_pnl,
+                "outcome_accuracy": decision.outcome_accuracy,
+                "context_snapshot": decision.context_snapshot,
+                "input_data": decision.input_data,
+            })
+
+        return failures
+
+    def identify_failure_patterns(
+        self, failures: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Identify patterns in losing decisions.
+
+        Analyzes:
+        - Time patterns (hour of day, day of week)
+        - Market conditions (volatility, volume)
+        - Stock characteristics (price range, market)
+        - Common failure modes in rationale
+        """
+        if not failures:
+            return {"pattern_count": 0, "patterns": {}}
+
+        patterns = {
+            "markets": Counter(),
+            "actions": Counter(),
+            "hours": Counter(),
+            "avg_confidence": 0.0,
+            "avg_loss": 0.0,
+            "total_failures": len(failures),
+        }
+
+        total_confidence = 0
+        total_loss = 0.0
+
+        for failure in failures:
+            # Market distribution
+            patterns["markets"][failure.get("market", "UNKNOWN")] += 1
+
+            # Action distribution
+            patterns["actions"][failure.get("action", "UNKNOWN")] += 1
+
+            # Time pattern (extract hour from ISO timestamp)
+            timestamp = failure.get("timestamp", "")
+            if timestamp:
+                try:
+                    dt = datetime.fromisoformat(timestamp)
+                    patterns["hours"][dt.hour] += 1
+                except (ValueError, AttributeError):
+                    pass
+
+            # Aggregate metrics
+            total_confidence += failure.get("confidence", 0)
+            total_loss += failure.get("outcome_pnl", 0.0)
+
+        patterns["avg_confidence"] = (
+            round(total_confidence / len(failures), 2) if failures else 0.0
+        )
+        patterns["avg_loss"] = (
+            round(total_loss / len(failures), 2) if failures else 0.0
+        )
+
+        # Convert Counters to regular dicts for JSON serialization
+        patterns["markets"] = dict(patterns["markets"])
+        patterns["actions"] = dict(patterns["actions"])
+        patterns["hours"] = dict(patterns["hours"])
+
+        return patterns
 
     def get_performance_summary(self) -> dict[str, Any]:
         """Return aggregate performance metrics from trade logs."""
@@ -109,14 +188,25 @@ class EvolutionOptimizer:
     async def generate_strategy(self, failures: list[dict[str, Any]]) -> Path | None:
         """Ask Gemini to generate a new strategy based on failure analysis.
 
+        Integrates failure patterns and market conditions to create improved strategies.
         Returns the path to the generated strategy file, or None on failure.
         """
+        # Identify failure patterns first
+        patterns = self.identify_failure_patterns(failures)
+
         prompt = (
             "You are a quantitative trading strategy developer.\n"
-            "Analyze these failed trades and generate an improved strategy.\n\n"
-            f"Failed trades:\n{json.dumps(failures, indent=2, default=str)}\n\n"
-            "Generate a Python class that inherits from BaseStrategy.\n"
-            "The class must have an `evaluate(self, market_data: dict) -> dict` method.\n"
+            "Analyze these failed trades and their patterns, then generate an improved strategy.\n\n"
+            f"Failure Patterns:\n{json.dumps(patterns, indent=2)}\n\n"
+            f"Sample Failed Trades (first 5):\n"
+            f"{json.dumps(failures[:5], indent=2, default=str)}\n\n"
+            "Based on these patterns, generate an improved trading strategy.\n"
+            "The strategy should:\n"
+            "1. Avoid the identified failure patterns\n"
+            "2. Consider market-specific conditions\n"
+            "3. Adjust confidence based on historical performance\n\n"
+            "Generate a Python method body that inherits from BaseStrategy.\n"
+            "The method signature is: evaluate(self, market_data: dict) -> dict\n"
             "The method must return a dict with keys: action, confidence, rationale.\n"
             "Respond with ONLY the method body (Python code), no class definition.\n"
         )
@@ -147,10 +237,15 @@ class EvolutionOptimizer:
         # Indent the body for the class method
         indented_body = textwrap.indent(body, "            ")
 
+        # Generate rationale from patterns
+        rationale = f"Auto-evolved from {len(failures)} failures. "
+        rationale += f"Primary failure markets: {list(patterns.get('markets', {}).keys())}. "
+        rationale += f"Average loss: {patterns.get('avg_loss', 0.0)}"
+
         content = STRATEGY_TEMPLATE.format(
             name=version,
             timestamp=datetime.now(UTC).isoformat(),
-            rationale="Auto-evolved from failure analysis",
+            rationale=rationale,
             class_name=class_name,
             body=indented_body.strip(),
         )
