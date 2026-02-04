@@ -7,7 +7,12 @@ Includes token efficiency optimizations:
 - Prompt compression and abbreviation
 - Response caching for common scenarios
 - Smart context selection
-- Token usage tracking
+- Token usage tracking and metrics
+
+Includes external data integration:
+- News sentiment analysis
+- Economic calendar events
+- Market indicators
 """
 
 from __future__ import annotations
@@ -15,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from google import genai

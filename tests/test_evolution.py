@@ -11,15 +11,15 @@ from __future__ import annotations
 import json
 import sqlite3
 import tempfile
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from src.config import Settings
 from src.db import init_db, log_trade
-from src.evolution.ab_test import ABTester, ABTestResult, StrategyPerformance
+from src.evolution.ab_test import ABTester
 from src.evolution.optimizer import EvolutionOptimizer
 from src.evolution.performance_tracker import (
     PerformanceDashboard,
@@ -27,7 +27,6 @@ from src.evolution.performance_tracker import (
     StrategyMetrics,
 )
 from src.logging.decision_logger import DecisionLogger
-
 
 # ------------------------------------------------------------------
 # Fixtures
