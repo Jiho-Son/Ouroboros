@@ -17,6 +17,34 @@ pytest -v --cov=src
 python -m src.main --mode=paper
 ```
 
+## Telegram Notifications (Optional)
+
+Get real-time alerts for trades, circuit breakers, and system events via Telegram.
+
+### Quick Setup
+
+1. **Create bot**: Message [@BotFather](https://t.me/BotFather) on Telegram → `/newbot`
+2. **Get chat ID**: Message [@userinfobot](https://t.me/userinfobot) → `/start`
+3. **Configure**: Add to `.env`:
+   ```bash
+   TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+   TELEGRAM_CHAT_ID=123456789
+   TELEGRAM_ENABLED=true
+   ```
+4. **Test**: Start bot conversation (`/start`), then run the agent
+
+**Full documentation**: [src/notifications/README.md](src/notifications/README.md)
+
+### What You'll Get
+
+- 🟢 Trade execution alerts (BUY/SELL with confidence)
+- 🚨 Circuit breaker trips (automatic trading halt)
+- ⚠️ Fat-finger rejections (oversized orders blocked)
+- ℹ️ Market open/close notifications
+- 📝 System startup/shutdown status
+
+**Fail-safe**: Notifications never crash the trading system. Missing credentials or API errors are logged but trading continues normally.
+
 ## Documentation
 
 - **[Workflow Guide](docs/workflow.md)** — Git workflow policy and agent-based development
@@ -42,11 +70,12 @@ src/
 ├── core/            # Risk manager (READ-ONLY)
 ├── evolution/       # Self-improvement optimizer
 ├── markets/         # Market schedules and timezone handling
+├── notifications/   # Telegram real-time alerts
 ├── db.py            # SQLite trade logging
 ├── main.py          # Trading loop orchestrator
 └── config.py        # Settings (from .env)
 
-tests/               # 54 tests across 4 files
+tests/               # 273 tests across 13 files
 docs/                # Extended documentation
 ```
 
