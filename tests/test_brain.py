@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
-from src.brain.gemini_client import GeminiClient, TradeDecision
-
+from src.brain.gemini_client import GeminiClient
 
 # ---------------------------------------------------------------------------
 # Response Parsing

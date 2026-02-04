@@ -6,11 +6,8 @@ Handles token refresh, rate limiting (leaky bucket), and hash key generation.
 from __future__ import annotations
 
 import asyncio
-import hashlib
-import json
 import logging
 import ssl
-import time
 from typing import Any
 
 import aiohttp
@@ -168,7 +165,7 @@ class KISBroker:
                         f"get_orderbook failed ({resp.status}): {text}"
                     )
                 return await resp.json()
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching orderbook: {exc}") from exc
 
     async def get_balance(self) -> dict[str, Any]:
@@ -200,7 +197,7 @@ class KISBroker:
                         f"get_balance failed ({resp.status}): {text}"
                     )
                 return await resp.json()
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching balance: {exc}") from exc
 
     async def send_order(
@@ -253,5 +250,5 @@ class KISBroker:
                     },
                 )
                 return data
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error sending order: {exc}") from exc

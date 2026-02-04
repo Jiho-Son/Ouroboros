@@ -49,15 +49,40 @@ class GeminiClient:
         The prompt instructs Gemini to return valid JSON with action,
         confidence, and rationale fields.
         """
+        market_name = market_data.get("market_name", "Korean stock market")
+
+        # Build market data section dynamically based on available fields
+        market_info_lines = [
+            f"Market: {market_name}",
+            f"Stock Code: {market_data['stock_code']}",
+            f"Current Price: {market_data['current_price']}",
+        ]
+
+        # Add orderbook if available (domestic markets)
+        if "orderbook" in market_data:
+            market_info_lines.append(
+                f"Orderbook: {json.dumps(market_data['orderbook'], ensure_ascii=False)}"
+            )
+
+        # Add foreigner net if non-zero
+        if market_data.get("foreigner_net", 0) != 0:
+            market_info_lines.append(
+                f"Foreigner Net Buy/Sell: {market_data['foreigner_net']}"
+            )
+
+        market_info = "\n".join(market_info_lines)
+
+        json_format = (
+            '{"action": "BUY"|"SELL"|"HOLD", '
+            '"confidence": <int 0-100>, "rationale": "<string>"}'
+        )
         return (
-            "You are a professional Korean stock market trading analyst.\n"
-            "Analyze the following market data and decide whether to BUY, SELL, or HOLD.\n\n"
-            f"Stock Code: {market_data['stock_code']}\n"
-            f"Current Price: {market_data['current_price']}\n"
-            f"Orderbook: {json.dumps(market_data['orderbook'], ensure_ascii=False)}\n"
-            f"Foreigner Net Buy/Sell: {market_data['foreigner_net']}\n\n"
+            f"You are a professional {market_name} trading analyst.\n"
+            "Analyze the following market data and decide whether to "
+            "BUY, SELL, or HOLD.\n\n"
+            f"{market_info}\n\n"
             "You MUST respond with ONLY valid JSON in the following format:\n"
-            '{"action": "BUY"|"SELL"|"HOLD", "confidence": <int 0-100>, "rationale": "<string>"}\n\n'
+            f"{json_format}\n\n"
             "Rules:\n"
             "- action must be exactly one of: BUY, SELL, HOLD\n"
             "- confidence must be an integer from 0 to 100\n"

@@ -14,7 +14,7 @@ import logging
 import sqlite3
 import subprocess
 import textwrap
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -136,7 +136,7 @@ class EvolutionOptimizer:
             body = "\n".join(lines[1:-1])
 
         # Create strategy file
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         version = f"v{timestamp}"
         class_name = f"Strategy_{version}"
         file_name = f"{version}_evolved.py"
@@ -149,7 +149,7 @@ class EvolutionOptimizer:
 
         content = STRATEGY_TEMPLATE.format(
             name=version,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             rationale="Auto-evolved from failure analysis",
             class_name=class_name,
             body=indented_body.strip(),

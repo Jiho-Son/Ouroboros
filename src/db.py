@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 
 def init_db(db_path: str) -> sqlite3.Connection:
@@ -24,10 +23,22 @@ def init_db(db_path: str) -> sqlite3.Connection:
             rationale TEXT,
             quantity INTEGER,
             price REAL,
-            pnl REAL DEFAULT 0.0
+            pnl REAL DEFAULT 0.0,
+            market TEXT DEFAULT 'KR',
+            exchange_code TEXT DEFAULT 'KRX'
         )
         """
     )
+
+    # Migration: Add market and exchange_code columns if they don't exist
+    cursor = conn.execute("PRAGMA table_info(trades)")
+    columns = {row[1] for row in cursor.fetchall()}
+
+    if "market" not in columns:
+        conn.execute("ALTER TABLE trades ADD COLUMN market TEXT DEFAULT 'KR'")
+    if "exchange_code" not in columns:
+        conn.execute("ALTER TABLE trades ADD COLUMN exchange_code TEXT DEFAULT 'KRX'")
+
     conn.commit()
     return conn
 
@@ -41,15 +52,20 @@ def log_trade(
     quantity: int = 0,
     price: float = 0.0,
     pnl: float = 0.0,
+    market: str = "KR",
+    exchange_code: str = "KRX",
 ) -> None:
     """Insert a trade record into the database."""
     conn.execute(
         """
-        INSERT INTO trades (timestamp, stock_code, action, confidence, rationale, quantity, price, pnl)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO trades (
+            timestamp, stock_code, action, confidence, rationale,
+            quantity, price, pnl, market, exchange_code
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(UTC).isoformat(),
             stock_code,
             action,
             confidence,
@@ -57,6 +73,8 @@ def log_trade(
             quantity,
             price,
             pnl,
+            market,
+            exchange_code,
         ),
     )
     conn.commit()
