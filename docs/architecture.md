@@ -51,7 +51,26 @@ Self-evolving AI trading agent for global stock markets via KIS (Korea Investmen
 - **Fat-Finger Protection**: Rejects orders exceeding 30% of available cash
   - Must always be enforced, cannot be disabled
 
-### 4. Evolution (`src/evolution/optimizer.py`)
+### 4. Notifications (`src/notifications/telegram_client.py`)
+
+**TelegramClient** — Real-time event notifications via Telegram Bot API
+
+- Sends alerts for trades, circuit breakers, fat-finger rejections, system events
+- Non-blocking: failures are logged but never crash trading
+- Rate-limited: 1 message/second default to respect Telegram API limits
+- Auto-disabled when credentials missing
+- Gracefully handles API errors, network timeouts, invalid tokens
+
+**Notification Types:**
+- Trade execution (BUY/SELL with confidence)
+- Circuit breaker trips (critical alert)
+- Fat-finger protection triggers (order rejection)
+- Market open/close events
+- System startup/shutdown status
+
+**Setup:** See [src/notifications/README.md](../src/notifications/README.md) for bot creation and configuration.
+
+### 5. Evolution (`src/evolution/optimizer.py`)
 
 **StrategyOptimizer** — Self-improvement loop
 
@@ -115,6 +134,14 @@ Self-evolving AI trading agent for global stock markets via KIS (Korea Investmen
                            │
                            ▼
         ┌──────────────────────────────────┐
+        │ Notifications: Send Alert         │
+        │ - Trade execution notification    │
+        │ - Non-blocking (errors logged)    │
+        │ - Rate-limited to 1/sec           │
+        └──────────────────┬────────────────┘
+                           │
+                           ▼
+        ┌──────────────────────────────────┐
         │ Database: Log Trade               │
         │ - SQLite (data/trades.db)         │
         │ - Track: action, confidence,      │
@@ -164,6 +191,11 @@ CONFIDENCE_THRESHOLD=80
 MAX_LOSS_PCT=3.0
 MAX_ORDER_PCT=30.0
 ENABLED_MARKETS=KR,US_NASDAQ  # Comma-separated market codes
+
+# Telegram Notifications (optional)
+TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
+TELEGRAM_CHAT_ID=123456789
+TELEGRAM_ENABLED=true
 ```
 
 Tests use in-memory SQLite (`DB_PATH=":memory:"`) and dummy credentials via `tests/conftest.py`.
@@ -189,3 +221,12 @@ Tests use in-memory SQLite (`DB_PATH=":memory:"`) and dummy credentials via `tes
 - Wait until next market opens
 - Use `get_next_market_open()` to calculate wait time
 - Sleep until market open time
+
+### Telegram API Errors
+- Log warning but continue trading
+- Missing credentials → auto-disable notifications
+- Network timeout → skip notification, no retry
+- Invalid token → log error, trading unaffected
+- Rate limit exceeded → queued via rate limiter
+
+**Guarantee**: Notification failures never interrupt trading operations.
