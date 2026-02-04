@@ -89,6 +89,70 @@ class TestTokenManagement:
 
         await broker.close()
 
+    @pytest.mark.asyncio
+    async def test_token_refresh_cooldown_prevents_rapid_retries(self, settings):
+        """Token refresh should enforce cooldown after failure (issue #54)."""
+        broker = KISBroker(settings)
+        broker._refresh_cooldown = 2.0  # Short cooldown for testing
+
+        # First refresh attempt fails with 403 (EGW00133)
+        mock_resp_403 = AsyncMock()
+        mock_resp_403.status = 403
+        mock_resp_403.text = AsyncMock(
+            return_value='{"error_code":"EGW00133","error_description":"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)"}'
+        )
+        mock_resp_403.__aenter__ = AsyncMock(return_value=mock_resp_403)
+        mock_resp_403.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp_403):
+            # First attempt should fail with 403
+            with pytest.raises(ConnectionError, match="Token refresh failed"):
+                await broker._ensure_token()
+
+            # Second attempt within cooldown should fail with cooldown error
+            with pytest.raises(ConnectionError, match="Token refresh on cooldown"):
+                await broker._ensure_token()
+
+        await broker.close()
+
+    @pytest.mark.asyncio
+    async def test_token_refresh_allowed_after_cooldown(self, settings):
+        """Token refresh should be allowed after cooldown period expires."""
+        broker = KISBroker(settings)
+        broker._refresh_cooldown = 0.1  # Very short cooldown for testing
+
+        # First attempt fails
+        mock_resp_403 = AsyncMock()
+        mock_resp_403.status = 403
+        mock_resp_403.text = AsyncMock(return_value='{"error_code":"EGW00133"}')
+        mock_resp_403.__aenter__ = AsyncMock(return_value=mock_resp_403)
+        mock_resp_403.__aexit__ = AsyncMock(return_value=False)
+
+        # Second attempt succeeds
+        mock_resp_200 = AsyncMock()
+        mock_resp_200.status = 200
+        mock_resp_200.json = AsyncMock(
+            return_value={
+                "access_token": "tok_after_cooldown",
+                "expires_in": 86400,
+            }
+        )
+        mock_resp_200.__aenter__ = AsyncMock(return_value=mock_resp_200)
+        mock_resp_200.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp_403):
+            with pytest.raises(ConnectionError, match="Token refresh failed"):
+                await broker._ensure_token()
+
+        # Wait for cooldown to expire
+        await asyncio.sleep(0.15)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp_200):
+            token = await broker._ensure_token()
+            assert token == "tok_after_cooldown"
+
+        await broker.close()
+
 
 # ---------------------------------------------------------------------------
 # Network Error Handling
