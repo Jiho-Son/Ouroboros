@@ -76,6 +76,119 @@ task_tool(
 
 Use `run_in_background=True` for independent tasks that don't block subsequent work.
 
+## Common Command Failures
+
+**Critical: Learn from failures. Never repeat the same failed command without modification.**
+
+### tea CLI (Gitea Command Line Tool)
+
+#### ❌ TTY Error - Interactive Confirmation Fails
+```bash
+~/bin/tea issues create --repo X --title "Y" --description "Z"
+# Error: huh: could not open a new TTY: open /dev/tty: no such device or address
+```
+**💡 Reason:** tea tries to open `/dev/tty` for interactive confirmation prompts, which is unavailable in non-interactive environments.
+
+**✅ Solution:** Use `YES=""` environment variable to bypass confirmation
+```bash
+YES="" ~/bin/tea issues create --repo jihoson/The-Ouroboros --title "Title" --description "Body"
+YES="" ~/bin/tea issues edit <number> --repo jihoson/The-Ouroboros --description "Updated body"
+YES="" ~/bin/tea pulls create --repo jihoson/The-Ouroboros --head feature-branch --base main --title "Title" --description "Body"
+```
+
+**📝 Notes:**
+- Always set default login: `~/bin/tea login default local`
+- Use `--repo jihoson/The-Ouroboros` when outside repo directory
+- tea is preferred over direct Gitea API calls for consistency
+
+#### ❌ Wrong Parameter Name
+```bash
+tea issues create --body "text"
+# Error: flag provided but not defined: -body
+```
+**💡 Reason:** Parameter is `--description`, not `--body`.
+
+**✅ Solution:** Use correct parameter name
+```bash
+YES="" ~/bin/tea issues create --description "text"
+```
+
+### Gitea API (Direct HTTP Calls)
+
+#### ❌ Wrong Hostname
+```bash
+curl http://gitea.local:3000/api/v1/...
+# Error: Could not resolve host: gitea.local
+```
+**💡 Reason:** Gitea instance runs on `localhost:3000`, not `gitea.local`.
+
+**✅ Solution:** Use correct hostname (but prefer tea CLI)
+```bash
+curl http://localhost:3000/api/v1/repos/jihoson/The-Ouroboros/issues \
+  -H "Authorization: token $GITEA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title":"...", "body":"..."}'
+```
+
+**📝 Notes:**
+- Prefer `tea` CLI over direct API calls
+- Only use curl for operations tea doesn't support
+
+### Git Commands
+
+#### ❌ User Not Configured
+```bash
+git commit -m "message"
+# Error: Author identity unknown
+```
+**💡 Reason:** Git user.name and user.email not set.
+
+**✅ Solution:** Configure git user
+```bash
+git config user.name "agentson"
+git config user.email "agentson@localhost"
+```
+
+#### ❌ Permission Denied on Push
+```bash
+git push origin branch
+# Error: User permission denied for writing
+```
+**💡 Reason:** Repository access token lacks write permissions or user lacks repo write access.
+
+**✅ Solution:**
+1. Verify user has write access to repository (admin grants this)
+2. Ensure git credential has correct token with `write:repository` scope
+3. Check remote URL uses correct authentication
+
+### Python/Pytest
+
+#### ❌ Module Import Error
+```bash
+pytest tests/test_foo.py
+# ModuleNotFoundError: No module named 'src'
+```
+**💡 Reason:** Package not installed in development mode.
+
+**✅ Solution:** Install package with dev dependencies
+```bash
+pip install -e ".[dev]"
+```
+
+#### ❌ Async Test Hangs
+```python
+async def test_something():  # Hangs forever
+    result = await async_function()
+```
+**💡 Reason:** Missing pytest-asyncio or wrong configuration.
+
+**✅ Solution:** Already configured in pyproject.toml
+```toml
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+```
+No decorator needed for async tests.
+
 ## Build & Test Commands
 
 ```bash
