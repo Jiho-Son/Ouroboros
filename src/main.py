@@ -33,6 +33,35 @@ from src.notifications.telegram_client import TelegramClient
 
 logger = logging.getLogger(__name__)
 
+
+def safe_float(value: str | float | None, default: float = 0.0) -> float:
+    """Convert to float, handling empty strings and None.
+
+    Args:
+        value: Value to convert (string, float, or None)
+        default: Default value if conversion fails
+
+    Returns:
+        Converted float or default value
+
+    Examples:
+        >>> safe_float("123.45")
+        123.45
+        >>> safe_float("")
+        0.0
+        >>> safe_float(None)
+        0.0
+        >>> safe_float("invalid", 99.0)
+        99.0
+    """
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
 # Target stock codes to monitor per market
 WATCHLISTS = {
     "KR": ["005930", "000660", "035420"],  # Samsung, SK Hynix, NAVER
@@ -77,16 +106,16 @@ async def trading_cycle(
         balance_data = await broker.get_balance()
 
         output2 = balance_data.get("output2", [{}])
-        total_eval = float(output2[0].get("tot_evlu_amt", "0")) if output2 else 0
-        total_cash = float(
+        total_eval = safe_float(output2[0].get("tot_evlu_amt", "0")) if output2 else 0
+        total_cash = safe_float(
             balance_data.get("output2", [{}])[0].get("dnca_tot_amt", "0")
             if output2
             else "0"
         )
-        purchase_total = float(output2[0].get("pchs_amt_smtl_amt", "0")) if output2 else 0
+        purchase_total = safe_float(output2[0].get("pchs_amt_smtl_amt", "0")) if output2 else 0
 
-        current_price = float(orderbook.get("output1", {}).get("stck_prpr", "0"))
-        foreigner_net = float(orderbook.get("output1", {}).get("frgn_ntby_qty", "0"))
+        current_price = safe_float(orderbook.get("output1", {}).get("stck_prpr", "0"))
+        foreigner_net = safe_float(orderbook.get("output1", {}).get("frgn_ntby_qty", "0"))
     else:
         # Overseas market
         price_data = await overseas_broker.get_overseas_price(
@@ -103,11 +132,11 @@ async def trading_cycle(
         else:
             balance_info = {}
 
-        total_eval = float(balance_info.get("frcr_evlu_tota", "0") or "0")
-        total_cash = float(balance_info.get("frcr_dncl_amt_2", "0") or "0")
-        purchase_total = float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
+        total_eval = safe_float(balance_info.get("frcr_evlu_tota", "0") or "0")
+        total_cash = safe_float(balance_info.get("frcr_dncl_amt_2", "0") or "0")
+        purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
 
-        current_price = float(price_data.get("output", {}).get("last", "0"))
+        current_price = safe_float(price_data.get("output", {}).get("last", "0"))
         foreigner_net = 0.0  # Not available for overseas
 
     # Calculate daily P&L %
