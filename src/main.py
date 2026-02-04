@@ -107,7 +107,7 @@ async def trading_cycle(
         total_cash = float(balance_info.get("frcr_dncl_amt_2", "0") or "0")
         purchase_total = float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
 
-        current_price = float(price_data.get("output", {}).get("last", "0"))
+        current_price = float(price_data.get("output", {}).get("last", "0") or "0")
         foreigner_net = 0.0  # Not available for overseas
 
     # Calculate daily P&L %

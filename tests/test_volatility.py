@@ -339,6 +339,28 @@ class TestMarketScanner:
         assert metrics.current_price == 150.50
 
     @pytest.mark.asyncio
+    async def test_scan_stock_overseas_empty_price(
+        self,
+        scanner: MarketScanner,
+        mock_overseas_broker: OverseasBroker,
+        context_store: ContextStore,
+    ) -> None:
+        """Test scanning overseas stock with empty price string (issue #49)."""
+        mock_overseas_broker.get_overseas_price.return_value = {
+            "output": {
+                "last": "",  # Empty string
+                "tvol": "",  # Empty string
+            }
+        }
+
+        market = MARKETS["US_NASDAQ"]
+        metrics = await scanner.scan_stock("AAPL", market)
+
+        assert metrics is not None
+        assert metrics.stock_code == "AAPL"
+        assert metrics.current_price == 0.0  # Should default to 0.0
+
+    @pytest.mark.asyncio
     async def test_scan_stock_error_handling(
         self,
         scanner: MarketScanner,
