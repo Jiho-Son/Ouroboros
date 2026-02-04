@@ -220,7 +220,7 @@ docker compose --profile test up test   # Run tests in container
 
 ## Architecture
 
-Self-evolving AI trading agent for Korean stock markets (KIS API). The main loop in `src/main.py` orchestrates four components in a 60-second cycle per stock:
+Self-evolving AI trading agent for Korean stock markets (KIS API). The main loop in `src/main.py` orchestrates five components in a 60-second cycle per stock:
 
 1. **Broker** (`src/broker/kis_api.py`) — Async KIS API client with automatic OAuth token refresh, leaky-bucket rate limiter (10 RPS), and POST body hash-key signing. Uses a custom SSL context with disabled hostname verification for the VTS (virtual trading) endpoint due to a known certificate mismatch.
 
@@ -228,9 +228,11 @@ Self-evolving AI trading agent for Korean stock markets (KIS API). The main loop
 
 3. **Risk Manager** (`src/core/risk_manager.py`) — **READ-ONLY by policy** (see `docs/agents.md`). Circuit breaker halts all trading via `SystemExit` when daily P&L drops below -3.0%. Fat-finger check rejects orders exceeding 30% of available cash.
 
-4. **Evolution** (`src/evolution/optimizer.py`) — Analyzes high-confidence losing trades from SQLite, asks Gemini to generate new `BaseStrategy` subclasses, validates them by running the full pytest suite, and simulates PR creation.
+4. **Context Tree** (`src/context/`) — **NEW: Pillar 2 implementation.** 7-tier hierarchical memory (L1-L7) from real-time quotes to generational wisdom. Auto-aggregates daily → weekly → monthly → quarterly → annual → legacy. See [`docs/context-tree.md`](docs/context-tree.md) for details.
 
-**Data flow per cycle:** Fetch orderbook + balance → calculate P&L → get Gemini decision → validate with risk manager → execute order → log to SQLite (`src/db.py`).
+5. **Evolution** (`src/evolution/optimizer.py`) — Analyzes high-confidence losing trades from SQLite, asks Gemini to generate new `BaseStrategy` subclasses, validates them by running the full pytest suite, and simulates PR creation.
+
+**Data flow per cycle:** Fetch orderbook + balance → calculate P&L → query context tree → get Gemini decision → validate with risk manager → execute order → log to SQLite + context layers (`src/db.py`).
 
 ## Key Constraints (from `docs/agents.md`)
 
@@ -247,9 +249,10 @@ Pydantic Settings loaded from `.env` (see `.env.example`). Required vars: `KIS_A
 
 ## Test Structure
 
-54 tests across four files. `asyncio_mode = "auto"` in pyproject.toml — async tests need no special decorator. The `settings` fixture in `conftest.py` provides safe defaults with test credentials and in-memory DB.
+72 tests across five files. `asyncio_mode = "auto"` in pyproject.toml — async tests need no special decorator. The `settings` fixture in `conftest.py` provides safe defaults with test credentials and in-memory DB.
 
 - `test_risk.py` (11) — Circuit breaker boundaries, fat-finger edge cases
 - `test_broker.py` (6) — Token lifecycle, rate limiting, hash keys, network errors
 - `test_brain.py` (18) — JSON parsing, confidence threshold, malformed responses, prompt construction
 - `test_market_schedule.py` (19) — Market open/close logic, timezone handling, DST, lunch breaks
+- `test_context.py` (18) — **NEW:** Context tree CRUD, aggregation logic, retention policies, layer metadata
