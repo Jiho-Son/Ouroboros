@@ -13,10 +13,13 @@ import signal
 from datetime import UTC, datetime
 from typing import Any
 
+from src.analysis.scanner import MarketScanner
+from src.analysis.volatility import VolatilityAnalyzer
 from src.brain.gemini_client import GeminiClient
 from src.broker.kis_api import KISBroker
 from src.broker.overseas import OverseasBroker
 from src.config import Settings
+from src.context.store import ContextStore
 from src.core.risk_manager import CircuitBreakerTripped, RiskManager
 from src.db import init_db, log_trade
 from src.logging.decision_logger import DecisionLogger
@@ -34,7 +37,17 @@ WATCHLISTS = {
 }
 
 TRADE_INTERVAL_SECONDS = 60
+SCAN_INTERVAL_SECONDS = 60  # Scan markets every 60 seconds
 MAX_CONNECTION_RETRIES = 3
+
+# Full stock universe per market (for scanning)
+# In production, this would be loaded from a database or API
+STOCK_UNIVERSE = {
+    "KR": ["005930", "000660", "035420", "051910", "005380", "005490"],
+    "US_NASDAQ": ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA"],
+    "US_NYSE": ["JPM", "BAC", "XOM", "JNJ", "V"],
+    "JP": ["7203", "6758", "9984", "6861"],
+}
 
 
 async def trading_cycle(
@@ -187,6 +200,20 @@ async def run(settings: Settings) -> None:
     risk = RiskManager(settings)
     db_conn = init_db(settings.DB_PATH)
     decision_logger = DecisionLogger(db_conn)
+    context_store = ContextStore(db_conn)
+
+    # Initialize volatility hunter
+    volatility_analyzer = VolatilityAnalyzer(min_volume_surge=2.0, min_price_change=1.0)
+    market_scanner = MarketScanner(
+        broker=broker,
+        overseas_broker=overseas_broker,
+        volatility_analyzer=volatility_analyzer,
+        context_store=context_store,
+        top_n=5,
+    )
+
+    # Track last scan time for each market
+    last_scan_time: dict[str, float] = {}
 
     shutdown = asyncio.Event()
 
@@ -231,6 +258,39 @@ async def run(settings: Settings) -> None:
             for market in open_markets:
                 if shutdown.is_set():
                     break
+
+                # Volatility Hunter: Scan market periodically to update watchlist
+                now_timestamp = asyncio.get_event_loop().time()
+                last_scan = last_scan_time.get(market.code, 0.0)
+                if now_timestamp - last_scan >= SCAN_INTERVAL_SECONDS:
+                    try:
+                        # Scan all stocks in the universe
+                        stock_universe = STOCK_UNIVERSE.get(market.code, [])
+                        if stock_universe:
+                            logger.info("Volatility Hunter: Scanning %s market", market.name)
+                            scan_result = await market_scanner.scan_market(
+                                market, stock_universe
+                            )
+
+                            # Update watchlist with top movers
+                            current_watchlist = WATCHLISTS.get(market.code, [])
+                            updated_watchlist = market_scanner.get_updated_watchlist(
+                                current_watchlist,
+                                scan_result,
+                                max_replacements=2,
+                            )
+                            WATCHLISTS[market.code] = updated_watchlist
+
+                            logger.info(
+                                "Volatility Hunter: Watchlist updated for %s (%d top movers, %d breakouts)",
+                                market.name,
+                                len(scan_result.top_movers),
+                                len(scan_result.breakouts),
+                            )
+
+                        last_scan_time[market.code] = now_timestamp
+                    except Exception as exc:
+                        logger.error("Volatility Hunter scan failed for %s: %s", market.name, exc)
 
                 # Get watchlist for this market
                 watchlist = WATCHLISTS.get(market.code, [])
