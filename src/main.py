@@ -21,7 +21,7 @@ from src.broker.overseas import OverseasBroker
 from src.config import Settings
 from src.context.layer import ContextLayer
 from src.context.store import ContextStore
-from src.core.criticality import CriticalityAssessor, CriticalityLevel
+from src.core.criticality import CriticalityAssessor
 from src.core.priority_queue import PriorityTaskQueue
 from src.core.risk_manager import CircuitBreakerTripped, RiskManager
 from src.db import init_db, log_trade
