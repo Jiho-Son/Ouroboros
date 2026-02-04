@@ -431,6 +431,26 @@ class TestOverseasBalanceParsing:
         return broker
 
     @pytest.fixture
+    def mock_overseas_broker_with_empty_price(self) -> MagicMock:
+        """Create mock overseas broker returning empty string for price."""
+        broker = MagicMock()
+        broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": ""}}  # Empty string
+        )
+        broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output2": [
+                    {
+                        "frcr_evlu_tota": "10000.00",
+                        "frcr_dncl_amt_2": "5000.00",
+                        "frcr_buy_amt_smtl": "4500.00",
+                    }
+                ]
+            }
+        )
+        return broker
+
+    @pytest.fixture
     def mock_domestic_broker(self) -> MagicMock:
         """Create minimal mock domestic broker."""
         broker = MagicMock()
@@ -595,3 +615,37 @@ class TestOverseasBalanceParsing:
 
         # Verify balance API was called
         mock_overseas_broker_with_empty.get_overseas_balance.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_overseas_price_empty_string(
+        self,
+        mock_domestic_broker: MagicMock,
+        mock_overseas_broker_with_empty_price: MagicMock,
+        mock_brain_hold: MagicMock,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """Test overseas price parsing with empty string (issue #49)."""
+        with patch("src.main.log_trade"):
+            # Should not raise ValueError, should default to 0.0
+            await trading_cycle(
+                broker=mock_domestic_broker,
+                overseas_broker=mock_overseas_broker_with_empty_price,
+                brain=mock_brain_hold,
+                risk=mock_risk,
+                db_conn=mock_db,
+                decision_logger=mock_decision_logger,
+                context_store=mock_context_store,
+                criticality_assessor=mock_criticality_assessor,
+                telegram=mock_telegram,
+                market=mock_overseas_market,
+                stock_code="AAPL",
+            )
+
+        # Verify price API was called
+        mock_overseas_broker_with_empty_price.get_overseas_price.assert_called_once()

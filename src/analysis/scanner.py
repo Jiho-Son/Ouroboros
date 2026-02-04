@@ -83,8 +83,8 @@ class MarketScanner:
                 # Convert to orderbook-like structure
                 orderbook = {
                     "output1": {
-                        "stck_prpr": price_data.get("output", {}).get("last", "0"),
-                        "acml_vol": price_data.get("output", {}).get("tvol", "0"),
+                        "stck_prpr": price_data.get("output", {}).get("last", "0") or "0",
+                        "acml_vol": price_data.get("output", {}).get("tvol", "0") or "0",
                     }
                 }
 
