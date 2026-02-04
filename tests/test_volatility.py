@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from typing import Any
 from unittest.mock import AsyncMock
@@ -531,3 +532,45 @@ class TestMarketScanner:
         new_additions = [code for code in updated if code not in current_watchlist]
         assert len(new_additions) <= 1
         assert len(updated) == len(current_watchlist)
+
+    @pytest.mark.asyncio
+    async def test_scan_market_respects_concurrency_limit(
+        self,
+        mock_broker: KISBroker,
+        mock_overseas_broker: OverseasBroker,
+        volatility_analyzer: VolatilityAnalyzer,
+        context_store: ContextStore,
+    ) -> None:
+        """scan_market should limit concurrent scans to max_concurrent_scans."""
+        max_concurrent = 2
+        scanner = MarketScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=volatility_analyzer,
+            context_store=context_store,
+            top_n=5,
+            max_concurrent_scans=max_concurrent,
+        )
+
+        # Track peak concurrency
+        active_count = 0
+        peak_count = 0
+
+        original_scan = scanner.scan_stock
+
+        async def tracking_scan(code: str, market: Any) -> VolatilityMetrics:
+            nonlocal active_count, peak_count
+            active_count += 1
+            peak_count = max(peak_count, active_count)
+            await asyncio.sleep(0.05)  # Simulate API call duration
+            active_count -= 1
+            return VolatilityMetrics(code, 50000, 500, 1.0, 1.0, 1.0, 1.0, 10.0, 50.0)
+
+        scanner.scan_stock = tracking_scan  # type: ignore[method-assign]
+
+        market = MARKETS["KR"]
+        stock_codes = ["001", "002", "003", "004", "005", "006"]
+
+        await scanner.scan_market(market, stock_codes)
+
+        assert peak_count <= max_concurrent

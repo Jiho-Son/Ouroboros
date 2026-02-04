@@ -346,6 +346,7 @@ async def run(settings: Settings) -> None:
         volatility_analyzer=volatility_analyzer,
         context_store=context_store,
         top_n=5,
+        max_concurrent_scans=1,  # Fully serialized to avoid EGW00201
     )
 
     # Initialize latency control system

@@ -42,6 +42,7 @@ class MarketScanner:
         volatility_analyzer: VolatilityAnalyzer,
         context_store: ContextStore,
         top_n: int = 5,
+        max_concurrent_scans: int = 1,
     ) -> None:
         """Initialize the market scanner.
 
@@ -51,12 +52,14 @@ class MarketScanner:
             volatility_analyzer: Volatility analyzer instance
             context_store: Context store for L7 real-time data
             top_n: Number of top movers to return per market (default 5)
+            max_concurrent_scans: Max concurrent stock scans (default 1, fully serialized)
         """
         self.broker = broker
         self.overseas_broker = overseas_broker
         self.analyzer = volatility_analyzer
         self.context_store = context_store
         self.top_n = top_n
+        self._scan_semaphore = asyncio.Semaphore(max_concurrent_scans)
 
     async def scan_stock(
         self,
@@ -76,10 +79,6 @@ class MarketScanner:
             if market.is_domestic:
                 orderbook = await self.broker.get_orderbook(stock_code)
             else:
-                # Rate limiting: Add 200ms delay for overseas API calls
-                # to prevent hitting KIS API rate limit (EGW00201)
-                await asyncio.sleep(0.2)
-
                 # For overseas, we need to adapt the price data structure
                 price_data = await self.overseas_broker.get_overseas_price(
                     market.exchange_code, stock_code
@@ -143,8 +142,12 @@ class MarketScanner:
 
         logger.info("Scanning %s market (%d stocks)", market.name, len(stock_codes))
 
-        # Scan all stocks concurrently (with rate limiting handled by broker)
-        tasks = [self.scan_stock(code, market) for code in stock_codes]
+        # Scan stocks with bounded concurrency to prevent API rate limit burst
+        async def _bounded_scan(code: str) -> VolatilityMetrics | None:
+            async with self._scan_semaphore:
+                return await self.scan_stock(code, market)
+
+        tasks = [_bounded_scan(code) for code in stock_codes]
         results = await asyncio.gather(*tasks)
 
         # Filter out failures and sort by momentum score

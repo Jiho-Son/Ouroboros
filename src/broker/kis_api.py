@@ -138,6 +138,7 @@ class KISBroker:
 
     async def _get_hash_key(self, body: dict[str, Any]) -> str:
         """Request a hash key from KIS for POST request body signing."""
+        await self._rate_limiter.acquire()
         session = self._get_session()
         url = f"{self._base_url}/uapi/hashkey"
         headers = {

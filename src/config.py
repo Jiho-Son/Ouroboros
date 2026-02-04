@@ -37,8 +37,9 @@ class Settings(BaseSettings):
     DB_PATH: str = "data/trade_logs.db"
 
     # Rate Limiting (requests per second for KIS API)
-    # Reduced to 5.0 to avoid EGW00201 "초당 거래건수 초과" errors
-    RATE_LIMIT_RPS: float = 5.0
+    # Conservative limit to avoid EGW00201 "초당 거래건수 초과" errors.
+    # KIS API real limit is ~2 RPS; 2.0 provides maximum safety.
+    RATE_LIMIT_RPS: float = 2.0
 
     # Trading mode
     MODE: str = Field(default="paper", pattern="^(paper|live)$")

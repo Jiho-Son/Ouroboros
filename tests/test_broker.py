@@ -211,6 +211,38 @@ class TestRateLimiter:
         await broker._rate_limiter.acquire()
         await broker.close()
 
+    @pytest.mark.asyncio
+    async def test_send_order_acquires_rate_limiter_twice(self, settings):
+        """send_order must acquire rate limiter for both hash key and order call."""
+        broker = KISBroker(settings)
+        broker._access_token = "tok"
+        broker._token_expires_at = asyncio.get_event_loop().time() + 3600
+
+        # Mock hash key response
+        mock_hash_resp = AsyncMock()
+        mock_hash_resp.status = 200
+        mock_hash_resp.json = AsyncMock(return_value={"HASH": "abc123"})
+        mock_hash_resp.__aenter__ = AsyncMock(return_value=mock_hash_resp)
+        mock_hash_resp.__aexit__ = AsyncMock(return_value=False)
+
+        # Mock order response
+        mock_order_resp = AsyncMock()
+        mock_order_resp.status = 200
+        mock_order_resp.json = AsyncMock(return_value={"rt_cd": "0"})
+        mock_order_resp.__aenter__ = AsyncMock(return_value=mock_order_resp)
+        mock_order_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash_resp, mock_order_resp]
+        ):
+            with patch.object(
+                broker._rate_limiter, "acquire", new_callable=AsyncMock
+            ) as mock_acquire:
+                await broker.send_order("005930", "BUY", 1, 50000)
+                assert mock_acquire.call_count == 2
+
+        await broker.close()
+
 
 # ---------------------------------------------------------------------------
 # Hash Key Generation
@@ -238,5 +270,29 @@ class TestHashKey:
             hash_key = await broker._get_hash_key(body)
             assert isinstance(hash_key, str)
             assert len(hash_key) > 0
+
+        await broker.close()
+
+    @pytest.mark.asyncio
+    async def test_hash_key_acquires_rate_limiter(self, settings):
+        """_get_hash_key must go through the rate limiter to prevent burst."""
+        broker = KISBroker(settings)
+        broker._access_token = "tok"
+        broker._token_expires_at = asyncio.get_event_loop().time() + 3600
+
+        body = {"CANO": "12345678", "ACNT_PRDT_CD": "01"}
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"HASH": "abc123hash"})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp):
+            with patch.object(
+                broker._rate_limiter, "acquire", new_callable=AsyncMock
+            ) as mock_acquire:
+                await broker._get_hash_key(body)
+                mock_acquire.assert_called_once()
 
         await broker.close()
