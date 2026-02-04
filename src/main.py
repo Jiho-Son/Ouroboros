@@ -19,6 +19,7 @@ from src.broker.overseas import OverseasBroker
 from src.config import Settings
 from src.core.risk_manager import CircuitBreakerTripped, RiskManager
 from src.db import init_db, log_trade
+from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
 from src.markets.schedule import MarketInfo, get_next_market_open, get_open_markets
 
@@ -42,6 +43,7 @@ async def trading_cycle(
     brain: GeminiClient,
     risk: RiskManager,
     db_conn: Any,
+    decision_logger: DecisionLogger,
     market: MarketInfo,
     stock_code: str,
 ) -> None:
@@ -101,6 +103,39 @@ async def trading_cycle(
         decision.confidence,
     )
 
+    # 2.5. Log decision with context snapshot
+    context_snapshot = {
+        "L1": {
+            "current_price": current_price,
+            "foreigner_net": foreigner_net,
+        },
+        "L2": {
+            "total_eval": total_eval,
+            "total_cash": total_cash,
+            "purchase_total": purchase_total,
+            "pnl_pct": pnl_pct,
+        },
+        # L3-L7 will be populated when context tree is implemented
+    }
+    input_data = {
+        "current_price": current_price,
+        "foreigner_net": foreigner_net,
+        "total_eval": total_eval,
+        "total_cash": total_cash,
+        "pnl_pct": pnl_pct,
+    }
+
+    decision_logger.log_decision(
+        stock_code=stock_code,
+        market=market.code,
+        exchange_code=market.exchange_code,
+        action=decision.action,
+        confidence=decision.confidence,
+        rationale=decision.rationale,
+        context_snapshot=context_snapshot,
+        input_data=input_data,
+    )
+
     # 3. Execute if actionable
     if decision.action in ("BUY", "SELL"):
         # Determine order size (simplified: 1 lot)
@@ -151,6 +186,7 @@ async def run(settings: Settings) -> None:
     brain = GeminiClient(settings)
     risk = RiskManager(settings)
     db_conn = init_db(settings.DB_PATH)
+    decision_logger = DecisionLogger(db_conn)
 
     shutdown = asyncio.Event()
 
@@ -218,6 +254,7 @@ async def run(settings: Settings) -> None:
                                 brain,
                                 risk,
                                 db_conn,
+                                decision_logger,
                                 market,
                                 stock_code,
                             )
