@@ -253,6 +253,195 @@ class TestUpdateHandling:
         await handler._handle_update(update)
 
 
+class TestTradingControlCommands:
+    """Test trading control commands."""
+
+    @pytest.mark.asyncio
+    async def test_stop_command_pauses_trading(self) -> None:
+        """Stop command clears pause event."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        # Create mock pause event
+        import asyncio
+
+        pause_event = asyncio.Event()
+        pause_event.set()  # Initially active
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_stop() -> None:
+            """Mock /stop handler."""
+            if not pause_event.is_set():
+                await client.send_message("⏸️ Trading is already paused")
+                return
+
+            pause_event.clear()
+            await client.send_message(
+                "<b>⏸️ Trading Paused</b>\n\n"
+                "All trading operations have been suspended.\n"
+                "Use /resume to restart trading."
+            )
+
+        handler.register_command("stop", mock_stop)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            update = {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 456},
+                    "text": "/stop",
+                },
+            }
+
+            await handler._handle_update(update)
+
+            # Verify pause event was cleared
+            assert not pause_event.is_set()
+
+            # Verify message was sent
+            assert mock_post.call_count == 1
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Trading Paused" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_resume_command_resumes_trading(self) -> None:
+        """Resume command sets pause event."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        # Create mock pause event (initially paused)
+        import asyncio
+
+        pause_event = asyncio.Event()
+        pause_event.clear()  # Initially paused
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_resume() -> None:
+            """Mock /resume handler."""
+            if pause_event.is_set():
+                await client.send_message("▶️ Trading is already active")
+                return
+
+            pause_event.set()
+            await client.send_message(
+                "<b>▶️ Trading Resumed</b>\n\n"
+                "Trading operations have been restarted."
+            )
+
+        handler.register_command("resume", mock_resume)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            update = {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 456},
+                    "text": "/resume",
+                },
+            }
+
+            await handler._handle_update(update)
+
+            # Verify pause event was set
+            assert pause_event.is_set()
+
+            # Verify message was sent
+            assert mock_post.call_count == 1
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Trading Resumed" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_stop_when_already_paused(self) -> None:
+        """Stop command when already paused sends appropriate message."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        # Create mock pause event (already paused)
+        import asyncio
+
+        pause_event = asyncio.Event()
+        pause_event.clear()
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_stop() -> None:
+            """Mock /stop handler."""
+            if not pause_event.is_set():
+                await client.send_message("⏸️ Trading is already paused")
+                return
+
+            pause_event.clear()
+
+        handler.register_command("stop", mock_stop)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            update = {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 456},
+                    "text": "/stop",
+                },
+            }
+
+            await handler._handle_update(update)
+
+            # Verify message was sent
+            payload = mock_post.call_args.kwargs["json"]
+            assert "already paused" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_resume_when_already_active(self) -> None:
+        """Resume command when already active sends appropriate message."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        # Create mock pause event (already active)
+        import asyncio
+
+        pause_event = asyncio.Event()
+        pause_event.set()
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_resume() -> None:
+            """Mock /resume handler."""
+            if pause_event.is_set():
+                await client.send_message("▶️ Trading is already active")
+                return
+
+            pause_event.set()
+
+        handler.register_command("resume", mock_resume)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            update = {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 456},
+                    "text": "/resume",
+                },
+            }
+
+            await handler._handle_update(update)
+
+            # Verify message was sent
+            payload = mock_post.call_args.kwargs["json"]
+            assert "already active" in payload["text"]
+
+
 class TestBasicCommands:
     """Test basic command implementations."""
 
