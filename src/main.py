@@ -606,8 +606,37 @@ async def run(settings: Settings) -> None:
         )
         await telegram.send_message(message)
 
+    async def handle_stop() -> None:
+        """Handle /stop command - pause trading."""
+        if not pause_trading.is_set():
+            await telegram.send_message("⏸️ Trading is already paused")
+            return
+
+        pause_trading.clear()
+        logger.info("Trading paused via Telegram command")
+        await telegram.send_message(
+            "<b>⏸️ Trading Paused</b>\n\n"
+            "All trading operations have been suspended.\n"
+            "Use /resume to restart trading."
+        )
+
+    async def handle_resume() -> None:
+        """Handle /resume command - resume trading."""
+        if pause_trading.is_set():
+            await telegram.send_message("▶️ Trading is already active")
+            return
+
+        pause_trading.set()
+        logger.info("Trading resumed via Telegram command")
+        await telegram.send_message(
+            "<b>▶️ Trading Resumed</b>\n\n"
+            "Trading operations have been restarted."
+        )
+
     command_handler.register_command("start", handle_start)
     command_handler.register_command("help", handle_help)
+    command_handler.register_command("stop", handle_stop)
+    command_handler.register_command("resume", handle_resume)
 
     # Initialize volatility hunter
     volatility_analyzer = VolatilityAnalyzer(min_volume_surge=2.0, min_price_change=1.0)
@@ -636,7 +665,10 @@ async def run(settings: Settings) -> None:
     # Track market open/close state for notifications
     _market_states: dict[str, bool] = {}  # market_code -> is_open
 
+    # Trading control events
     shutdown = asyncio.Event()
+    pause_trading = asyncio.Event()
+    pause_trading.set()  # Default: trading enabled
 
     def _signal_handler() -> None:
         logger.info("Shutdown signal received")
@@ -674,6 +706,9 @@ async def run(settings: Settings) -> None:
             session_interval = settings.SESSION_INTERVAL_HOURS * 3600  # Convert to seconds
 
             while not shutdown.is_set():
+                # Wait for trading to be unpaused
+                await pause_trading.wait()
+
                 try:
                     await run_daily_session(
                         broker,
@@ -706,6 +741,9 @@ async def run(settings: Settings) -> None:
             logger.info("Realtime trading mode: 60s interval per stock")
 
             while not shutdown.is_set():
+                # Wait for trading to be unpaused
+                await pause_trading.wait()
+
                 # Get currently open markets
                 open_markets = get_open_markets(settings.enabled_market_list)
 
