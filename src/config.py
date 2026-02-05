@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # Trading mode
     MODE: str = Field(default="paper", pattern="^(paper|live)$")
 
+    # Trading frequency mode (daily = batch API calls, realtime = per-stock calls)
+    TRADE_MODE: str = Field(default="daily", pattern="^(daily|realtime)$")
+    DAILY_SESSIONS: int = Field(default=4, ge=1, le=10)
+    SESSION_INTERVAL_HOURS: int = Field(default=6, ge=1, le=24)
+
     # Market selection (comma-separated market codes)
     ENABLED_MARKETS: str = "KR"
 

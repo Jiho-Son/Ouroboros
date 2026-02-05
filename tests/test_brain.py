@@ -152,3 +152,121 @@ class TestPromptConstruction:
         assert "JSON" in prompt
         assert "action" in prompt
         assert "confidence" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Batch Decision Making
+# ---------------------------------------------------------------------------
+
+
+class TestBatchDecisionParsing:
+    """Batch response parser must handle JSON arrays correctly."""
+
+    def test_parse_valid_batch_response(self, settings):
+        client = GeminiClient(settings)
+        stocks_data = [
+            {"stock_code": "AAPL", "current_price": 185.5},
+            {"stock_code": "MSFT", "current_price": 420.0},
+        ]
+        raw = """[
+            {"code": "AAPL", "action": "BUY", "confidence": 85, "rationale": "Strong momentum"},
+            {"code": "MSFT", "action": "HOLD", "confidence": 50, "rationale": "Wait for earnings"}
+        ]"""
+
+        decisions = client._parse_batch_response(raw, stocks_data, token_count=100)
+
+        assert len(decisions) == 2
+        assert decisions["AAPL"].action == "BUY"
+        assert decisions["AAPL"].confidence == 85
+        assert decisions["MSFT"].action == "HOLD"
+        assert decisions["MSFT"].confidence == 50
+
+    def test_parse_batch_with_markdown_wrapper(self, settings):
+        client = GeminiClient(settings)
+        stocks_data = [{"stock_code": "AAPL", "current_price": 185.5}]
+        raw = """```json
+[{"code": "AAPL", "action": "BUY", "confidence": 90, "rationale": "Good"}]
+```"""
+
+        decisions = client._parse_batch_response(raw, stocks_data, token_count=100)
+
+        assert decisions["AAPL"].action == "BUY"
+        assert decisions["AAPL"].confidence == 90
+
+    def test_parse_batch_empty_response_returns_hold_for_all(self, settings):
+        client = GeminiClient(settings)
+        stocks_data = [
+            {"stock_code": "AAPL", "current_price": 185.5},
+            {"stock_code": "MSFT", "current_price": 420.0},
+        ]
+
+        decisions = client._parse_batch_response("", stocks_data, token_count=100)
+
+        assert len(decisions) == 2
+        assert decisions["AAPL"].action == "HOLD"
+        assert decisions["AAPL"].confidence == 0
+        assert decisions["MSFT"].action == "HOLD"
+
+    def test_parse_batch_malformed_json_returns_hold_for_all(self, settings):
+        client = GeminiClient(settings)
+        stocks_data = [{"stock_code": "AAPL", "current_price": 185.5}]
+        raw = "This is not JSON"
+
+        decisions = client._parse_batch_response(raw, stocks_data, token_count=100)
+
+        assert decisions["AAPL"].action == "HOLD"
+        assert decisions["AAPL"].confidence == 0
+
+    def test_parse_batch_not_array_returns_hold_for_all(self, settings):
+        client = GeminiClient(settings)
+        stocks_data = [{"stock_code": "AAPL", "current_price": 185.5}]
+        raw = '{"code": "AAPL", "action": "BUY", "confidence": 90, "rationale": "Good"}'
+
+        decisions = client._parse_batch_response(raw, stocks_data, token_count=100)
+
+        assert decisions["AAPL"].action == "HOLD"
+        assert decisions["AAPL"].confidence == 0
+
+    def test_parse_batch_missing_stock_gets_hold(self, settings):
+        client = GeminiClient(settings)
+        stocks_data = [
+            {"stock_code": "AAPL", "current_price": 185.5},
+            {"stock_code": "MSFT", "current_price": 420.0},
+        ]
+        # Response only has AAPL, MSFT is missing
+        raw = '[{"code": "AAPL", "action": "BUY", "confidence": 85, "rationale": "Good"}]'
+
+        decisions = client._parse_batch_response(raw, stocks_data, token_count=100)
+
+        assert decisions["AAPL"].action == "BUY"
+        assert decisions["MSFT"].action == "HOLD"
+        assert decisions["MSFT"].confidence == 0
+
+    def test_parse_batch_invalid_action_becomes_hold(self, settings):
+        client = GeminiClient(settings)
+        stocks_data = [{"stock_code": "AAPL", "current_price": 185.5}]
+        raw = '[{"code": "AAPL", "action": "YOLO", "confidence": 90, "rationale": "Moon"}]'
+
+        decisions = client._parse_batch_response(raw, stocks_data, token_count=100)
+
+        assert decisions["AAPL"].action == "HOLD"
+
+    def test_parse_batch_low_confidence_becomes_hold(self, settings):
+        client = GeminiClient(settings)
+        stocks_data = [{"stock_code": "AAPL", "current_price": 185.5}]
+        raw = '[{"code": "AAPL", "action": "BUY", "confidence": 65, "rationale": "Weak"}]'
+
+        decisions = client._parse_batch_response(raw, stocks_data, token_count=100)
+
+        assert decisions["AAPL"].action == "HOLD"
+        assert decisions["AAPL"].confidence == 65
+
+    def test_parse_batch_missing_fields_gets_hold(self, settings):
+        client = GeminiClient(settings)
+        stocks_data = [{"stock_code": "AAPL", "current_price": 185.5}]
+        raw = '[{"code": "AAPL", "action": "BUY"}]'  # Missing confidence and rationale
+
+        decisions = client._parse_batch_response(raw, stocks_data, token_count=100)
+
+        assert decisions["AAPL"].action == "HOLD"
+        assert decisions["AAPL"].confidence == 0

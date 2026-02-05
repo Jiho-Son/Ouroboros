@@ -525,3 +525,233 @@ class GeminiClient:
             DecisionCache instance or None if caching disabled
         """
         return self._cache
+
+    # ------------------------------------------------------------------
+    # Batch Decision Making (for daily trading mode)
+    # ------------------------------------------------------------------
+
+    async def decide_batch(
+        self, stocks_data: list[dict[str, Any]]
+    ) -> dict[str, TradeDecision]:
+        """Make decisions for multiple stocks in a single API call.
+
+        This is designed for daily trading mode to minimize API usage
+        when working with Gemini Free tier (20 calls/day limit).
+
+        Args:
+            stocks_data: List of market data dictionaries, each with:
+                - stock_code: Stock ticker
+                - current_price: Current price
+                - market_name: Market name (optional)
+                - foreigner_net: Foreigner net buy/sell (optional)
+
+        Returns:
+            Dictionary mapping stock_code to TradeDecision
+
+        Example:
+            >>> stocks_data = [
+            ...     {"stock_code": "AAPL", "current_price": 185.5},
+            ...     {"stock_code": "MSFT", "current_price": 420.0},
+            ... ]
+            >>> decisions = await client.decide_batch(stocks_data)
+            >>> decisions["AAPL"].action
+            'BUY'
+        """
+        if not stocks_data:
+            return {}
+
+        # Build compressed batch prompt
+        market_name = stocks_data[0].get("market_name", "stock market")
+
+        # Format stock data as compact JSON array
+        compact_stocks = []
+        for stock in stocks_data:
+            compact = {
+                "code": stock["stock_code"],
+                "price": stock["current_price"],
+            }
+            if stock.get("foreigner_net", 0) != 0:
+                compact["frgn"] = stock["foreigner_net"]
+            compact_stocks.append(compact)
+
+        data_str = json.dumps(compact_stocks, ensure_ascii=False)
+
+        prompt = (
+            f"You are a professional {market_name} trading analyst.\n"
+            "Analyze the following stocks and decide whether to BUY, SELL, or HOLD each one.\n\n"
+            f"Stock Data: {data_str}\n\n"
+            "You MUST respond with ONLY a valid JSON array in this format:\n"
+            '[{"code": "AAPL", "action": "BUY", "confidence": 85, "rationale": "..."},\n'
+            ' {"code": "MSFT", "action": "HOLD", "confidence": 50, "rationale": "..."}, ...]\n\n'
+            "Rules:\n"
+            "- Return one decision object per stock\n"
+            "- action must be exactly: BUY, SELL, or HOLD\n"
+            "- confidence must be 0-100\n"
+            "- rationale should be concise (1-2 sentences)\n"
+            "- Do NOT wrap JSON in markdown code blocks\n"
+        )
+
+        # Estimate tokens
+        token_count = self._optimizer.estimate_tokens(prompt)
+        self._total_tokens_used += token_count
+
+        logger.info(
+            "Requesting batch decision for %d stocks from Gemini",
+            len(stocks_data),
+            extra={"estimated_tokens": token_count},
+        )
+
+        try:
+            response = await self._client.aio.models.generate_content(
+                model=self._model_name,
+                contents=prompt,
+            )
+            raw = response.text
+        except Exception as exc:
+            logger.error("Gemini API error in batch decision: %s", exc)
+            # Return HOLD for all stocks on API error
+            return {
+                stock["stock_code"]: TradeDecision(
+                    action="HOLD",
+                    confidence=0,
+                    rationale=f"API error: {exc}",
+                    token_count=token_count,
+                    cached=False,
+                )
+                for stock in stocks_data
+            }
+
+        # Parse batch response
+        return self._parse_batch_response(raw, stocks_data, token_count)
+
+    def _parse_batch_response(
+        self, raw: str, stocks_data: list[dict[str, Any]], token_count: int
+    ) -> dict[str, TradeDecision]:
+        """Parse batch response into a dictionary of decisions.
+
+        Args:
+            raw: Raw response from Gemini
+            stocks_data: Original stock data list
+            token_count: Token count for the request
+
+        Returns:
+            Dictionary mapping stock_code to TradeDecision
+        """
+        if not raw or not raw.strip():
+            logger.warning("Empty batch response from Gemini — defaulting all to HOLD")
+            return {
+                stock["stock_code"]: TradeDecision(
+                    action="HOLD",
+                    confidence=0,
+                    rationale="Empty response",
+                    token_count=0,
+                    cached=False,
+                )
+                for stock in stocks_data
+            }
+
+        # Strip markdown code fences if present
+        cleaned = raw.strip()
+        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", cleaned, re.DOTALL)
+        if match:
+            cleaned = match.group(1).strip()
+
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            logger.warning("Malformed JSON in batch response — defaulting all to HOLD")
+            return {
+                stock["stock_code"]: TradeDecision(
+                    action="HOLD",
+                    confidence=0,
+                    rationale="Malformed JSON response",
+                    token_count=0,
+                    cached=False,
+                )
+                for stock in stocks_data
+            }
+
+        if not isinstance(data, list):
+            logger.warning("Batch response is not a JSON array — defaulting all to HOLD")
+            return {
+                stock["stock_code"]: TradeDecision(
+                    action="HOLD",
+                    confidence=0,
+                    rationale="Invalid response format",
+                    token_count=0,
+                    cached=False,
+                )
+                for stock in stocks_data
+            }
+
+        # Build decision map
+        decisions: dict[str, TradeDecision] = {}
+        stock_codes = {stock["stock_code"] for stock in stocks_data}
+
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+
+            code = item.get("code")
+            if not code or code not in stock_codes:
+                continue
+
+            # Validate required fields
+            if not all(k in item for k in ("action", "confidence", "rationale")):
+                logger.warning("Missing fields for %s — using HOLD", code)
+                decisions[code] = TradeDecision(
+                    action="HOLD",
+                    confidence=0,
+                    rationale="Missing required fields",
+                    token_count=0,
+                    cached=False,
+                )
+                continue
+
+            action = str(item["action"]).upper()
+            if action not in VALID_ACTIONS:
+                logger.warning("Invalid action '%s' for %s — forcing HOLD", action, code)
+                action = "HOLD"
+
+            confidence = int(item["confidence"])
+            rationale = str(item["rationale"])
+
+            # Enforce confidence threshold
+            if confidence < self._confidence_threshold:
+                logger.info(
+                    "Confidence %d < threshold %d for %s — forcing HOLD",
+                    confidence,
+                    self._confidence_threshold,
+                    code,
+                )
+                action = "HOLD"
+
+            decisions[code] = TradeDecision(
+                action=action,
+                confidence=confidence,
+                rationale=rationale,
+                token_count=token_count // len(stocks_data),  # Split token cost
+                cached=False,
+            )
+            self._total_decisions += 1
+
+        # Fill in missing stocks with HOLD
+        for stock in stocks_data:
+            code = stock["stock_code"]
+            if code not in decisions:
+                logger.warning("No decision for %s in batch response — using HOLD", code)
+                decisions[code] = TradeDecision(
+                    action="HOLD",
+                    confidence=0,
+                    rationale="Not found in batch response",
+                    token_count=0,
+                    cached=False,
+                )
+
+        logger.info(
+            "Batch decision completed for %d stocks",
+            len(decisions),
+            extra={"tokens": token_count},
+        )
+
+        return decisions
