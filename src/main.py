@@ -29,7 +29,7 @@ from src.db import init_db, log_trade
 from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
 from src.markets.schedule import MarketInfo, get_next_market_open, get_open_markets
-from src.notifications.telegram_client import TelegramClient
+from src.notifications.telegram_client import TelegramClient, TelegramCommandHandler
 
 logger = logging.getLogger(__name__)
 
@@ -575,6 +575,40 @@ async def run(settings: Settings) -> None:
         enabled=settings.TELEGRAM_ENABLED,
     )
 
+    # Initialize Telegram command handler
+    command_handler = TelegramCommandHandler(telegram)
+
+    # Register basic commands
+    async def handle_start() -> None:
+        """Handle /start command."""
+        message = (
+            "<b>🤖 The Ouroboros Trading Bot</b>\n\n"
+            "AI-powered global stock trading agent with real-time notifications.\n\n"
+            "<b>Available commands:</b>\n"
+            "/help - Show this help message\n"
+            "/status - Current trading status\n"
+            "/positions - View holdings\n"
+            "/stop - Pause trading\n"
+            "/resume - Resume trading"
+        )
+        await telegram.send_message(message)
+
+    async def handle_help() -> None:
+        """Handle /help command."""
+        message = (
+            "<b>📖 Available Commands</b>\n\n"
+            "/start - Welcome message\n"
+            "/help - Show available commands\n"
+            "/status - Trading status (mode, markets, P&L)\n"
+            "/positions - Current holdings\n"
+            "/stop - Pause trading\n"
+            "/resume - Resume trading"
+        )
+        await telegram.send_message(message)
+
+    command_handler.register_command("start", handle_start)
+    command_handler.register_command("help", handle_help)
+
     # Initialize volatility hunter
     volatility_analyzer = VolatilityAnalyzer(min_volume_surge=2.0, min_price_change=1.0)
     market_scanner = MarketScanner(
@@ -620,6 +654,12 @@ async def run(settings: Settings) -> None:
         await telegram.notify_system_start(settings.MODE, settings.enabled_market_list)
     except Exception as exc:
         logger.warning("System startup notification failed: %s", exc)
+
+    # Start command handler
+    try:
+        await command_handler.start_polling()
+    except Exception as exc:
+        logger.warning("Failed to start command handler: %s", exc)
 
     try:
         # Branch based on trading mode
@@ -831,6 +871,7 @@ async def run(settings: Settings) -> None:
                     pass  # Normal — timeout means it's time for next cycle
     finally:
         # Clean up resources
+        await command_handler.stop_polling()
         await broker.close()
         await telegram.close()
         db_conn.close()
