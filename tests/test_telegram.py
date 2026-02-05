@@ -40,6 +40,76 @@ class TestNotificationSending:
     """Test notification sending behavior."""
 
     @pytest.mark.asyncio
+    async def test_send_message_success(self) -> None:
+        """send_message returns True on successful send."""
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True
+        )
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            result = await client.send_message("Test message")
+
+            assert result is True
+            assert mock_post.call_count == 1
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert payload["chat_id"] == "456"
+            assert payload["text"] == "Test message"
+            assert payload["parse_mode"] == "HTML"
+
+    @pytest.mark.asyncio
+    async def test_send_message_disabled_client(self) -> None:
+        """send_message returns False when client disabled."""
+        client = TelegramClient(enabled=False)
+
+        with patch("aiohttp.ClientSession.post") as mock_post:
+            result = await client.send_message("Test message")
+
+            assert result is False
+            mock_post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_message_api_error(self) -> None:
+        """send_message returns False on API error."""
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True
+        )
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 400
+        mock_resp.text = AsyncMock(return_value="Bad Request")
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp):
+            result = await client.send_message("Test message")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_send_message_with_markdown(self) -> None:
+        """send_message supports different parse modes."""
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True
+        )
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            result = await client.send_message("*bold*", parse_mode="Markdown")
+
+            assert result is True
+            payload = mock_post.call_args.kwargs["json"]
+            assert payload["parse_mode"] == "Markdown"
+
+    @pytest.mark.asyncio
     async def test_no_send_when_disabled(self) -> None:
         """Notifications not sent when client disabled."""
         client = TelegramClient(enabled=False)

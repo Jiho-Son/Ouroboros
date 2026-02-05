@@ -117,26 +117,28 @@ class TelegramClient:
         if self._session is not None and not self._session.closed:
             await self._session.close()
 
-    async def _send_notification(self, msg: NotificationMessage) -> None:
+    async def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
         """
-        Send notification to Telegram with graceful degradation.
+        Send a generic text message to Telegram.
 
         Args:
-            msg: Notification message to send
+            text: Message text to send
+            parse_mode: Parse mode for formatting (HTML or Markdown)
+
+        Returns:
+            True if message was sent successfully, False otherwise
         """
         if not self._enabled:
-            return
+            return False
 
         try:
             await self._rate_limiter.acquire()
 
-            formatted_message = f"{msg.priority.emoji} {msg.message}"
             url = f"{self.API_BASE.format(token=self._bot_token)}/sendMessage"
-
             payload = {
                 "chat_id": self._chat_id,
-                "text": formatted_message,
-                "parse_mode": "HTML",
+                "text": text,
+                "parse_mode": parse_mode,
             }
 
             session = self._get_session()
@@ -146,15 +148,29 @@ class TelegramClient:
                     logger.error(
                         "Telegram API error (status=%d): %s", resp.status, error_text
                     )
-                else:
-                    logger.debug("Telegram notification sent: %s", msg.message[:50])
+                    return False
+                logger.debug("Telegram message sent: %s", text[:50])
+                return True
 
         except asyncio.TimeoutError:
-            logger.error("Telegram notification timeout")
+            logger.error("Telegram message timeout")
+            return False
         except aiohttp.ClientError as exc:
-            logger.error("Telegram notification failed: %s", exc)
+            logger.error("Telegram message failed: %s", exc)
+            return False
         except Exception as exc:
-            logger.error("Unexpected error sending notification: %s", exc)
+            logger.error("Unexpected error sending message: %s", exc)
+            return False
+
+    async def _send_notification(self, msg: NotificationMessage) -> None:
+        """
+        Send notification to Telegram with graceful degradation.
+
+        Args:
+            msg: Notification message to send
+        """
+        formatted_message = f"{msg.priority.emoji} {msg.message}"
+        await self.send_message(formatted_message)
 
     async def notify_trade_execution(
         self,
