@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     TELEGRAM_CHAT_ID: str | None = None
     TELEGRAM_ENABLED: bool = True
 
+    # Telegram Commands (optional)
+    TELEGRAM_COMMANDS_ENABLED: bool = True
+    TELEGRAM_POLLING_INTERVAL: float = 1.0  # seconds
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @property
