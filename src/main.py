@@ -633,10 +633,101 @@ async def run(settings: Settings) -> None:
             "Trading operations have been restarted."
         )
 
+    async def handle_status() -> None:
+        """Handle /status command - show trading status."""
+        try:
+            # Get trading status
+            trading_status = "Active" if pause_trading.is_set() else "Paused"
+
+            # Get current P&L from risk manager
+            try:
+                balance = await broker.get_balance()
+                current_pnl = risk.calculate_pnl(balance)
+                pnl_str = f"{current_pnl:+.2f}%"
+            except Exception as exc:
+                logger.warning("Failed to get P&L: %s", exc)
+                pnl_str = "N/A"
+
+            # Format market list
+            markets_str = ", ".join(settings.enabled_market_list)
+
+            message = (
+                "<b>📊 Trading Status</b>\n\n"
+                f"<b>Mode:</b> {settings.MODE.upper()}\n"
+                f"<b>Markets:</b> {markets_str}\n"
+                f"<b>Trading:</b> {trading_status}\n\n"
+                f"<b>Current P&L:</b> {pnl_str}\n"
+                f"<b>Circuit Breaker:</b> {risk.circuit_breaker_threshold:.1f}%"
+            )
+            await telegram.send_message(message)
+
+        except Exception as exc:
+            logger.error("Error in /status handler: %s", exc)
+            await telegram.send_message(
+                "<b>⚠️ Error</b>\n\nFailed to retrieve trading status."
+            )
+
+    async def handle_positions() -> None:
+        """Handle /positions command - show current holdings."""
+        try:
+            # Get account balance
+            balance = await broker.get_balance()
+
+            # Check if there are any positions
+            if not balance.stocks:
+                await telegram.send_message(
+                    "<b>💼 Current Holdings</b>\n\n"
+                    "No positions currently held."
+                )
+                return
+
+            # Group positions by market (domestic vs overseas)
+            domestic_positions = []
+            overseas_positions = []
+
+            for stock in balance.stocks:
+                position_str = (
+                    f"• {stock.code}: {stock.quantity} shares @ "
+                    f"{stock.avg_price:,.0f}"
+                )
+
+                # Simple heuristic: if code is 6 digits, it's domestic (Korea)
+                if len(stock.code) == 6 and stock.code.isdigit():
+                    domestic_positions.append(position_str)
+                else:
+                    overseas_positions.append(position_str)
+
+            # Build message
+            message_parts = ["<b>💼 Current Holdings</b>\n"]
+
+            if domestic_positions:
+                message_parts.append("\n🇰🇷 <b>Korea</b>")
+                message_parts.extend(domestic_positions)
+
+            if overseas_positions:
+                message_parts.append("\n🇺🇸 <b>Overseas</b>")
+                message_parts.extend(overseas_positions)
+
+            # Add total cash
+            message_parts.append(
+                f"\n<b>Cash:</b> ₩{balance.total_cash:,.0f}"
+            )
+
+            message = "\n".join(message_parts)
+            await telegram.send_message(message)
+
+        except Exception as exc:
+            logger.error("Error in /positions handler: %s", exc)
+            await telegram.send_message(
+                "<b>⚠️ Error</b>\n\nFailed to retrieve positions."
+            )
+
     command_handler.register_command("start", handle_start)
     command_handler.register_command("help", handle_help)
     command_handler.register_command("stop", handle_stop)
     command_handler.register_command("resume", handle_resume)
+    command_handler.register_command("status", handle_status)
+    command_handler.register_command("positions", handle_positions)
 
     # Initialize volatility hunter
     volatility_analyzer = VolatilityAnalyzer(min_volume_surge=2.0, min_price_change=1.0)
