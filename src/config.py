@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     FAT_FINGER_PCT: float = Field(default=30.0, gt=0.0, le=100.0)
     CONFIDENCE_THRESHOLD: int = Field(default=80, ge=0, le=100)
 
+    # Smart Scanner Configuration
+    RSI_OVERSOLD_THRESHOLD: int = Field(default=30, ge=0, le=50)
+    RSI_MOMENTUM_THRESHOLD: int = Field(default=70, ge=50, le=100)
+    VOL_MULTIPLIER: float = Field(default=2.0, gt=1.0, le=10.0)
+    SCANNER_TOP_N: int = Field(default=3, ge=1, le=10)
+
     # Database
     DB_PATH: str = "data/trade_logs.db"
 

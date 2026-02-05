@@ -124,6 +124,54 @@ class VolatilityAnalyzer:
             return 1.0
         return current_volume / avg_volume
 
+    def calculate_rsi(
+        self,
+        close_prices: list[float],
+        period: int = 14,
+    ) -> float:
+        """Calculate Relative Strength Index (RSI) using Wilder's smoothing.
+
+        Args:
+            close_prices: List of closing prices (oldest to newest, minimum period+1 values)
+            period: RSI period (default 14)
+
+        Returns:
+            RSI value between 0 and 100, or 50.0 (neutral) if insufficient data
+
+        Examples:
+            >>> analyzer = VolatilityAnalyzer()
+            >>> prices = [100 - i * 0.5 for i in range(20)]  # Downtrend
+            >>> rsi = analyzer.calculate_rsi(prices)
+            >>> assert rsi < 50  # Oversold territory
+        """
+        if len(close_prices) < period + 1:
+            return 50.0  # Neutral RSI if insufficient data
+
+        # Calculate price changes
+        changes = [close_prices[i] - close_prices[i - 1] for i in range(1, len(close_prices))]
+
+        # Separate gains and losses
+        gains = [max(0.0, change) for change in changes]
+        losses = [max(0.0, -change) for change in changes]
+
+        # Calculate initial average gain/loss (simple average for first period)
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+
+        # Apply Wilder's smoothing for remaining periods
+        for i in range(period, len(changes)):
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+
+        # Calculate RS and RSI
+        if avg_loss == 0:
+            return 100.0  # All gains, maximum RSI
+
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+
+        return rsi
+
     def calculate_pv_divergence(
         self,
         price_change: float,
