@@ -200,14 +200,151 @@ telegram = TelegramClient(
 )
 ```
 
+## Bidirectional Commands
+
+Control your trading bot remotely via Telegram commands. The bot not only sends notifications but also accepts commands for real-time control.
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message with quick start guide |
+| `/help` | List all available commands |
+| `/status` | Current trading status (mode, markets, P&L, circuit breaker) |
+| `/positions` | View current holdings grouped by market |
+| `/stop` | Pause all trading operations |
+| `/resume` | Resume trading operations |
+
+### Command Examples
+
+**Check Trading Status**
+```
+You: /status
+
+Bot:
+📊 Trading Status
+
+Mode: PAPER
+Markets: Korea, United States
+Trading: Active
+
+Current P&L: +2.50%
+Circuit Breaker: -3.0%
+```
+
+**View Holdings**
+```
+You: /positions
+
+Bot:
+💼 Current Holdings
+
+🇰🇷 Korea
+• 005930: 10 shares @ 70,000
+• 035420: 5 shares @ 200,000
+
+🇺🇸 Overseas
+• AAPL: 15 shares @ 175
+• TSLA: 8 shares @ 245
+
+Cash: ₩5,000,000
+```
+
+**Pause Trading**
+```
+You: /stop
+
+Bot:
+⏸️ Trading Paused
+
+All trading operations have been suspended.
+Use /resume to restart trading.
+```
+
+**Resume Trading**
+```
+You: /resume
+
+Bot:
+▶️ Trading Resumed
+
+Trading operations have been restarted.
+```
+
+### Security
+
+**Chat ID Verification**
+- Commands are only accepted from the configured `TELEGRAM_CHAT_ID`
+- Unauthorized users receive no response
+- Command attempts from wrong chat IDs are logged
+
+**Authorization Required**
+- Only the bot owner (chat ID in `.env`) can control trading
+- No way for unauthorized users to discover or use commands
+- All command executions are logged for audit
+
+### Configuration
+
+Add to your `.env` file:
+
+```bash
+# Commands are enabled by default
+TELEGRAM_COMMANDS_ENABLED=true
+
+# Polling interval (seconds) - how often to check for commands
+TELEGRAM_POLLING_INTERVAL=1.0
+```
+
+To disable commands but keep notifications:
+```bash
+TELEGRAM_COMMANDS_ENABLED=false
+```
+
+### How It Works
+
+1. **Long Polling**: Bot checks Telegram API every second for new messages
+2. **Command Parsing**: Messages starting with `/` are parsed as commands
+3. **Authentication**: Chat ID is verified before executing any command
+4. **Execution**: Command handler is called with current bot state
+5. **Response**: Result is sent back via Telegram
+
+### Error Handling
+
+- Command parsing errors → "Unknown command" response
+- API failures → Graceful degradation, error logged
+- Invalid state → Appropriate message (e.g., "Trading is already paused")
+- Trading loop isolation → Command errors never crash trading
+
+### Troubleshooting Commands
+
+**Commands not responding**
+1. Check `TELEGRAM_COMMANDS_ENABLED=true` in `.env`
+2. Verify you started conversation with `/start`
+3. Check logs for command handler errors
+4. Confirm chat ID matches `.env` configuration
+
+**Wrong chat ID**
+- Commands from unauthorized chats are silently ignored
+- Check logs for "unauthorized chat_id" warnings
+
+**Delayed responses**
+- Polling interval is 1 second by default
+- Network latency may add delay
+- Check `TELEGRAM_POLLING_INTERVAL` setting
+
 ## API Reference
 
 See `telegram_client.py` for full API documentation.
 
-Key methods:
+### Notification Methods
 - `notify_trade_execution()` - Trade alerts
 - `notify_circuit_breaker()` - Emergency stops
 - `notify_fat_finger()` - Order rejections
 - `notify_market_open/close()` - Session tracking
 - `notify_system_start/shutdown()` - Lifecycle events
 - `notify_error()` - Error alerts
+
+### Command Handler
+- `TelegramCommandHandler` - Bidirectional command processing
+- `register_command()` - Register custom command handlers
+- `start_polling()` / `stop_polling()` - Lifecycle management
