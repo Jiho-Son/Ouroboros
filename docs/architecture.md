@@ -2,7 +2,42 @@
 
 ## Overview
 
-Self-evolving AI trading agent for global stock markets via KIS (Korea Investment & Securities) API. The main loop in `src/main.py` orchestrates four components in a 60-second cycle per stock across multiple markets.
+Self-evolving AI trading agent for global stock markets via KIS (Korea Investment & Securities) API. The main loop in `src/main.py` orchestrates four components across multiple markets with two trading modes: daily (batch API calls) or realtime (per-stock decisions).
+
+## Trading Modes
+
+The system supports two trading frequency modes controlled by the `TRADE_MODE` environment variable:
+
+### Daily Mode (default)
+
+Optimized for Gemini Free tier API limits (20 calls/day):
+
+- **Batch decisions**: 1 API call per market per session
+- **Fixed schedule**: 4 sessions per day at 6-hour intervals (configurable)
+- **API efficiency**: Processes all stocks in a market simultaneously
+- **Use case**: Free tier users, cost-conscious deployments
+- **Configuration**:
+  ```bash
+  TRADE_MODE=daily
+  DAILY_SESSIONS=4        # Sessions per day (1-10)
+  SESSION_INTERVAL_HOURS=6  # Hours between sessions (1-24)
+  ```
+
+**Example**: With 2 markets (US, KR) and 4 sessions/day = 8 API calls/day (within 20 call limit)
+
+### Realtime Mode
+
+High-frequency trading with individual stock analysis:
+
+- **Per-stock decisions**: 1 API call per stock per cycle
+- **60-second interval**: Continuous monitoring
+- **Use case**: Production deployments with Gemini paid tier
+- **Configuration**:
+  ```bash
+  TRADE_MODE=realtime
+  ```
+
+**Note**: Realtime mode requires Gemini API subscription due to high call volume.
 
 ## Core Components
 
@@ -191,6 +226,11 @@ CONFIDENCE_THRESHOLD=80
 MAX_LOSS_PCT=3.0
 MAX_ORDER_PCT=30.0
 ENABLED_MARKETS=KR,US_NASDAQ  # Comma-separated market codes
+
+# Trading Mode (API efficiency)
+TRADE_MODE=daily              # daily | realtime
+DAILY_SESSIONS=4              # Sessions per day (daily mode only)
+SESSION_INTERVAL_HOURS=6      # Hours between sessions (daily mode only)
 
 # Telegram Notifications (optional)
 TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz

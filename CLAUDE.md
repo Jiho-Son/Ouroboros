@@ -53,6 +53,7 @@ Get real-time alerts for trades, circuit breakers, and system events via Telegra
 - **[Context Tree](docs/context-tree.md)** — L1-L7 hierarchical memory system
 - **[Testing](docs/testing.md)** — Test structure, coverage requirements, writing tests
 - **[Agent Policies](docs/agents.md)** — Prime directives, constraints, prohibited actions
+- **[Requirements Log](docs/requirements-log.md)** — User requirements and feedback tracking
 
 ## Core Principles
 
@@ -60,6 +61,15 @@ Get real-time alerts for trades, circuit breakers, and system events via Telegra
 2. **Test Everything** — 80% coverage minimum, all changes require tests
 3. **Issue-Driven Development** — All work goes through Gitea issues → feature branches → PRs
 4. **Agent Specialization** — Use dedicated agents for design, coding, testing, docs, review
+
+## Requirements Management
+
+User requirements and feedback are tracked in [docs/requirements-log.md](docs/requirements-log.md):
+
+- New requirements are added chronologically with dates
+- Code changes should reference related requirements
+- Helps maintain project evolution aligned with user needs
+- Preserves context across conversations and development cycles
 
 ## Project Structure
 
