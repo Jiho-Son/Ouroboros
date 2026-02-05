@@ -492,7 +492,8 @@ class TelegramCommandHandler:
             if not command_parts:
                 return
 
-            command_name = command_parts[0]
+            # Remove @botname suffix if present (for group chats)
+            command_name = command_parts[0].split("@")[0]
 
             # Execute handler
             handler = self._commands.get(command_name)

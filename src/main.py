@@ -579,25 +579,10 @@ async def run(settings: Settings) -> None:
     command_handler = TelegramCommandHandler(telegram)
 
     # Register basic commands
-    async def handle_start() -> None:
-        """Handle /start command."""
-        message = (
-            "<b>🤖 The Ouroboros Trading Bot</b>\n\n"
-            "AI-powered global stock trading agent with real-time notifications.\n\n"
-            "<b>Available commands:</b>\n"
-            "/help - Show this help message\n"
-            "/status - Current trading status\n"
-            "/positions - View holdings\n"
-            "/stop - Pause trading\n"
-            "/resume - Resume trading"
-        )
-        await telegram.send_message(message)
-
     async def handle_help() -> None:
         """Handle /help command."""
         message = (
             "<b>📖 Available Commands</b>\n\n"
-            "/start - Welcome message\n"
             "/help - Show available commands\n"
             "/status - Trading status (mode, markets, P&L)\n"
             "/positions - Current holdings\n"
@@ -722,7 +707,6 @@ async def run(settings: Settings) -> None:
                 "<b>⚠️ Error</b>\n\nFailed to retrieve positions."
             )
 
-    command_handler.register_command("start", handle_start)
     command_handler.register_command("help", handle_help)
     command_handler.register_command("stop", handle_stop)
     command_handler.register_command("resume", handle_resume)
