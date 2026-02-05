@@ -231,6 +231,31 @@ class TestUpdateHandling:
         assert executed is False
 
     @pytest.mark.asyncio
+    async def test_handle_command_with_botname(self) -> None:
+        """Commands with @botname suffix are handled correctly."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        executed = False
+
+        async def test_command() -> None:
+            nonlocal executed
+            executed = True
+
+        handler.register_command("start", test_command)
+
+        update = {
+            "update_id": 1,
+            "message": {
+                "chat": {"id": 456},
+                "text": "/start@mybot",
+            },
+        }
+
+        await handler._handle_update(update)
+        assert executed is True
+
+    @pytest.mark.asyncio
     async def test_handle_update_error_isolation(self) -> None:
         """Errors in handlers don't crash the system."""
         client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
@@ -639,51 +664,6 @@ class TestBasicCommands:
     """Test basic command implementations."""
 
     @pytest.mark.asyncio
-    async def test_start_command_content(self) -> None:
-        """Start command contains welcome message and command list."""
-        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
-        handler = TelegramCommandHandler(client)
-
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
-        mock_resp.__aexit__ = AsyncMock(return_value=False)
-
-        async def mock_start() -> None:
-            """Mock /start handler."""
-            message = (
-                "<b>🤖 The Ouroboros Trading Bot</b>\n\n"
-                "AI-powered global stock trading agent with real-time notifications.\n\n"
-                "<b>Available commands:</b>\n"
-                "/help - Show this help message\n"
-                "/status - Current trading status\n"
-                "/positions - View holdings\n"
-                "/stop - Pause trading\n"
-                "/resume - Resume trading"
-            )
-            await client.send_message(message)
-
-        handler.register_command("start", mock_start)
-
-        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
-            update = {
-                "update_id": 1,
-                "message": {
-                    "chat": {"id": 456},
-                    "text": "/start",
-                },
-            }
-
-            await handler._handle_update(update)
-
-            # Verify message was sent
-            assert mock_post.call_count == 1
-            payload = mock_post.call_args.kwargs["json"]
-            assert "Ouroboros Trading Bot" in payload["text"]
-            assert "/help" in payload["text"]
-            assert "/status" in payload["text"]
-
-    @pytest.mark.asyncio
     async def test_help_command_content(self) -> None:
         """Help command lists all available commands."""
         client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
@@ -698,7 +678,6 @@ class TestBasicCommands:
             """Mock /help handler."""
             message = (
                 "<b>📖 Available Commands</b>\n\n"
-                "/start - Welcome message\n"
                 "/help - Show available commands\n"
                 "/status - Trading status (mode, markets, P&L)\n"
                 "/positions - Current holdings\n"
@@ -724,7 +703,6 @@ class TestBasicCommands:
             assert mock_post.call_count == 1
             payload = mock_post.call_args.kwargs["json"]
             assert "Available Commands" in payload["text"]
-            assert "/start" in payload["text"]
             assert "/help" in payload["text"]
             assert "/status" in payload["text"]
             assert "/positions" in payload["text"]
