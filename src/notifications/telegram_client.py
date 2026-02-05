@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
 
@@ -339,3 +340,171 @@ class TelegramClient:
         await self._send_notification(
             NotificationMessage(priority=NotificationPriority.HIGH, message=message)
         )
+
+
+class TelegramCommandHandler:
+    """Handles incoming Telegram commands via long polling."""
+
+    def __init__(
+        self, client: TelegramClient, polling_interval: float = 1.0
+    ) -> None:
+        """
+        Initialize command handler.
+
+        Args:
+            client: TelegramClient instance for sending responses
+            polling_interval: Polling interval in seconds
+        """
+        self._client = client
+        self._polling_interval = polling_interval
+        self._commands: dict[str, Callable[[], Awaitable[None]]] = {}
+        self._last_update_id = 0
+        self._polling_task: asyncio.Task[None] | None = None
+        self._running = False
+
+    def register_command(
+        self, command: str, handler: Callable[[], Awaitable[None]]
+    ) -> None:
+        """
+        Register a command handler.
+
+        Args:
+            command: Command name (without leading slash, e.g., "start")
+            handler: Async function to handle the command
+        """
+        self._commands[command] = handler
+        logger.debug("Registered command handler: /%s", command)
+
+    async def start_polling(self) -> None:
+        """Start long polling for commands."""
+        if self._running:
+            logger.warning("Command handler already running")
+            return
+
+        if not self._client._enabled:
+            logger.info("Command handler disabled (TelegramClient disabled)")
+            return
+
+        self._running = True
+        self._polling_task = asyncio.create_task(self._poll_loop())
+        logger.info("Started Telegram command polling")
+
+    async def stop_polling(self) -> None:
+        """Stop polling and cancel pending tasks."""
+        if not self._running:
+            return
+
+        self._running = False
+        if self._polling_task:
+            self._polling_task.cancel()
+            try:
+                await self._polling_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("Stopped Telegram command polling")
+
+    async def _poll_loop(self) -> None:
+        """Main polling loop that fetches updates."""
+        while self._running:
+            try:
+                updates = await self._get_updates()
+                for update in updates:
+                    await self._handle_update(update)
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.error("Error in polling loop: %s", exc)
+
+            await asyncio.sleep(self._polling_interval)
+
+    async def _get_updates(self) -> list[dict]:
+        """
+        Fetch updates from Telegram API.
+
+        Returns:
+            List of update objects
+        """
+        try:
+            url = f"{self._client.API_BASE.format(token=self._client._bot_token)}/getUpdates"
+            payload = {
+                "offset": self._last_update_id + 1,
+                "timeout": int(self._polling_interval),
+                "allowed_updates": ["message"],
+            }
+
+            session = self._client._get_session()
+            async with session.post(url, json=payload) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(
+                        "getUpdates API error (status=%d): %s", resp.status, error_text
+                    )
+                    return []
+
+                data = await resp.json()
+                if not data.get("ok"):
+                    logger.error("getUpdates returned ok=false: %s", data)
+                    return []
+
+                updates = data.get("result", [])
+                if updates:
+                    self._last_update_id = updates[-1]["update_id"]
+
+                return updates
+
+        except asyncio.TimeoutError:
+            logger.debug("getUpdates timeout (normal)")
+            return []
+        except aiohttp.ClientError as exc:
+            logger.error("getUpdates failed: %s", exc)
+            return []
+        except Exception as exc:
+            logger.error("Unexpected error in _get_updates: %s", exc)
+            return []
+
+    async def _handle_update(self, update: dict) -> None:
+        """
+        Parse and handle a single update.
+
+        Args:
+            update: Update object from Telegram API
+        """
+        try:
+            message = update.get("message")
+            if not message:
+                return
+
+            # Verify chat_id matches configured chat
+            chat_id = str(message.get("chat", {}).get("id", ""))
+            if chat_id != self._client._chat_id:
+                logger.warning(
+                    "Ignoring command from unauthorized chat_id: %s", chat_id
+                )
+                return
+
+            # Extract command text
+            text = message.get("text", "").strip()
+            if not text.startswith("/"):
+                return
+
+            # Parse command (remove leading slash and extract command name)
+            command_parts = text[1:].split()
+            if not command_parts:
+                return
+
+            command_name = command_parts[0]
+
+            # Execute handler
+            handler = self._commands.get(command_name)
+            if handler:
+                logger.info("Executing command: /%s", command_name)
+                await handler()
+            else:
+                logger.debug("Unknown command: /%s", command_name)
+                await self._client.send_message(
+                    f"Unknown command: /{command_name}\nUse /help to see available commands."
+                )
+
+        except Exception as exc:
+            logger.error("Error handling update: %s", exc)
+            # Don't crash the polling loop on handler errors
