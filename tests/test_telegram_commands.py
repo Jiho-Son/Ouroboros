@@ -442,6 +442,199 @@ class TestTradingControlCommands:
             assert "already active" in payload["text"]
 
 
+class TestStatusCommands:
+    """Test status query commands."""
+
+    @pytest.mark.asyncio
+    async def test_status_command_shows_trading_info(self) -> None:
+        """Status command displays mode, markets, and P&L."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_status() -> None:
+            """Mock /status handler."""
+            message = (
+                "<b>📊 Trading Status</b>\n\n"
+                "<b>Mode:</b> PAPER\n"
+                "<b>Markets:</b> Korea, United States\n"
+                "<b>Trading:</b> Active\n\n"
+                "<b>Current P&L:</b> +2.50%\n"
+                "<b>Circuit Breaker:</b> -3.0%"
+            )
+            await client.send_message(message)
+
+        handler.register_command("status", mock_status)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            update = {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 456},
+                    "text": "/status",
+                },
+            }
+
+            await handler._handle_update(update)
+
+            # Verify message was sent
+            assert mock_post.call_count == 1
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Trading Status" in payload["text"]
+            assert "PAPER" in payload["text"]
+            assert "P&L" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_status_command_error_handling(self) -> None:
+        """Status command handles errors gracefully."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_status_error() -> None:
+            """Mock /status handler with error."""
+            await client.send_message(
+                "<b>⚠️ Error</b>\n\nFailed to retrieve trading status."
+            )
+
+        handler.register_command("status", mock_status_error)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            update = {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 456},
+                    "text": "/status",
+                },
+            }
+
+            await handler._handle_update(update)
+
+            # Should send error message
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Error" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_positions_command_shows_holdings(self) -> None:
+        """Positions command displays current holdings."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_positions() -> None:
+            """Mock /positions handler."""
+            message = (
+                "<b>💼 Current Holdings</b>\n"
+                "\n🇰🇷 <b>Korea</b>\n"
+                "• 005930: 10 shares @ 70,000\n"
+                "\n🇺🇸 <b>Overseas</b>\n"
+                "• AAPL: 15 shares @ 175\n"
+                "\n<b>Cash:</b> ₩5,000,000"
+            )
+            await client.send_message(message)
+
+        handler.register_command("positions", mock_positions)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            update = {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 456},
+                    "text": "/positions",
+                },
+            }
+
+            await handler._handle_update(update)
+
+            # Verify message was sent
+            assert mock_post.call_count == 1
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Current Holdings" in payload["text"]
+            assert "shares" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_positions_command_empty_holdings(self) -> None:
+        """Positions command handles empty portfolio."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_positions_empty() -> None:
+            """Mock /positions handler with no positions."""
+            message = (
+                "<b>💼 Current Holdings</b>\n\n"
+                "No positions currently held."
+            )
+            await client.send_message(message)
+
+        handler.register_command("positions", mock_positions_empty)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            update = {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 456},
+                    "text": "/positions",
+                },
+            }
+
+            await handler._handle_update(update)
+
+            # Verify message was sent
+            payload = mock_post.call_args.kwargs["json"]
+            assert "No positions" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_positions_command_error_handling(self) -> None:
+        """Positions command handles errors gracefully."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_positions_error() -> None:
+            """Mock /positions handler with error."""
+            await client.send_message(
+                "<b>⚠️ Error</b>\n\nFailed to retrieve positions."
+            )
+
+        handler.register_command("positions", mock_positions_error)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            update = {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 456},
+                    "text": "/positions",
+                },
+            }
+
+            await handler._handle_update(update)
+
+            # Should send error message
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Error" in payload["text"]
+
+
 class TestBasicCommands:
     """Test basic command implementations."""
 
