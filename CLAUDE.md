@@ -45,6 +45,39 @@ Get real-time alerts for trades, circuit breakers, and system events via Telegra
 
 **Fail-safe**: Notifications never crash the trading system. Missing credentials or API errors are logged but trading continues normally.
 
+## Smart Volatility Scanner (Optional)
+
+Python-first filtering pipeline that reduces Gemini API calls by pre-filtering stocks using technical indicators.
+
+### How It Works
+
+1. **Fetch Rankings** — KIS API volume surge rankings (top 30 stocks)
+2. **Python Filter** — RSI + volume ratio calculations (no AI)
+   - Volume > 200% of previous day
+   - RSI(14) < 30 (oversold) OR RSI(14) > 70 (momentum)
+3. **AI Judgment** — Only qualified candidates (1-3 stocks) sent to Gemini
+
+### Configuration
+
+Add to `.env` (optional, has sensible defaults):
+```bash
+RSI_OVERSOLD_THRESHOLD=30    # 0-50, default 30
+RSI_MOMENTUM_THRESHOLD=70    # 50-100, default 70
+VOL_MULTIPLIER=2.0           # Volume threshold (2.0 = 200%)
+SCANNER_TOP_N=3              # Max candidates per scan
+```
+
+### Benefits
+
+- **Reduces API costs** — Process 1-3 stocks instead of 20-30
+- **Python-based filtering** — Fast technical analysis before AI
+- **Evolution-ready** — Selection context logged for strategy optimization
+- **Fault-tolerant** — Falls back to static watchlist on API failure
+
+### Realtime Mode Only
+
+Smart Scanner runs in `TRADE_MODE=realtime` only. Daily mode uses static watchlists for batch efficiency.
+
 ## Documentation
 
 - **[Workflow Guide](docs/workflow.md)** — Git workflow policy and agent-based development
@@ -75,6 +108,7 @@ User requirements and feedback are tracked in [docs/requirements-log.md](docs/re
 
 ```
 src/
+├── analysis/        # Technical analysis (RSI, volatility, smart scanner)
 ├── broker/          # KIS API client (domestic + overseas)
 ├── brain/           # Gemini AI decision engine
 ├── core/            # Risk manager (READ-ONLY)
@@ -85,7 +119,7 @@ src/
 ├── main.py          # Trading loop orchestrator
 └── config.py        # Settings (from .env)
 
-tests/               # 273 tests across 13 files
+tests/               # 343 tests across 14 files
 docs/                # Extended documentation
 ```
 

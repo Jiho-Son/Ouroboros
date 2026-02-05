@@ -64,7 +64,39 @@ High-frequency trading with individual stock analysis:
 - `get_open_markets()` returns currently active markets
 - `get_next_market_open()` finds next market to open and when
 
-### 2. Brain (`src/brain/gemini_client.py`)
+**New API Methods** (added in v0.9.0):
+- `fetch_market_rankings()` — Fetch volume surge rankings from KIS API
+- `get_daily_prices()` — Fetch OHLCV history for technical analysis
+
+### 2. Analysis (`src/analysis/`)
+
+**VolatilityAnalyzer** (`volatility.py`) — Technical indicator calculations
+
+- ATR (Average True Range) for volatility measurement
+- RSI (Relative Strength Index) using Wilder's smoothing method
+- Price change percentages across multiple timeframes
+- Volume surge ratios and price-volume divergence
+- Momentum scoring (0-100 scale)
+- Breakout/breakdown pattern detection
+
+**SmartVolatilityScanner** (`smart_scanner.py`) — Python-first filtering pipeline
+
+- **Step 1**: Fetch volume rankings from KIS API (top 30 stocks)
+- **Step 2**: Calculate RSI and volume ratio for each stock
+- **Step 3**: Apply filters:
+  - Volume ratio >= `VOL_MULTIPLIER` (default 2.0x previous day)
+  - RSI < `RSI_OVERSOLD_THRESHOLD` (30) OR RSI > `RSI_MOMENTUM_THRESHOLD` (70)
+- **Step 4**: Score candidates by RSI extremity (60%) + volume surge (40%)
+- **Step 5**: Return top N candidates (default 3) for AI analysis
+- **Fallback**: Uses static watchlist if ranking API unavailable
+- **Realtime mode only**: Daily mode uses batch processing for API efficiency
+
+**Benefits:**
+- Reduces Gemini API calls from 20-30 stocks to 1-3 qualified candidates
+- Fast Python-based filtering before expensive AI judgment
+- Logs selection context (RSI, volume_ratio, signal, score) for Evolution system
+
+### 3. Brain (`src/brain/gemini_client.py`)
 
 **GeminiClient** — AI decision engine powered by Google Gemini
 
@@ -74,7 +106,7 @@ High-frequency trading with individual stock analysis:
 - Falls back to safe HOLD on any parse/API error
 - Handles markdown-wrapped JSON, malformed responses, invalid actions
 
-### 3. Risk Manager (`src/core/risk_manager.py`)
+### 4. Risk Manager (`src/core/risk_manager.py`)
 
 **RiskManager** — Safety circuit breaker and order validation
 
@@ -86,7 +118,7 @@ High-frequency trading with individual stock analysis:
 - **Fat-Finger Protection**: Rejects orders exceeding 30% of available cash
   - Must always be enforced, cannot be disabled
 
-### 4. Notifications (`src/notifications/telegram_client.py`)
+### 5. Notifications (`src/notifications/telegram_client.py`)
 
 **TelegramClient** — Real-time event notifications via Telegram Bot API
 
@@ -105,7 +137,7 @@ High-frequency trading with individual stock analysis:
 
 **Setup:** See [src/notifications/README.md](../src/notifications/README.md) for bot creation and configuration.
 
-### 5. Evolution (`src/evolution/optimizer.py`)
+### 6. Evolution (`src/evolution/optimizer.py`)
 
 **StrategyOptimizer** — Self-improvement loop
 
@@ -117,9 +149,11 @@ High-frequency trading with individual stock analysis:
 
 ## Data Flow
 
+### Realtime Mode (with Smart Scanner)
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Main Loop (60s cycle per stock, per market)                │
+│ Main Loop (60s cycle per market)                           │
 └─────────────────────────────────────────────────────────────┘
                            │
                            ▼
@@ -128,6 +162,21 @@ High-frequency trading with individual stock analysis:
         │ - Get open markets                │
         │ - Filter by enabled markets       │
         │ - Wait if all closed              │
+        └──────────────────┬────────────────┘
+                           │
+                           ▼
+        ┌──────────────────────────────────┐
+        │ Smart Scanner (Python-first)      │
+        │ - Fetch volume rankings (KIS)    │
+        │ - Get 20d price history per stock│
+        │ - Calculate RSI(14) + vol ratio  │
+        │ - Filter: vol>2x AND RSI extreme │
+        │ - Return top 3 qualified stocks  │
+        └──────────────────┬────────────────┘
+                           │
+                           ▼
+        ┌──────────────────────────────────┐
+        │ For Each Qualified Candidate      │
         └──────────────────┬────────────────┘
                            │
                            ▼
@@ -145,7 +194,7 @@ High-frequency trading with individual stock analysis:
                            │
                            ▼
         ┌──────────────────────────────────┐
-        │ Brain: Get Decision               │
+        │ Brain: Get Decision (AI)          │
         │ - Build prompt with market data   │
         │ - Call Gemini API                 │
         │ - Parse JSON response             │
@@ -181,6 +230,9 @@ High-frequency trading with individual stock analysis:
         │ - SQLite (data/trades.db)         │
         │ - Track: action, confidence,      │
         │   rationale, market, exchange     │
+        │ - NEW: selection_context (JSON)   │
+        │   - RSI, volume_ratio, signal     │
+        │   - For Evolution optimization    │
         └───────────────────────────────────┘
 ```
 
@@ -200,11 +252,24 @@ CREATE TABLE trades (
     price REAL,
     pnl REAL DEFAULT 0.0,
     market TEXT DEFAULT 'KR',       -- KR | US_NASDAQ | JP | etc.
-    exchange_code TEXT DEFAULT 'KRX' -- KRX | NASD | NYSE | etc.
+    exchange_code TEXT DEFAULT 'KRX', -- KRX | NASD | NYSE | etc.
+    selection_context TEXT          -- JSON: {rsi, volume_ratio, signal, score}
 );
 ```
 
-Auto-migration: Adds `market` and `exchange_code` columns if missing for backward compatibility.
+**Selection Context** (new in v0.9.0): Stores scanner selection criteria as JSON:
+```json
+{
+  "rsi": 28.5,
+  "volume_ratio": 2.7,
+  "signal": "oversold",
+  "score": 85.2
+}
+```
+
+Enables Evolution system to analyze correlation between selection criteria and trade outcomes.
+
+Auto-migration: Adds `market`, `exchange_code`, and `selection_context` columns if missing for backward compatibility.
 
 ## Configuration
 
@@ -236,6 +301,12 @@ SESSION_INTERVAL_HOURS=6      # Hours between sessions (daily mode only)
 TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
 TELEGRAM_CHAT_ID=123456789
 TELEGRAM_ENABLED=true
+
+# Smart Scanner (optional, realtime mode only)
+RSI_OVERSOLD_THRESHOLD=30    # 0-50, oversold threshold
+RSI_MOMENTUM_THRESHOLD=70    # 50-100, momentum threshold
+VOL_MULTIPLIER=2.0           # Minimum volume ratio (2.0 = 200%)
+SCANNER_TOP_N=3              # Max qualified candidates per scan
 ```
 
 Tests use in-memory SQLite (`DB_PATH=":memory:"`) and dummy credentials via `tests/conftest.py`.
