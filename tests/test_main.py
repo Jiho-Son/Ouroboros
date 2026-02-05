@@ -174,6 +174,7 @@ class TestTradingCycleTelegramIntegration:
                 telegram=mock_telegram,
                 market=mock_market,
                 stock_code="005930",
+                scan_candidates={},
             )
 
         # Verify notification was sent
@@ -216,6 +217,7 @@ class TestTradingCycleTelegramIntegration:
                 telegram=mock_telegram,
                 market=mock_market,
                 stock_code="005930",
+                scan_candidates={},
             )
 
         # Verify notification was attempted
@@ -257,6 +259,7 @@ class TestTradingCycleTelegramIntegration:
                     telegram=mock_telegram,
                     market=mock_market,
                     stock_code="005930",
+                    scan_candidates={},
                 )
 
         # Verify notification was sent
@@ -305,6 +308,7 @@ class TestTradingCycleTelegramIntegration:
                     telegram=mock_telegram,
                     market=mock_market,
                     stock_code="005930",
+                    scan_candidates={},
                 )
 
         # Verify notification was attempted
@@ -345,6 +349,7 @@ class TestTradingCycleTelegramIntegration:
                 telegram=mock_telegram,
                 market=mock_market,
                 stock_code="005930",
+                scan_candidates={},
             )
 
         # Verify no trade notification sent
@@ -543,6 +548,7 @@ class TestOverseasBalanceParsing:
                 telegram=mock_telegram,
                 market=mock_overseas_market,
                 stock_code="AAPL",
+                scan_candidates={},
             )
 
         # Verify balance API was called
@@ -577,6 +583,7 @@ class TestOverseasBalanceParsing:
                 telegram=mock_telegram,
                 market=mock_overseas_market,
                 stock_code="AAPL",
+                scan_candidates={},
             )
 
         # Verify balance API was called
@@ -611,6 +618,7 @@ class TestOverseasBalanceParsing:
                 telegram=mock_telegram,
                 market=mock_overseas_market,
                 stock_code="AAPL",
+                scan_candidates={},
             )
 
         # Verify balance API was called
@@ -645,6 +653,7 @@ class TestOverseasBalanceParsing:
                 telegram=mock_telegram,
                 market=mock_overseas_market,
                 stock_code="AAPL",
+                scan_candidates={},
             )
 
         # Verify price API was called

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,6 +39,8 @@ def init_db(db_path: str) -> sqlite3.Connection:
         conn.execute("ALTER TABLE trades ADD COLUMN market TEXT DEFAULT 'KR'")
     if "exchange_code" not in columns:
         conn.execute("ALTER TABLE trades ADD COLUMN exchange_code TEXT DEFAULT 'KRX'")
+    if "selection_context" not in columns:
+        conn.execute("ALTER TABLE trades ADD COLUMN selection_context TEXT")
 
     # Context tree tables for multi-layered memory management
     conn.execute(
@@ -118,15 +121,33 @@ def log_trade(
     pnl: float = 0.0,
     market: str = "KR",
     exchange_code: str = "KRX",
+    selection_context: dict[str, any] | None = None,
 ) -> None:
-    """Insert a trade record into the database."""
+    """Insert a trade record into the database.
+
+    Args:
+        conn: Database connection
+        stock_code: Stock code
+        action: Trade action (BUY/SELL/HOLD)
+        confidence: Confidence level (0-100)
+        rationale: AI decision rationale
+        quantity: Number of shares
+        price: Trade price
+        pnl: Profit/loss
+        market: Market code
+        exchange_code: Exchange code
+        selection_context: Scanner selection data (RSI, volume_ratio, signal, score)
+    """
+    # Serialize selection context to JSON
+    context_json = json.dumps(selection_context) if selection_context else None
+
     conn.execute(
         """
         INSERT INTO trades (
             timestamp, stock_code, action, confidence, rationale,
-            quantity, price, pnl, market, exchange_code
+            quantity, price, pnl, market, exchange_code, selection_context
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             datetime.now(UTC).isoformat(),
@@ -139,6 +160,7 @@ def log_trade(
             pnl,
             market,
             exchange_code,
+            context_json,
         ),
     )
     conn.commit()

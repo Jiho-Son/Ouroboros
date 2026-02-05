@@ -280,3 +280,153 @@ class KISBroker:
                 return data
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error sending order: {exc}") from exc
+
+    async def fetch_market_rankings(
+        self,
+        ranking_type: str = "volume",
+        limit: int = 30,
+    ) -> list[dict[str, Any]]:
+        """Fetch market rankings from KIS API.
+
+        Args:
+            ranking_type: Type of ranking ("volume" or "fluctuation")
+            limit: Maximum number of results to return
+
+        Returns:
+            List of stock data dicts with keys: stock_code, name, price, volume,
+            change_rate, volume_increase_rate
+
+        Raises:
+            ConnectionError: If API request fails
+        """
+        await self._rate_limiter.acquire()
+        session = self._get_session()
+
+        # TR_ID for volume ranking
+        tr_id = "FHPST01710000" if ranking_type == "volume" else "FHPST01710100"
+        headers = await self._auth_headers(tr_id)
+
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",  # Stock/ETF/ETN
+            "FID_COND_SCR_DIV_CODE": "20001",  # Volume surge
+            "FID_INPUT_ISCD": "0000",  # All stocks
+            "FID_DIV_CLS_CODE": "0",  # All types
+            "FID_BLNG_CLS_CODE": "0",
+            "FID_TRGT_CLS_CODE": "111111111",
+            "FID_TRGT_EXLS_CLS_CODE": "000000",
+            "FID_INPUT_PRICE_1": "0",
+            "FID_INPUT_PRICE_2": "0",
+            "FID_VOL_CNT": "0",
+            "FID_INPUT_DATE_1": "",
+        }
+
+        url = f"{self._base_url}/uapi/domestic-stock/v1/quotations/volume-rank"
+
+        try:
+            async with session.get(url, headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise ConnectionError(
+                        f"fetch_market_rankings failed ({resp.status}): {text}"
+                    )
+                data = await resp.json()
+
+            # Parse response - output is a list of ranked stocks
+            def _safe_float(value: str | float | None, default: float = 0.0) -> float:
+                if value is None or value == "":
+                    return default
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    return default
+
+            rankings = []
+            for item in data.get("output", [])[:limit]:
+                rankings.append({
+                    "stock_code": item.get("mksc_shrn_iscd", ""),
+                    "name": item.get("hts_kor_isnm", ""),
+                    "price": _safe_float(item.get("stck_prpr", "0")),
+                    "volume": _safe_float(item.get("acml_vol", "0")),
+                    "change_rate": _safe_float(item.get("prdy_ctrt", "0")),
+                    "volume_increase_rate": _safe_float(item.get("vol_inrt", "0")),
+                })
+            return rankings
+
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise ConnectionError(f"Network error fetching rankings: {exc}") from exc
+
+    async def get_daily_prices(
+        self,
+        stock_code: str,
+        days: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Fetch daily OHLCV price history for a stock.
+
+        Args:
+            stock_code: 6-digit stock code
+            days: Number of trading days to fetch (default 20 for RSI calculation)
+
+        Returns:
+            List of daily price dicts with keys: date, open, high, low, close, volume
+            Sorted oldest to newest
+
+        Raises:
+            ConnectionError: If API request fails
+        """
+        await self._rate_limiter.acquire()
+        session = self._get_session()
+
+        headers = await self._auth_headers("FHKST03010100")
+
+        # Calculate date range (today and N days ago)
+        from datetime import datetime, timedelta
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=days + 10)).strftime("%Y%m%d")
+
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": stock_code,
+            "FID_INPUT_DATE_1": start_date,
+            "FID_INPUT_DATE_2": end_date,
+            "FID_PERIOD_DIV_CODE": "D",  # Daily
+            "FID_ORG_ADJ_PRC": "0",  # Adjusted price
+        }
+
+        url = f"{self._base_url}/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
+
+        try:
+            async with session.get(url, headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise ConnectionError(
+                        f"get_daily_prices failed ({resp.status}): {text}"
+                    )
+                data = await resp.json()
+
+            # Parse response
+            def _safe_float(value: str | float | None, default: float = 0.0) -> float:
+                if value is None or value == "":
+                    return default
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    return default
+
+            prices = []
+            for item in data.get("output2", []):
+                prices.append({
+                    "date": item.get("stck_bsop_date", ""),
+                    "open": _safe_float(item.get("stck_oprc", "0")),
+                    "high": _safe_float(item.get("stck_hgpr", "0")),
+                    "low": _safe_float(item.get("stck_lwpr", "0")),
+                    "close": _safe_float(item.get("stck_clpr", "0")),
+                    "volume": _safe_float(item.get("acml_vol", "0")),
+                })
+
+            # Sort oldest to newest (KIS returns newest first)
+            prices.reverse()
+
+            return prices[:days]  # Return only requested number of days
+
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise ConnectionError(f"Network error fetching daily prices: {exc}") from exc
