@@ -549,7 +549,7 @@ class TestStatusCommands:
 
     @pytest.mark.asyncio
     async def test_positions_command_shows_holdings(self) -> None:
-        """Positions command displays current holdings."""
+        """Positions command displays account summary."""
         client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
         handler = TelegramCommandHandler(client)
 
@@ -561,12 +561,12 @@ class TestStatusCommands:
         async def mock_positions() -> None:
             """Mock /positions handler."""
             message = (
-                "<b>💼 Current Holdings</b>\n"
-                "\n🇰🇷 <b>Korea</b>\n"
-                "• 005930: 10 shares @ 70,000\n"
-                "\n🇺🇸 <b>Overseas</b>\n"
-                "• AAPL: 15 shares @ 175\n"
-                "\n<b>Cash:</b> ₩5,000,000"
+                "<b>💼 Account Summary</b>\n\n"
+                "<b>Total Evaluation:</b> ₩10,500,000\n"
+                "<b>Available Cash:</b> ₩5,000,000\n"
+                "<b>Purchase Total:</b> ₩10,000,000\n"
+                "<b>P&L:</b> +5.00%\n\n"
+                "<i>Note: Individual position details require API enhancement</i>"
             )
             await client.send_message(message)
 
@@ -586,8 +586,9 @@ class TestStatusCommands:
             # Verify message was sent
             assert mock_post.call_count == 1
             payload = mock_post.call_args.kwargs["json"]
-            assert "Current Holdings" in payload["text"]
-            assert "shares" in payload["text"]
+            assert "Account Summary" in payload["text"]
+            assert "Total Evaluation" in payload["text"]
+            assert "P&L" in payload["text"]
 
     @pytest.mark.asyncio
     async def test_positions_command_empty_holdings(self) -> None:
@@ -603,8 +604,8 @@ class TestStatusCommands:
         async def mock_positions_empty() -> None:
             """Mock /positions handler with no positions."""
             message = (
-                "<b>💼 Current Holdings</b>\n\n"
-                "No positions currently held."
+                "<b>💼 Account Summary</b>\n\n"
+                "No balance information available."
             )
             await client.send_message(message)
 
@@ -623,7 +624,7 @@ class TestStatusCommands:
 
             # Verify message was sent
             payload = mock_post.call_args.kwargs["json"]
-            assert "No positions" in payload["text"]
+            assert "No balance information available" in payload["text"]
 
     @pytest.mark.asyncio
     async def test_positions_command_error_handling(self) -> None:

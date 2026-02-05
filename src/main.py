@@ -624,11 +624,21 @@ async def run(settings: Settings) -> None:
             # Get trading status
             trading_status = "Active" if pause_trading.is_set() else "Paused"
 
-            # Get current P&L from risk manager
+            # Calculate P&L from balance data
             try:
                 balance = await broker.get_balance()
-                current_pnl = risk.calculate_pnl(balance)
-                pnl_str = f"{current_pnl:+.2f}%"
+                output2 = balance.get("output2", [{}])
+                if output2:
+                    total_eval = safe_float(output2[0].get("tot_evlu_amt", "0"))
+                    purchase_total = safe_float(output2[0].get("pchs_amt_smtl_amt", "0"))
+                    current_pnl = (
+                        ((total_eval - purchase_total) / purchase_total * 100)
+                        if purchase_total > 0
+                        else 0.0
+                    )
+                    pnl_str = f"{current_pnl:+.2f}%"
+                else:
+                    pnl_str = "N/A"
             except Exception as exc:
                 logger.warning("Failed to get P&L: %s", exc)
                 pnl_str = "N/A"
@@ -642,7 +652,7 @@ async def run(settings: Settings) -> None:
                 f"<b>Markets:</b> {markets_str}\n"
                 f"<b>Trading:</b> {trading_status}\n\n"
                 f"<b>Current P&L:</b> {pnl_str}\n"
-                f"<b>Circuit Breaker:</b> {risk.circuit_breaker_threshold:.1f}%"
+                f"<b>Circuit Breaker:</b> {risk._cb_threshold:.1f}%"
             )
             await telegram.send_message(message)
 
@@ -653,52 +663,40 @@ async def run(settings: Settings) -> None:
             )
 
     async def handle_positions() -> None:
-        """Handle /positions command - show current holdings."""
+        """Handle /positions command - show account summary."""
         try:
             # Get account balance
             balance = await broker.get_balance()
+            output2 = balance.get("output2", [{}])
 
-            # Check if there are any positions
-            if not balance.stocks:
+            if not output2:
                 await telegram.send_message(
-                    "<b>💼 Current Holdings</b>\n\n"
-                    "No positions currently held."
+                    "<b>💼 Account Summary</b>\n\n"
+                    "No balance information available."
                 )
                 return
 
-            # Group positions by market (domestic vs overseas)
-            domestic_positions = []
-            overseas_positions = []
+            # Extract account-level data
+            total_eval = safe_float(output2[0].get("tot_evlu_amt", "0"))
+            total_cash = safe_float(output2[0].get("dnca_tot_amt", "0"))
+            purchase_total = safe_float(output2[0].get("pchs_amt_smtl_amt", "0"))
 
-            for stock in balance.stocks:
-                position_str = (
-                    f"• {stock.code}: {stock.quantity} shares @ "
-                    f"{stock.avg_price:,.0f}"
-                )
-
-                # Simple heuristic: if code is 6 digits, it's domestic (Korea)
-                if len(stock.code) == 6 and stock.code.isdigit():
-                    domestic_positions.append(position_str)
-                else:
-                    overseas_positions.append(position_str)
-
-            # Build message
-            message_parts = ["<b>💼 Current Holdings</b>\n"]
-
-            if domestic_positions:
-                message_parts.append("\n🇰🇷 <b>Korea</b>")
-                message_parts.extend(domestic_positions)
-
-            if overseas_positions:
-                message_parts.append("\n🇺🇸 <b>Overseas</b>")
-                message_parts.extend(overseas_positions)
-
-            # Add total cash
-            message_parts.append(
-                f"\n<b>Cash:</b> ₩{balance.total_cash:,.0f}"
+            # Calculate P&L
+            pnl_pct = (
+                ((total_eval - purchase_total) / purchase_total * 100)
+                if purchase_total > 0
+                else 0.0
             )
+            pnl_sign = "+" if pnl_pct >= 0 else ""
 
-            message = "\n".join(message_parts)
+            message = (
+                "<b>💼 Account Summary</b>\n\n"
+                f"<b>Total Evaluation:</b> ₩{total_eval:,.0f}\n"
+                f"<b>Available Cash:</b> ₩{total_cash:,.0f}\n"
+                f"<b>Purchase Total:</b> ₩{purchase_total:,.0f}\n"
+                f"<b>P&L:</b> {pnl_sign}{pnl_pct:.2f}%\n\n"
+                "<i>Note: Individual position details require API enhancement</i>"
+            )
             await telegram.send_message(message)
 
         except Exception as exc:
