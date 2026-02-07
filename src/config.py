@@ -55,8 +55,15 @@ class Settings(BaseSettings):
     DAILY_SESSIONS: int = Field(default=4, ge=1, le=10)
     SESSION_INTERVAL_HOURS: int = Field(default=6, ge=1, le=24)
 
+    # Pre-Market Planner
+    PRE_MARKET_MINUTES: int = Field(default=30, ge=10, le=120)
+    MAX_SCENARIOS_PER_STOCK: int = Field(default=5, ge=1, le=10)
+    PLANNER_TIMEOUT_SECONDS: int = Field(default=60, ge=10, le=300)
+    DEFENSIVE_PLAYBOOK_ON_FAILURE: bool = True
+    RESCAN_INTERVAL_SECONDS: int = Field(default=300, ge=60, le=900)
+
     # Market selection (comma-separated market codes)
-    ENABLED_MARKETS: str = "KR"
+    ENABLED_MARKETS: str = "KR,US"
 
     # Backup and Disaster Recovery (optional)
     BACKUP_ENABLED: bool = True

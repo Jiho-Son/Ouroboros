@@ -63,14 +63,6 @@ def safe_float(value: str | float | None, default: float = 0.0) -> float:
         return default
 
 
-# Target stock codes to monitor per market
-WATCHLISTS = {
-    "KR": ["005930", "000660", "035420"],  # Samsung, SK Hynix, NAVER
-    "US_NASDAQ": ["AAPL", "MSFT", "GOOGL"],  # Example US stocks
-    "US_NYSE": ["JPM", "BAC"],  # Example NYSE stocks
-    "JP": ["7203", "6758"],  # Toyota, Sony
-}
-
 TRADE_INTERVAL_SECONDS = 60
 SCAN_INTERVAL_SECONDS = 60  # Scan markets every 60 seconds
 MAX_CONNECTION_RETRIES = 3
@@ -78,15 +70,6 @@ MAX_CONNECTION_RETRIES = 3
 # Daily trading mode constants (for Free tier API efficiency)
 DAILY_TRADE_SESSIONS = 4  # Number of trading sessions per day
 TRADE_SESSION_INTERVAL_HOURS = 6  # Hours between sessions
-
-# Full stock universe per market (for scanning)
-# In production, this would be loaded from a database or API
-STOCK_UNIVERSE = {
-    "KR": ["005930", "000660", "035420", "051910", "005380", "005490"],
-    "US_NASDAQ": ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA"],
-    "US_NYSE": ["JPM", "BAC", "XOM", "JNJ", "V"],
-    "JP": ["7203", "6758", "9984", "6861"],
-}
 
 
 async def trading_cycle(
@@ -349,6 +332,7 @@ async def run_daily_session(
     criticality_assessor: CriticalityAssessor,
     telegram: TelegramClient,
     settings: Settings,
+    smart_scanner: SmartVolatilityScanner | None = None,
 ) -> None:
     """Execute one daily trading session.
 
@@ -368,15 +352,21 @@ async def run_daily_session(
 
     # Process each open market
     for market in open_markets:
-        # Get watchlist for this market
-        watchlist = WATCHLISTS.get(market.code, [])
+        # Dynamic stock discovery via scanner (no static watchlists)
+        try:
+            candidates = await smart_scanner.scan()
+            watchlist = [c.stock_code for c in candidates] if candidates else []
+        except Exception as exc:
+            logger.error("Smart Scanner failed for %s: %s", market.name, exc)
+            watchlist = []
+
         if not watchlist:
-            logger.debug("No watchlist for market %s", market.code)
+            logger.info("No scanner candidates for market %s — skipping", market.code)
             continue
 
         logger.info("Processing market: %s (%d stocks)", market.name, len(watchlist))
 
-        # Collect market data for all stocks in the watchlist
+        # Collect market data for all stocks from scanner
         stocks_data = []
         for stock_code in watchlist:
             try:
@@ -745,6 +735,9 @@ async def run(settings: Settings) -> None:
     # Track scan candidates for selection context logging
     scan_candidates: dict[str, ScanCandidate] = {}  # stock_code -> candidate
 
+    # Active stocks per market (dynamically discovered by scanner)
+    active_stocks: dict[str, list[str]] = {}  # market_code -> [stock_codes]
+
     # Initialize latency control system
     criticality_assessor = CriticalityAssessor(
         critical_pnl_threshold=-2.5,  # Near circuit breaker at -3.0%
@@ -817,6 +810,7 @@ async def run(settings: Settings) -> None:
                         criticality_assessor,
                         telegram,
                         settings,
+                        smart_scanner=smart_scanner,
                     )
                 except CircuitBreakerTripped:
                     logger.critical("Circuit breaker tripped — shutting down")
@@ -890,57 +884,52 @@ async def run(settings: Settings) -> None:
                             logger.warning("Market open notification failed: %s", exc)
                         _market_states[market.code] = True
 
-                    # Smart Scanner: Python-first filtering (RSI + volume) before AI
+                    # Smart Scanner: dynamic stock discovery (no static watchlists)
                     now_timestamp = asyncio.get_event_loop().time()
                     last_scan = last_scan_time.get(market.code, 0.0)
                     if now_timestamp - last_scan >= SCAN_INTERVAL_SECONDS:
                         try:
                             logger.info("Smart Scanner: Scanning %s market", market.name)
 
-                            # Run smart scan with fallback to static universe
-                            fallback_universe = STOCK_UNIVERSE.get(market.code, [])
-                            candidates = await smart_scanner.scan(fallback_stocks=fallback_universe)
+                            candidates = await smart_scanner.scan()
 
                             if candidates:
-                                # Update watchlist with qualified candidates
-                                qualified_codes = smart_scanner.get_stock_codes(candidates)
+                                # Use scanner results directly as trading candidates
+                                active_stocks[market.code] = smart_scanner.get_stock_codes(
+                                    candidates
+                                )
 
-                                # Merge with existing watchlist (keep some continuity)
-                                current_watchlist = WATCHLISTS.get(market.code, [])
-                                # Keep up to 2 from existing, add new qualified
-                                merged = qualified_codes + [
-                                    c for c in current_watchlist if c not in qualified_codes
-                                ][:2]
-                                WATCHLISTS[market.code] = merged[:5]  # Cap at 5
-
-                                # Store candidates for later selection context logging
+                                # Store candidates for selection context logging
                                 for candidate in candidates:
                                     scan_candidates[candidate.stock_code] = candidate
 
                                 logger.info(
-                                    "Smart Scanner: Found %d qualified candidates for %s: %s",
+                                    "Smart Scanner: Found %d candidates for %s: %s",
                                     len(candidates),
                                     market.name,
                                     [f"{c.stock_code}(RSI={c.rsi:.0f})" for c in candidates],
                                 )
                             else:
-                                logger.info("Smart Scanner: No qualified candidates for %s", market.name)
+                                logger.info(
+                                    "Smart Scanner: No candidates for %s — no trades", market.name
+                                )
+                                active_stocks[market.code] = []
 
                             last_scan_time[market.code] = now_timestamp
 
                         except Exception as exc:
                             logger.error("Smart Scanner failed for %s: %s", market.name, exc)
 
-                    # Get watchlist for this market
-                    watchlist = WATCHLISTS.get(market.code, [])
-                    if not watchlist:
-                        logger.debug("No watchlist for market %s", market.code)
+                    # Get active stocks from scanner (dynamic, no static fallback)
+                    stock_codes = active_stocks.get(market.code, [])
+                    if not stock_codes:
+                        logger.debug("No active stocks for market %s", market.code)
                         continue
 
-                    logger.info("Processing market: %s (%d stocks)", market.name, len(watchlist))
+                    logger.info("Processing market: %s (%d stocks)", market.name, len(stock_codes))
 
-                    # Process each stock in the watchlist
-                    for stock_code in watchlist:
+                    # Process each stock from scanner results
+                    for stock_code in stock_codes:
                         if shutdown.is_set():
                             break
 
