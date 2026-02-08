@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -135,10 +135,7 @@ class TestGeneratePlaybook:
         planner = _make_planner()
         candidates = [_candidate()]
 
-        with patch("src.strategy.pre_market_planner.date") as mock_date:
-            mock_date.today.return_value = date(2026, 2, 8)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            pb = await planner.generate_playbook("KR", candidates)
+        pb = await planner.generate_playbook("KR", candidates, today=date(2026, 2, 8))
 
         assert isinstance(pb, DayPlaybook)
         assert pb.market == "KR"
@@ -151,10 +148,7 @@ class TestGeneratePlaybook:
     async def test_empty_candidates_returns_empty_playbook(self) -> None:
         planner = _make_planner()
 
-        with patch("src.strategy.pre_market_planner.date") as mock_date:
-            mock_date.today.return_value = date(2026, 2, 8)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            pb = await planner.generate_playbook("KR", [])
+        pb = await planner.generate_playbook("KR", [], today=date(2026, 2, 8))
 
         assert pb.stock_count == 0
         assert pb.scenario_count == 0
@@ -166,10 +160,7 @@ class TestGeneratePlaybook:
         planner._gemini.decide = AsyncMock(side_effect=RuntimeError("API timeout"))
         candidates = [_candidate()]
 
-        with patch("src.strategy.pre_market_planner.date") as mock_date:
-            mock_date.today.return_value = date(2026, 2, 8)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            pb = await planner.generate_playbook("KR", candidates)
+        pb = await planner.generate_playbook("KR", candidates, today=date(2026, 2, 8))
 
         assert pb.default_action == ScenarioAction.HOLD
         assert pb.market_outlook == MarketOutlook.NEUTRAL_TO_BEARISH
@@ -184,10 +175,7 @@ class TestGeneratePlaybook:
         planner._gemini.decide = AsyncMock(side_effect=RuntimeError("fail"))
         candidates = [_candidate()]
 
-        with patch("src.strategy.pre_market_planner.date") as mock_date:
-            mock_date.today.return_value = date(2026, 2, 8)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            pb = await planner.generate_playbook("KR", candidates)
+        pb = await planner.generate_playbook("KR", candidates, today=date(2026, 2, 8))
 
         assert pb.stock_count == 0
 
@@ -220,10 +208,7 @@ class TestGeneratePlaybook:
         planner = _make_planner(gemini_response=_gemini_response_json(stocks=stocks))
         candidates = [_candidate(), _candidate(code="AAPL", name="Apple")]
 
-        with patch("src.strategy.pre_market_planner.date") as mock_date:
-            mock_date.today.return_value = date(2026, 2, 8)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            pb = await planner.generate_playbook("US", candidates)
+        pb = await planner.generate_playbook("US", candidates, today=date(2026, 2, 8))
 
         assert pb.stock_count == 2
         codes = [sp.stock_code for sp in pb.stock_playbooks]
@@ -245,10 +230,7 @@ class TestGeneratePlaybook:
         planner = _make_planner(gemini_response=_gemini_response_json(stocks=stocks))
         candidates = [_candidate()]  # Only 005930
 
-        with patch("src.strategy.pre_market_planner.date") as mock_date:
-            mock_date.today.return_value = date(2026, 2, 8)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            pb = await planner.generate_playbook("KR", candidates)
+        pb = await planner.generate_playbook("KR", candidates, today=date(2026, 2, 8))
 
         assert pb.stock_count == 1
         assert pb.stock_playbooks[0].stock_code == "005930"
@@ -258,10 +240,7 @@ class TestGeneratePlaybook:
         planner = _make_planner()
         candidates = [_candidate()]
 
-        with patch("src.strategy.pre_market_planner.date") as mock_date:
-            mock_date.today.return_value = date(2026, 2, 8)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            pb = await planner.generate_playbook("KR", candidates)
+        pb = await planner.generate_playbook("KR", candidates, today=date(2026, 2, 8))
 
         assert len(pb.global_rules) == 1
         assert pb.global_rules[0].action == ScenarioAction.REDUCE_ALL
@@ -271,10 +250,7 @@ class TestGeneratePlaybook:
         planner = _make_planner(token_count=450)
         candidates = [_candidate()]
 
-        with patch("src.strategy.pre_market_planner.date") as mock_date:
-            mock_date.today.return_value = date(2026, 2, 8)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            pb = await planner.generate_playbook("KR", candidates)
+        pb = await planner.generate_playbook("KR", candidates, today=date(2026, 2, 8))
 
         assert pb.token_count == 450
 
@@ -429,10 +405,7 @@ class TestBuildCrossMarketContext:
         scorecard = {"total_pnl": 2.5, "win_rate": 65, "index_change_pct": 0.8, "lessons": ["Stay patient"]}
         planner = _make_planner(scorecard_data=scorecard)
 
-        with patch("src.strategy.pre_market_planner.date") as mock_date:
-            mock_date.today.return_value = date(2026, 2, 8)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            ctx = planner.build_cross_market_context("KR")
+        ctx = planner.build_cross_market_context("KR", today=date(2026, 2, 8))
 
         assert ctx is not None
         assert ctx.market == "US"
@@ -449,10 +422,7 @@ class TestBuildCrossMarketContext:
         scorecard = {"total_pnl": -1.0, "win_rate": 40, "index_change_pct": -0.5}
         planner = _make_planner(scorecard_data=scorecard)
 
-        with patch("src.strategy.pre_market_planner.date") as mock_date:
-            mock_date.today.return_value = date(2026, 2, 8)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            ctx = planner.build_cross_market_context("US")
+        ctx = planner.build_cross_market_context("US", today=date(2026, 2, 8))
 
         assert ctx is not None
         assert ctx.market == "KR"
@@ -465,20 +435,14 @@ class TestBuildCrossMarketContext:
     def test_no_scorecard_returns_none(self) -> None:
         planner = _make_planner(scorecard_data=None)
 
-        with patch("src.strategy.pre_market_planner.date") as mock_date:
-            mock_date.today.return_value = date(2026, 2, 8)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            ctx = planner.build_cross_market_context("KR")
+        ctx = planner.build_cross_market_context("KR", today=date(2026, 2, 8))
 
         assert ctx is None
 
     def test_invalid_scorecard_returns_none(self) -> None:
         planner = _make_planner(scorecard_data="not a dict and not json")
 
-        with patch("src.strategy.pre_market_planner.date") as mock_date:
-            mock_date.today.return_value = date(2026, 2, 8)
-            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
-            ctx = planner.build_cross_market_context("KR")
+        ctx = planner.build_cross_market_context("KR", today=date(2026, 2, 8))
 
         assert ctx is None
 

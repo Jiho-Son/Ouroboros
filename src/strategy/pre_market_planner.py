@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, date, datetime
+from datetime import date
 from typing import Any
 
 from src.analysis.smart_scanner import ScanCandidate
@@ -21,7 +21,6 @@ from src.strategy.models import (
     DayPlaybook,
     GlobalRule,
     MarketOutlook,
-    PlaybookStatus,
     ScenarioAction,
     StockCondition,
     StockPlaybook,
@@ -74,17 +73,20 @@ class PreMarketPlanner:
         self,
         market: str,
         candidates: list[ScanCandidate],
+        today: date | None = None,
     ) -> DayPlaybook:
         """Generate a DayPlaybook for a market using Gemini.
 
         Args:
             market: Market code ("KR" or "US")
             candidates: Stock candidates from SmartVolatilityScanner
+            today: Override date (defaults to date.today()). Use market-local date.
 
         Returns:
             DayPlaybook with scenarios. Empty/defensive if no candidates or failure.
         """
-        today = date.today()
+        if today is None:
+            today = date.today()
 
         if not candidates:
             logger.info("No candidates for %s — returning empty playbook", market)
@@ -93,7 +95,7 @@ class PreMarketPlanner:
         try:
             # 1. Gather context
             context_data = self._gather_context()
-            cross_market = self.build_cross_market_context(market)
+            cross_market = self.build_cross_market_context(market, today)
 
             # 2. Build prompt
             prompt = self._build_prompt(market, candidates, context_data, cross_market)
@@ -128,14 +130,21 @@ class PreMarketPlanner:
                 return self._defensive_playbook(today, market, candidates)
             return self._empty_playbook(today, market)
 
-    def build_cross_market_context(self, target_market: str) -> CrossMarketContext | None:
+    def build_cross_market_context(
+        self, target_market: str, today: date | None = None,
+    ) -> CrossMarketContext | None:
         """Build cross-market context from the other market's L6 data.
 
         KR planner → reads US scorecard from previous night.
         US planner → reads KR scorecard from today.
+
+        Args:
+            target_market: The market being planned ("KR" or "US")
+            today: Override date (defaults to date.today()). Use market-local date.
         """
         other_market = "US" if target_market == "KR" else "KR"
-        today = date.today()
+        if today is None:
+            today = date.today()
         timeframe = today.isoformat()
 
         scorecard_key = f"scorecard_{other_market}"
@@ -220,9 +229,11 @@ class PreMarketPlanner:
             f"## Instructions\n"
             f"Return a JSON object with this exact structure:\n"
             f'{{\n'
-            f'  "market_outlook": "bullish|neutral_to_bullish|neutral|neutral_to_bearish|bearish",\n'
+            f'  "market_outlook": "bullish|neutral_to_bullish|neutral'
+            f'|neutral_to_bearish|bearish",\n'
             f'  "global_rules": [\n'
-            f'    {{"condition": "portfolio_pnl_pct < -2.0", "action": "REDUCE_ALL", "rationale": "..."}}\n'
+            f'    {{"condition": "portfolio_pnl_pct < -2.0",'
+            f' "action": "REDUCE_ALL", "rationale": "..."}}\n'
             f'  ],\n'
             f'  "stocks": [\n'
             f'    {{\n'
