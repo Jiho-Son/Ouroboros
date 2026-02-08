@@ -1,0 +1,289 @@
+"""Tests for playbook persistence (PlaybookStore + DB schema)."""
+
+from __future__ import annotations
+
+from datetime import date
+
+import pytest
+
+from src.db import init_db
+from src.strategy.models import (
+    DayPlaybook,
+    GlobalRule,
+    MarketOutlook,
+    PlaybookStatus,
+    ScenarioAction,
+    StockCondition,
+    StockPlaybook,
+    StockScenario,
+)
+from src.strategy.playbook_store import PlaybookStore
+
+
+@pytest.fixture
+def conn():
+    """Create an in-memory DB with schema."""
+    connection = init_db(":memory:")
+    yield connection
+    connection.close()
+
+
+@pytest.fixture
+def store(conn) -> PlaybookStore:
+    return PlaybookStore(conn)
+
+
+def _make_playbook(
+    target_date: date = date(2026, 2, 8),
+    market: str = "KR",
+    outlook: MarketOutlook = MarketOutlook.NEUTRAL,
+    stock_codes: list[str] | None = None,
+) -> DayPlaybook:
+    """Create a test playbook with sensible defaults."""
+    if stock_codes is None:
+        stock_codes = ["005930"]
+    return DayPlaybook(
+        date=target_date,
+        market=market,
+        market_outlook=outlook,
+        token_count=150,
+        stock_playbooks=[
+            StockPlaybook(
+                stock_code=code,
+                scenarios=[
+                    StockScenario(
+                        condition=StockCondition(rsi_below=30.0),
+                        action=ScenarioAction.BUY,
+                        confidence=85,
+                        rationale=f"Oversold bounce for {code}",
+                    ),
+                ],
+            )
+            for code in stock_codes
+        ],
+        global_rules=[
+            GlobalRule(
+                condition="portfolio_pnl_pct < -2.0",
+                action=ScenarioAction.REDUCE_ALL,
+                rationale="Near circuit breaker",
+            ),
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+
+class TestSchema:
+    def test_playbooks_table_exists(self, conn) -> None:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='playbooks'"
+        ).fetchone()
+        assert row is not None
+
+    def test_unique_constraint(self, store: PlaybookStore) -> None:
+        pb = _make_playbook()
+        store.save(pb)
+        # Saving again for same date+market should replace, not error
+        pb2 = _make_playbook(stock_codes=["005930", "000660"])
+        store.save(pb2)
+        loaded = store.load(date(2026, 2, 8), "KR")
+        assert loaded is not None
+        assert loaded.stock_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Save / Load
+# ---------------------------------------------------------------------------
+
+
+class TestSaveLoad:
+    def test_save_and_load(self, store: PlaybookStore) -> None:
+        pb = _make_playbook()
+        row_id = store.save(pb)
+        assert row_id > 0
+
+        loaded = store.load(date(2026, 2, 8), "KR")
+        assert loaded is not None
+        assert loaded.date == date(2026, 2, 8)
+        assert loaded.market == "KR"
+        assert loaded.stock_count == 1
+        assert loaded.scenario_count == 1
+
+    def test_load_not_found(self, store: PlaybookStore) -> None:
+        result = store.load(date(2026, 1, 1), "KR")
+        assert result is None
+
+    def test_save_preserves_all_fields(self, store: PlaybookStore) -> None:
+        pb = _make_playbook(
+            outlook=MarketOutlook.BULLISH,
+            stock_codes=["005930", "AAPL"],
+        )
+        store.save(pb)
+        loaded = store.load(date(2026, 2, 8), "KR")
+        assert loaded is not None
+        assert loaded.market_outlook == MarketOutlook.BULLISH
+        assert loaded.stock_count == 2
+        assert loaded.global_rules[0].action == ScenarioAction.REDUCE_ALL
+        assert loaded.token_count == 150
+
+    def test_save_different_markets(self, store: PlaybookStore) -> None:
+        kr = _make_playbook(market="KR")
+        us = _make_playbook(market="US", stock_codes=["AAPL"])
+        store.save(kr)
+        store.save(us)
+
+        kr_loaded = store.load(date(2026, 2, 8), "KR")
+        us_loaded = store.load(date(2026, 2, 8), "US")
+        assert kr_loaded is not None
+        assert us_loaded is not None
+        assert kr_loaded.market == "KR"
+        assert us_loaded.market == "US"
+        assert kr_loaded.stock_playbooks[0].stock_code == "005930"
+        assert us_loaded.stock_playbooks[0].stock_code == "AAPL"
+
+    def test_save_different_dates(self, store: PlaybookStore) -> None:
+        d1 = _make_playbook(target_date=date(2026, 2, 7))
+        d2 = _make_playbook(target_date=date(2026, 2, 8))
+        store.save(d1)
+        store.save(d2)
+
+        assert store.load(date(2026, 2, 7), "KR") is not None
+        assert store.load(date(2026, 2, 8), "KR") is not None
+
+    def test_replace_updates_data(self, store: PlaybookStore) -> None:
+        pb1 = _make_playbook(outlook=MarketOutlook.BEARISH)
+        store.save(pb1)
+
+        pb2 = _make_playbook(outlook=MarketOutlook.BULLISH)
+        store.save(pb2)
+
+        loaded = store.load(date(2026, 2, 8), "KR")
+        assert loaded is not None
+        assert loaded.market_outlook == MarketOutlook.BULLISH
+
+
+# ---------------------------------------------------------------------------
+# Status
+# ---------------------------------------------------------------------------
+
+
+class TestStatus:
+    def test_get_status(self, store: PlaybookStore) -> None:
+        store.save(_make_playbook())
+        status = store.get_status(date(2026, 2, 8), "KR")
+        assert status == PlaybookStatus.READY
+
+    def test_get_status_not_found(self, store: PlaybookStore) -> None:
+        assert store.get_status(date(2026, 1, 1), "KR") is None
+
+    def test_update_status(self, store: PlaybookStore) -> None:
+        store.save(_make_playbook())
+        updated = store.update_status(date(2026, 2, 8), "KR", PlaybookStatus.EXPIRED)
+        assert updated is True
+
+        status = store.get_status(date(2026, 2, 8), "KR")
+        assert status == PlaybookStatus.EXPIRED
+
+    def test_update_status_not_found(self, store: PlaybookStore) -> None:
+        updated = store.update_status(date(2026, 1, 1), "KR", PlaybookStatus.FAILED)
+        assert updated is False
+
+
+# ---------------------------------------------------------------------------
+# Match count
+# ---------------------------------------------------------------------------
+
+
+class TestMatchCount:
+    def test_increment_match_count(self, store: PlaybookStore) -> None:
+        store.save(_make_playbook())
+        store.increment_match_count(date(2026, 2, 8), "KR")
+        store.increment_match_count(date(2026, 2, 8), "KR")
+
+        stats = store.get_stats(date(2026, 2, 8), "KR")
+        assert stats is not None
+        assert stats["match_count"] == 2
+
+    def test_increment_not_found(self, store: PlaybookStore) -> None:
+        result = store.increment_match_count(date(2026, 1, 1), "KR")
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Stats
+# ---------------------------------------------------------------------------
+
+
+class TestStats:
+    def test_get_stats(self, store: PlaybookStore) -> None:
+        store.save(_make_playbook())
+        stats = store.get_stats(date(2026, 2, 8), "KR")
+        assert stats is not None
+        assert stats["status"] == "ready"
+        assert stats["token_count"] == 150
+        assert stats["scenario_count"] == 1
+        assert stats["match_count"] == 0
+        assert stats["generated_at"] != ""
+
+    def test_get_stats_not_found(self, store: PlaybookStore) -> None:
+        assert store.get_stats(date(2026, 1, 1), "KR") is None
+
+
+# ---------------------------------------------------------------------------
+# List recent
+# ---------------------------------------------------------------------------
+
+
+class TestListRecent:
+    def test_list_recent(self, store: PlaybookStore) -> None:
+        for day in range(5, 10):
+            store.save(_make_playbook(target_date=date(2026, 2, day)))
+        results = store.list_recent(market="KR", limit=3)
+        assert len(results) == 3
+        # Most recent first
+        assert results[0]["date"] == "2026-02-09"
+        assert results[2]["date"] == "2026-02-07"
+
+    def test_list_recent_all_markets(self, store: PlaybookStore) -> None:
+        store.save(_make_playbook(market="KR"))
+        store.save(_make_playbook(market="US", stock_codes=["AAPL"]))
+        results = store.list_recent(market=None, limit=10)
+        assert len(results) == 2
+
+    def test_list_recent_empty(self, store: PlaybookStore) -> None:
+        results = store.list_recent(market="KR")
+        assert results == []
+
+    def test_list_recent_filter_by_market(self, store: PlaybookStore) -> None:
+        store.save(_make_playbook(market="KR"))
+        store.save(_make_playbook(market="US", stock_codes=["AAPL"]))
+        kr_only = store.list_recent(market="KR")
+        assert len(kr_only) == 1
+        assert kr_only[0]["market"] == "KR"
+
+
+# ---------------------------------------------------------------------------
+# Delete
+# ---------------------------------------------------------------------------
+
+
+class TestDelete:
+    def test_delete(self, store: PlaybookStore) -> None:
+        store.save(_make_playbook())
+        deleted = store.delete(date(2026, 2, 8), "KR")
+        assert deleted is True
+        assert store.load(date(2026, 2, 8), "KR") is None
+
+    def test_delete_not_found(self, store: PlaybookStore) -> None:
+        deleted = store.delete(date(2026, 1, 1), "KR")
+        assert deleted is False
+
+    def test_delete_one_market_keeps_other(self, store: PlaybookStore) -> None:
+        store.save(_make_playbook(market="KR"))
+        store.save(_make_playbook(market="US", stock_codes=["AAPL"]))
+        store.delete(date(2026, 2, 8), "KR")
+        assert store.load(date(2026, 2, 8), "KR") is None
+        assert store.load(date(2026, 2, 8), "US") is not None
