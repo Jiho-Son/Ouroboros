@@ -6,6 +6,7 @@
 
 1. **Create Gitea Issue First** — All features, bug fixes, and policy changes require a Gitea issue before any code is written
 2. **Create Feature Branch** — Branch from `main` using format `feature/issue-{N}-{short-description}`
+   - After creating the branch, run `git pull origin main` and rebase to ensure the branch is up to date
 3. **Implement Changes** — Write code, tests, and documentation on the feature branch
 4. **Create Pull Request** — Submit PR to `main` branch referencing the issue number
 5. **Review & Merge** — After approval, merge via PR (squash or merge commit)
