@@ -304,6 +304,77 @@ class TelegramClient:
             NotificationMessage(priority=NotificationPriority.MEDIUM, message=message)
         )
 
+    async def notify_playbook_generated(
+        self,
+        market: str,
+        stock_count: int,
+        scenario_count: int,
+        token_count: int,
+    ) -> None:
+        """
+        Notify that a daily playbook was generated.
+
+        Args:
+            market: Market code (e.g., "KR", "US")
+            stock_count: Number of stocks in the playbook
+            scenario_count: Total number of scenarios
+            token_count: Gemini token usage for the playbook
+        """
+        message = (
+            f"<b>Playbook Generated</b>\n"
+            f"Market: {market}\n"
+            f"Stocks: {stock_count}\n"
+            f"Scenarios: {scenario_count}\n"
+            f"Tokens: {token_count}"
+        )
+        await self._send_notification(
+            NotificationMessage(priority=NotificationPriority.MEDIUM, message=message)
+        )
+
+    async def notify_scenario_matched(
+        self,
+        stock_code: str,
+        action: str,
+        condition_summary: str,
+        confidence: float,
+    ) -> None:
+        """
+        Notify that a scenario matched for a stock.
+
+        Args:
+            stock_code: Stock ticker symbol
+            action: Scenario action (BUY/SELL/HOLD/REDUCE_ALL)
+            condition_summary: Short summary of the matched condition
+            confidence: Scenario confidence (0-100)
+        """
+        message = (
+            f"<b>Scenario Matched</b>\n"
+            f"Symbol: <code>{stock_code}</code>\n"
+            f"Action: {action}\n"
+            f"Condition: {condition_summary}\n"
+            f"Confidence: {confidence:.0f}%"
+        )
+        await self._send_notification(
+            NotificationMessage(priority=NotificationPriority.HIGH, message=message)
+        )
+
+    async def notify_playbook_failed(self, market: str, reason: str) -> None:
+        """
+        Notify that playbook generation failed.
+
+        Args:
+            market: Market code (e.g., "KR", "US")
+            reason: Failure reason summary
+        """
+        message = (
+            f"<b>Playbook Failed</b>\n"
+            f"Market: {market}\n"
+            f"Reason: {reason[:200]}"
+        )
+        await self._send_notification(
+            NotificationMessage(priority=NotificationPriority.HIGH, message=message)
+        )
+
     async def notify_system_shutdown(self, reason: str) -> None:
         """
         Notify system shutdown.

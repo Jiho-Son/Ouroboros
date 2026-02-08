@@ -161,6 +161,83 @@ class TestNotificationSending:
             assert "92%" in payload["text"]
 
     @pytest.mark.asyncio
+    async def test_playbook_generated_format(self) -> None:
+        """Playbook generated notification has expected fields."""
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True
+        )
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await client.notify_playbook_generated(
+                market="KR",
+                stock_count=4,
+                scenario_count=12,
+                token_count=980,
+            )
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Playbook Generated" in payload["text"]
+            assert "Market: KR" in payload["text"]
+            assert "Stocks: 4" in payload["text"]
+            assert "Scenarios: 12" in payload["text"]
+            assert "Tokens: 980" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_scenario_matched_format(self) -> None:
+        """Scenario matched notification has expected fields."""
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True
+        )
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await client.notify_scenario_matched(
+                stock_code="AAPL",
+                action="BUY",
+                condition_summary="RSI < 30, volume_ratio > 2.0",
+                confidence=88.2,
+            )
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Scenario Matched" in payload["text"]
+            assert "AAPL" in payload["text"]
+            assert "Action: BUY" in payload["text"]
+            assert "RSI < 30" in payload["text"]
+            assert "88%" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_playbook_failed_format(self) -> None:
+        """Playbook failed notification has expected fields."""
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True
+        )
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await client.notify_playbook_failed(
+                market="US",
+                reason="Gemini timeout",
+            )
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Playbook Failed" in payload["text"]
+            assert "Market: US" in payload["text"]
+            assert "Gemini timeout" in payload["text"]
+
+    @pytest.mark.asyncio
     async def test_circuit_breaker_priority(self) -> None:
         """Circuit breaker uses CRITICAL priority."""
         client = TelegramClient(
@@ -308,6 +385,73 @@ class TestMessagePriorities:
 
             payload = mock_post.call_args.kwargs["json"]
             assert NotificationPriority.CRITICAL.emoji in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_playbook_generated_priority(self) -> None:
+        """Playbook generated uses MEDIUM priority emoji."""
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True
+        )
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await client.notify_playbook_generated(
+                market="KR",
+                stock_count=2,
+                scenario_count=4,
+                token_count=123,
+            )
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert NotificationPriority.MEDIUM.emoji in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_playbook_failed_priority(self) -> None:
+        """Playbook failed uses HIGH priority emoji."""
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True
+        )
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await client.notify_playbook_failed(
+                market="KR",
+                reason="Invalid JSON",
+            )
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert NotificationPriority.HIGH.emoji in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_scenario_matched_priority(self) -> None:
+        """Scenario matched uses HIGH priority emoji."""
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True
+        )
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await client.notify_scenario_matched(
+                stock_code="AAPL",
+                action="BUY",
+                condition_summary="RSI < 30",
+                confidence=80.0,
+            )
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert NotificationPriority.HIGH.emoji in payload["text"]
 
 
 class TestClientCleanup:
