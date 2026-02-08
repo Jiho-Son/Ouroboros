@@ -91,6 +91,27 @@ def init_db(db_path: str) -> sqlite3.Connection:
         """
     )
 
+    # Playbook storage for pre-market strategy persistence
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS playbooks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            market TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            playbook_json TEXT NOT NULL,
+            generated_at TEXT NOT NULL,
+            token_count INTEGER DEFAULT 0,
+            scenario_count INTEGER DEFAULT 0,
+            match_count INTEGER DEFAULT 0,
+            UNIQUE(date, market)
+        )
+        """
+    )
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_playbooks_date ON playbooks(date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_playbooks_market ON playbooks(market)")
+
     # Create indices for efficient context queries
     conn.execute("CREATE INDEX IF NOT EXISTS idx_contexts_layer ON contexts(layer)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_contexts_timeframe ON contexts(timeframe)")
