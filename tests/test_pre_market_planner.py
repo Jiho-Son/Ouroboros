@@ -117,7 +117,7 @@ def _make_planner(
     settings = Settings(
         KIS_APP_KEY="test",
         KIS_APP_SECRET="test",
-        KIS_ACCOUNT_NUMBER="test",
+        KIS_ACCOUNT_NO="12345678-01",
         GEMINI_API_KEY="test",
     )
 
