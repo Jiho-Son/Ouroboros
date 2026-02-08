@@ -174,14 +174,18 @@ class TestEvaluateCondition:
         # Should return False (invalid types → None → False), never raise
         assert not engine.evaluate_condition(cond, data)
 
-    def test_missing_key_logs_warning(self, engine: ScenarioEngine, caplog) -> None:
-        """Missing market_data key should log a warning."""
+    def test_missing_key_logs_warning_once(self, caplog) -> None:
+        """Missing key warning should fire only once per key per engine instance."""
         import logging
 
+        eng = ScenarioEngine()
         cond = StockCondition(rsi_below=30.0)
         with caplog.at_level(logging.WARNING):
-            engine.evaluate_condition(cond, {})
-        assert "key missing from market_data" in caplog.text
+            eng.evaluate_condition(cond, {})
+            eng.evaluate_condition(cond, {})
+            eng.evaluate_condition(cond, {})
+        # Warning should appear exactly once despite 3 calls
+        assert caplog.text.count("'rsi' but key missing") == 1
 
 
 # ---------------------------------------------------------------------------
@@ -427,3 +431,12 @@ class TestEvaluate:
         pb = _playbook()
         result = engine.evaluate(pb, "005930", {"rsi": 25.0}, {})
         assert result.stock_code == "005930"
+
+    def test_match_details_normalized(self, engine: ScenarioEngine) -> None:
+        """match_details should contain _safe_float normalized values, not raw."""
+        pb = _playbook(scenarios=[_scenario(rsi_below=30.0)])
+        # Pass string value — should be normalized to float in match_details
+        result = engine.evaluate(pb, "005930", {"rsi": "25.0"}, {})
+        assert result.action == ScenarioAction.BUY
+        assert result.match_details["rsi"] == 25.0
+        assert isinstance(result.match_details["rsi"], float)
