@@ -139,6 +139,50 @@ class TestEvaluateCondition:
         cond = StockCondition(rsi_above=70.0)
         assert not engine.evaluate_condition(cond, {"rsi": 70.0})
 
+    def test_string_value_no_exception(self, engine: ScenarioEngine) -> None:
+        """String numeric value should not raise TypeError."""
+        cond = StockCondition(rsi_below=30.0)
+        # "25" can be cast to float → should match
+        assert engine.evaluate_condition(cond, {"rsi": "25"})
+        # "35" → should not match
+        assert not engine.evaluate_condition(cond, {"rsi": "35"})
+
+    def test_percent_string_returns_false(self, engine: ScenarioEngine) -> None:
+        """Percent string like '30%' cannot be cast to float → False, no exception."""
+        cond = StockCondition(rsi_below=30.0)
+        assert not engine.evaluate_condition(cond, {"rsi": "30%"})
+
+    def test_decimal_value_no_exception(self, engine: ScenarioEngine) -> None:
+        """Decimal values should be safely handled."""
+        from decimal import Decimal
+
+        cond = StockCondition(rsi_below=30.0)
+        assert engine.evaluate_condition(cond, {"rsi": Decimal("25.0")})
+
+    def test_mixed_invalid_types_no_exception(self, engine: ScenarioEngine) -> None:
+        """Various invalid types should not raise exceptions."""
+        cond = StockCondition(
+            rsi_below=30.0, volume_ratio_above=2.0,
+            price_above=100, price_change_pct_below=-1.0,
+        )
+        data = {
+            "rsi": [25],           # list
+            "volume_ratio": "bad",  # non-numeric string
+            "current_price": {},    # dict
+            "price_change_pct": object(),  # arbitrary object
+        }
+        # Should return False (invalid types → None → False), never raise
+        assert not engine.evaluate_condition(cond, data)
+
+    def test_missing_key_logs_warning(self, engine: ScenarioEngine, caplog) -> None:
+        """Missing market_data key should log a warning."""
+        import logging
+
+        cond = StockCondition(rsi_below=30.0)
+        with caplog.at_level(logging.WARNING):
+            engine.evaluate_condition(cond, {})
+        assert "key missing from market_data" in caplog.text
+
 
 # ---------------------------------------------------------------------------
 # check_global_rules

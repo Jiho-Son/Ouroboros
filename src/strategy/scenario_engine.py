@@ -38,7 +38,20 @@ class ScenarioEngine:
     """Evaluates playbook scenarios against real-time market data.
 
     No API calls — pure Python condition matching.
+
+    Expected market_data keys: "rsi", "volume_ratio", "current_price", "price_change_pct".
+    Callers must normalize data source keys to match this contract.
     """
+
+    @staticmethod
+    def _safe_float(value: Any) -> float | None:
+        """Safely cast a value to float. Returns None on failure."""
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            return None
 
     def evaluate(
         self,
@@ -148,25 +161,37 @@ class ScenarioEngine:
 
         checks: list[bool] = []
 
-        rsi = market_data.get("rsi")
+        rsi = self._safe_float(market_data.get("rsi"))
+        if condition.rsi_below is not None or condition.rsi_above is not None:
+            if "rsi" not in market_data:
+                logger.warning("Condition requires 'rsi' but key missing from market_data")
         if condition.rsi_below is not None:
             checks.append(rsi is not None and rsi < condition.rsi_below)
         if condition.rsi_above is not None:
             checks.append(rsi is not None and rsi > condition.rsi_above)
 
-        volume_ratio = market_data.get("volume_ratio")
+        volume_ratio = self._safe_float(market_data.get("volume_ratio"))
+        if condition.volume_ratio_above is not None or condition.volume_ratio_below is not None:
+            if "volume_ratio" not in market_data:
+                logger.warning("Condition requires 'volume_ratio' but key missing from market_data")
         if condition.volume_ratio_above is not None:
             checks.append(volume_ratio is not None and volume_ratio > condition.volume_ratio_above)
         if condition.volume_ratio_below is not None:
             checks.append(volume_ratio is not None and volume_ratio < condition.volume_ratio_below)
 
-        price = market_data.get("current_price")
+        price = self._safe_float(market_data.get("current_price"))
+        if condition.price_above is not None or condition.price_below is not None:
+            if "current_price" not in market_data:
+                logger.warning("Condition requires 'current_price' but key missing from market_data")
         if condition.price_above is not None:
             checks.append(price is not None and price > condition.price_above)
         if condition.price_below is not None:
             checks.append(price is not None and price < condition.price_below)
 
-        price_change_pct = market_data.get("price_change_pct")
+        price_change_pct = self._safe_float(market_data.get("price_change_pct"))
+        if condition.price_change_pct_above is not None or condition.price_change_pct_below is not None:
+            if "price_change_pct" not in market_data:
+                logger.warning("Condition requires 'price_change_pct' but key missing from market_data")
         if condition.price_change_pct_above is not None:
             checks.append(price_change_pct is not None and price_change_pct > condition.price_change_pct_above)
         if condition.price_change_pct_below is not None:
