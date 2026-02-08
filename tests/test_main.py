@@ -1,6 +1,5 @@
 """Tests for main trading loop integration."""
 
-import asyncio
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,7 +7,12 @@ import pytest
 
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
 from src.main import safe_float, trading_cycle
-from src.strategy.models import DayPlaybook, ScenarioAction, StockCondition, StockPlaybook, StockScenario
+from src.strategy.models import (
+    DayPlaybook,
+    ScenarioAction,
+    StockCondition,
+    StockScenario,
+)
 from src.strategy.scenario_engine import ScenarioEngine, ScenarioMatch
 
 

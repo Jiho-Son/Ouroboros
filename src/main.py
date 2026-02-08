@@ -10,13 +10,14 @@ import argparse
 import asyncio
 import logging
 import signal
-import sys
 from datetime import UTC, date, datetime
 from typing import Any
 
 from src.analysis.scanner import MarketScanner
 from src.analysis.smart_scanner import ScanCandidate, SmartVolatilityScanner
 from src.analysis.volatility import VolatilityAnalyzer
+from src.brain.context_selector import ContextSelector
+from src.brain.gemini_client import GeminiClient, TradeDecision
 from src.broker.kis_api import KISBroker
 from src.broker.overseas import OverseasBroker
 from src.config import Settings
@@ -29,13 +30,11 @@ from src.db import init_db, log_trade
 from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
 from src.markets.schedule import MarketInfo, get_next_market_open, get_open_markets
-from src.brain.context_selector import ContextSelector
-from src.brain.gemini_client import GeminiClient, TradeDecision
 from src.notifications.telegram_client import TelegramClient, TelegramCommandHandler
 from src.strategy.models import DayPlaybook
 from src.strategy.playbook_store import PlaybookStore
 from src.strategy.pre_market_planner import PreMarketPlanner
-from src.strategy.scenario_engine import ScenarioEngine, ScenarioMatch
+from src.strategy.scenario_engine import ScenarioEngine
 
 logger = logging.getLogger(__name__)
 
@@ -1156,7 +1155,8 @@ async def run(settings: Settings) -> None:
                 metrics = await priority_queue.get_metrics()
                 if metrics.total_enqueued > 0:
                     logger.info(
-                        "Priority queue metrics: enqueued=%d, dequeued=%d, size=%d, timeouts=%d, errors=%d",
+                        "Priority queue metrics: enqueued=%d, dequeued=%d,"
+                        " size=%d, timeouts=%d, errors=%d",
                         metrics.total_enqueued,
                         metrics.total_dequeued,
                         metrics.current_size,
