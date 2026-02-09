@@ -1,11 +1,12 @@
 """Tests for main trading loop integration."""
 
 from datetime import date
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
+from src.context.layer import ContextLayer
 from src.main import safe_float, trading_cycle
 from src.strategy.models import (
     DayPlaybook,
@@ -809,6 +810,69 @@ class TestScenarioEngineIntegration:
         # Portfolio data should include pnl
         assert "portfolio_pnl_pct" in portfolio_data
         assert "total_cash" in portfolio_data
+
+    @pytest.mark.asyncio
+    async def test_trading_cycle_sets_l7_context_keys(
+        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+    ) -> None:
+        """Test L7 context is written with market-scoped keys."""
+        from src.analysis.smart_scanner import ScanCandidate
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_hold_match())
+        playbook = _make_playbook()
+        context_store = MagicMock(get_latest_timeframe=MagicMock(return_value=None))
+
+        candidate = ScanCandidate(
+            stock_code="005930", name="Samsung", price=50000,
+            volume=1000000, volume_ratio=3.5, rsi=25.0,
+            signal="oversold", score=85.0,
+        )
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=playbook,
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=context_store,
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={"KR": {"005930": candidate}},
+            )
+
+        context_store.set_context.assert_any_call(
+            ContextLayer.L7_REALTIME,
+            ANY,
+            "volatility_KR_005930",
+            {"momentum_score": 50.0, "volume_surge": 1.0, "price_change_1m": 0.0},
+        )
+        context_store.set_context.assert_any_call(
+            ContextLayer.L7_REALTIME,
+            ANY,
+            "price_KR_005930",
+            {"current_price": 50000.0},
+        )
+        context_store.set_context.assert_any_call(
+            ContextLayer.L7_REALTIME,
+            ANY,
+            "rsi_KR_005930",
+            {"rsi": 25.0},
+        )
+        context_store.set_context.assert_any_call(
+            ContextLayer.L7_REALTIME,
+            ANY,
+            "volume_ratio_KR_005930",
+            {"volume_ratio": 3.5},
+        )
 
     @pytest.mark.asyncio
     async def test_scan_candidates_market_scoped(
