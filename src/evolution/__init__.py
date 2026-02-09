@@ -7,6 +7,7 @@ from src.evolution.performance_tracker import (
     PerformanceTracker,
     StrategyMetrics,
 )
+from src.evolution.scorecard import DailyScorecard
 
 __all__ = [
     "EvolutionOptimizer",
@@ -16,4 +17,5 @@ __all__ = [
     "PerformanceTracker",
     "PerformanceDashboard",
     "StrategyMetrics",
+    "DailyScorecard",
 ]
