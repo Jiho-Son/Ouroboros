@@ -5,6 +5,7 @@ The context tree implements Pillar 2: hierarchical memory management across
 """
 
 from src.context.layer import ContextLayer
+from src.context.scheduler import ContextScheduler
 from src.context.store import ContextStore
 
-__all__ = ["ContextLayer", "ContextStore"]
+__all__ = ["ContextLayer", "ContextScheduler", "ContextStore"]
