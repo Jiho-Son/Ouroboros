@@ -18,52 +18,83 @@ class ContextAggregator:
         self.conn = conn
         self.store = ContextStore(conn)
 
-    def aggregate_daily_from_trades(self, date: str | None = None) -> None:
+    def aggregate_daily_from_trades(
+        self, date: str | None = None, market: str | None = None
+    ) -> None:
         """Aggregate L6 (daily) context from trades table.
 
         Args:
             date: Date in YYYY-MM-DD format. If None, uses today.
+            market: Market code filter (e.g., "KR", "US"). If None, aggregates all markets.
         """
         if date is None:
             date = datetime.now(UTC).date().isoformat()
 
-        # Calculate daily metrics from trades
-        cursor = self.conn.execute(
-            """
-            SELECT
-                COUNT(*) as trade_count,
-                SUM(CASE WHEN action = 'BUY' THEN 1 ELSE 0 END) as buys,
-                SUM(CASE WHEN action = 'SELL' THEN 1 ELSE 0 END) as sells,
-                SUM(CASE WHEN action = 'HOLD' THEN 1 ELSE 0 END) as holds,
-                AVG(confidence) as avg_confidence,
-                SUM(pnl) as total_pnl,
-                COUNT(DISTINCT stock_code) as unique_stocks,
-                SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
-                SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losses
-            FROM trades
-            WHERE DATE(timestamp) = ?
-            """,
-            (date,),
-        )
-        row = cursor.fetchone()
-
-        if row and row[0] > 0:  # At least one trade
-            trade_count, buys, sells, holds, avg_conf, total_pnl, stocks, wins, losses = row
-
-            # Store daily metrics in L6
-            self.store.set_context(ContextLayer.L6_DAILY, date, "trade_count", trade_count)
-            self.store.set_context(ContextLayer.L6_DAILY, date, "buys", buys)
-            self.store.set_context(ContextLayer.L6_DAILY, date, "sells", sells)
-            self.store.set_context(ContextLayer.L6_DAILY, date, "holds", holds)
-            self.store.set_context(
-                ContextLayer.L6_DAILY, date, "avg_confidence", round(avg_conf, 2)
+        if market is None:
+            cursor = self.conn.execute(
+                """
+                SELECT DISTINCT market
+                FROM trades
+                WHERE DATE(timestamp) = ?
+                """,
+                (date,),
             )
-            self.store.set_context(
-                ContextLayer.L6_DAILY, date, "total_pnl", round(total_pnl, 2)
+            markets = [row[0] for row in cursor.fetchall() if row[0]]
+        else:
+            markets = [market]
+
+        for market_code in markets:
+            # Calculate daily metrics from trades for the market
+            cursor = self.conn.execute(
+                """
+                SELECT
+                    COUNT(*) as trade_count,
+                    SUM(CASE WHEN action = 'BUY' THEN 1 ELSE 0 END) as buys,
+                    SUM(CASE WHEN action = 'SELL' THEN 1 ELSE 0 END) as sells,
+                    SUM(CASE WHEN action = 'HOLD' THEN 1 ELSE 0 END) as holds,
+                    AVG(confidence) as avg_confidence,
+                    SUM(pnl) as total_pnl,
+                    COUNT(DISTINCT stock_code) as unique_stocks,
+                    SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losses
+                FROM trades
+                WHERE DATE(timestamp) = ? AND market = ?
+                """,
+                (date, market_code),
             )
-            self.store.set_context(ContextLayer.L6_DAILY, date, "unique_stocks", stocks)
-            win_rate = round(wins / max(wins + losses, 1) * 100, 2)
-            self.store.set_context(ContextLayer.L6_DAILY, date, "win_rate", win_rate)
+            row = cursor.fetchone()
+
+            if row and row[0] > 0:  # At least one trade
+                trade_count, buys, sells, holds, avg_conf, total_pnl, stocks, wins, losses = row
+
+                key_suffix = f"_{market_code}"
+
+                # Store daily metrics in L6 with market suffix
+                self.store.set_context(
+                    ContextLayer.L6_DAILY, date, f"trade_count{key_suffix}", trade_count
+                )
+                self.store.set_context(ContextLayer.L6_DAILY, date, f"buys{key_suffix}", buys)
+                self.store.set_context(ContextLayer.L6_DAILY, date, f"sells{key_suffix}", sells)
+                self.store.set_context(ContextLayer.L6_DAILY, date, f"holds{key_suffix}", holds)
+                self.store.set_context(
+                    ContextLayer.L6_DAILY,
+                    date,
+                    f"avg_confidence{key_suffix}",
+                    round(avg_conf, 2),
+                )
+                self.store.set_context(
+                    ContextLayer.L6_DAILY,
+                    date,
+                    f"total_pnl{key_suffix}",
+                    round(total_pnl, 2),
+                )
+                self.store.set_context(
+                    ContextLayer.L6_DAILY, date, f"unique_stocks{key_suffix}", stocks
+                )
+                win_rate = round(wins / max(wins + losses, 1) * 100, 2)
+                self.store.set_context(
+                    ContextLayer.L6_DAILY, date, f"win_rate{key_suffix}", win_rate
+                )
 
     def aggregate_weekly_from_daily(self, week: str | None = None) -> None:
         """Aggregate L5 (weekly) context from L6 (daily).
@@ -92,20 +123,42 @@ class ContextAggregator:
             daily_data[row[0]].append(json.loads(row[1]))
 
         if daily_data:
-            # Sum all PnL values
+            # Sum all PnL values (market-specific if suffixed)
             if "total_pnl" in daily_data:
                 total_pnl = sum(daily_data["total_pnl"])
                 self.store.set_context(
                     ContextLayer.L5_WEEKLY, week, "weekly_pnl", round(total_pnl, 2)
                 )
 
-            # Average all confidence values
+            for key, values in daily_data.items():
+                if key.startswith("total_pnl_"):
+                    market_code = key.split("total_pnl_", 1)[1]
+                    total_pnl = sum(values)
+                    self.store.set_context(
+                        ContextLayer.L5_WEEKLY,
+                        week,
+                        f"weekly_pnl_{market_code}",
+                        round(total_pnl, 2),
+                    )
+
+            # Average all confidence values (market-specific if suffixed)
             if "avg_confidence" in daily_data:
                 conf_values = daily_data["avg_confidence"]
                 avg_conf = sum(conf_values) / len(conf_values)
                 self.store.set_context(
                     ContextLayer.L5_WEEKLY, week, "avg_confidence", round(avg_conf, 2)
                 )
+
+            for key, values in daily_data.items():
+                if key.startswith("avg_confidence_"):
+                    market_code = key.split("avg_confidence_", 1)[1]
+                    avg_conf = sum(values) / len(values)
+                    self.store.set_context(
+                        ContextLayer.L5_WEEKLY,
+                        week,
+                        f"avg_confidence_{market_code}",
+                        round(avg_conf, 2),
+                    )
 
     def aggregate_monthly_from_weekly(self, month: str | None = None) -> None:
         """Aggregate L4 (monthly) context from L5 (weekly).
@@ -135,8 +188,16 @@ class ContextAggregator:
 
         if weekly_data:
             # Sum all weekly PnL values
+            total_pnl_values: list[float] = []
             if "weekly_pnl" in weekly_data:
-                total_pnl = sum(weekly_data["weekly_pnl"])
+                total_pnl_values.extend(weekly_data["weekly_pnl"])
+
+            for key, values in weekly_data.items():
+                if key.startswith("weekly_pnl_"):
+                    total_pnl_values.extend(values)
+
+            if total_pnl_values:
+                total_pnl = sum(total_pnl_values)
                 self.store.set_context(
                     ContextLayer.L4_MONTHLY, month, "monthly_pnl", round(total_pnl, 2)
                 )

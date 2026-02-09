@@ -161,7 +161,7 @@ class TestContextAggregator:
         self, aggregator: ContextAggregator, db_conn: sqlite3.Connection
     ) -> None:
         """Test aggregating daily metrics from trades."""
-        date = "2026-02-04"
+        date = datetime.now(UTC).date().isoformat()
 
         # Create sample trades
         log_trade(db_conn, "005930", "BUY", 85, "Good signal", quantity=10, price=70000, pnl=500)
@@ -175,36 +175,44 @@ class TestContextAggregator:
         db_conn.commit()
 
         # Aggregate
-        aggregator.aggregate_daily_from_trades(date)
+        aggregator.aggregate_daily_from_trades(date, market="KR")
 
         # Verify L6 contexts
         store = aggregator.store
-        assert store.get_context(ContextLayer.L6_DAILY, date, "trade_count") == 3
-        assert store.get_context(ContextLayer.L6_DAILY, date, "buys") == 1
-        assert store.get_context(ContextLayer.L6_DAILY, date, "sells") == 1
-        assert store.get_context(ContextLayer.L6_DAILY, date, "holds") == 1
-        assert store.get_context(ContextLayer.L6_DAILY, date, "total_pnl") == 2000.0
-        assert store.get_context(ContextLayer.L6_DAILY, date, "unique_stocks") == 3
+        assert store.get_context(ContextLayer.L6_DAILY, date, "trade_count_KR") == 3
+        assert store.get_context(ContextLayer.L6_DAILY, date, "buys_KR") == 1
+        assert store.get_context(ContextLayer.L6_DAILY, date, "sells_KR") == 1
+        assert store.get_context(ContextLayer.L6_DAILY, date, "holds_KR") == 1
+        assert store.get_context(ContextLayer.L6_DAILY, date, "total_pnl_KR") == 2000.0
+        assert store.get_context(ContextLayer.L6_DAILY, date, "unique_stocks_KR") == 3
         # 2 wins, 0 losses
-        assert store.get_context(ContextLayer.L6_DAILY, date, "win_rate") == 100.0
+        assert store.get_context(ContextLayer.L6_DAILY, date, "win_rate_KR") == 100.0
 
     def test_aggregate_weekly_from_daily(self, aggregator: ContextAggregator) -> None:
         """Test aggregating weekly metrics from daily."""
         week = "2026-W06"
 
         # Set daily contexts
-        aggregator.store.set_context(ContextLayer.L6_DAILY, "2026-02-02", "total_pnl", 100.0)
-        aggregator.store.set_context(ContextLayer.L6_DAILY, "2026-02-03", "total_pnl", 200.0)
-        aggregator.store.set_context(ContextLayer.L6_DAILY, "2026-02-02", "avg_confidence", 80.0)
-        aggregator.store.set_context(ContextLayer.L6_DAILY, "2026-02-03", "avg_confidence", 85.0)
+        aggregator.store.set_context(
+            ContextLayer.L6_DAILY, "2026-02-02", "total_pnl_KR", 100.0
+        )
+        aggregator.store.set_context(
+            ContextLayer.L6_DAILY, "2026-02-03", "total_pnl_KR", 200.0
+        )
+        aggregator.store.set_context(
+            ContextLayer.L6_DAILY, "2026-02-02", "avg_confidence_KR", 80.0
+        )
+        aggregator.store.set_context(
+            ContextLayer.L6_DAILY, "2026-02-03", "avg_confidence_KR", 85.0
+        )
 
         # Aggregate
         aggregator.aggregate_weekly_from_daily(week)
 
         # Verify L5 contexts
         store = aggregator.store
-        weekly_pnl = store.get_context(ContextLayer.L5_WEEKLY, week, "weekly_pnl")
-        avg_conf = store.get_context(ContextLayer.L5_WEEKLY, week, "avg_confidence")
+        weekly_pnl = store.get_context(ContextLayer.L5_WEEKLY, week, "weekly_pnl_KR")
+        avg_conf = store.get_context(ContextLayer.L5_WEEKLY, week, "avg_confidence_KR")
 
         assert weekly_pnl == 300.0
         assert avg_conf == 82.5
@@ -214,9 +222,15 @@ class TestContextAggregator:
         month = "2026-02"
 
         # Set weekly contexts
-        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W05", "weekly_pnl", 100.0)
-        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "weekly_pnl", 200.0)
-        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W07", "weekly_pnl", 150.0)
+        aggregator.store.set_context(
+            ContextLayer.L5_WEEKLY, "2026-W05", "weekly_pnl_KR", 100.0
+        )
+        aggregator.store.set_context(
+            ContextLayer.L5_WEEKLY, "2026-W06", "weekly_pnl_KR", 200.0
+        )
+        aggregator.store.set_context(
+            ContextLayer.L5_WEEKLY, "2026-W07", "weekly_pnl_KR", 150.0
+        )
 
         # Aggregate
         aggregator.aggregate_monthly_from_weekly(month)
@@ -285,7 +299,7 @@ class TestContextAggregator:
         self, aggregator: ContextAggregator, db_conn: sqlite3.Connection
     ) -> None:
         """Test running all aggregations from L7 to L1."""
-        date = "2026-02-04"
+        date = datetime.now(UTC).date().isoformat()
 
         # Create sample trades
         log_trade(db_conn, "005930", "BUY", 85, "Good signal", quantity=10, price=70000, pnl=1000)
@@ -299,12 +313,12 @@ class TestContextAggregator:
 
         # Verify data exists in each layer
         store = aggregator.store
-        assert store.get_context(ContextLayer.L6_DAILY, date, "total_pnl") == 1000.0
+        assert store.get_context(ContextLayer.L6_DAILY, date, "total_pnl_KR") == 1000.0
         from datetime import date as date_cls
         trade_date = date_cls.fromisoformat(date)
         iso_year, iso_week, _ = trade_date.isocalendar()
         trade_week = f"{iso_year}-W{iso_week:02d}"
-        assert store.get_context(ContextLayer.L5_WEEKLY, trade_week, "weekly_pnl") is not None
+        assert store.get_context(ContextLayer.L5_WEEKLY, trade_week, "weekly_pnl_KR") is not None
         trade_month = f"{trade_date.year}-{trade_date.month:02d}"
         trade_quarter = f"{trade_date.year}-Q{(trade_date.month - 1) // 3 + 1}"
         trade_year = str(trade_date.year)
