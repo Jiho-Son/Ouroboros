@@ -792,7 +792,7 @@ class TestScenarioEngineIntegration:
                 telegram=mock_telegram,
                 market=mock_market,
                 stock_code="005930",
-                scan_candidates={"005930": candidate},
+                scan_candidates={"KR": {"005930": candidate}},
             )
 
         # Verify evaluate was called
@@ -809,6 +809,48 @@ class TestScenarioEngineIntegration:
         # Portfolio data should include pnl
         assert "portfolio_pnl_pct" in portfolio_data
         assert "total_cash" in portfolio_data
+
+    @pytest.mark.asyncio
+    async def test_scan_candidates_market_scoped(
+        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+    ) -> None:
+        """Test scan_candidates uses market-scoped lookup, ignoring other markets."""
+        from src.analysis.smart_scanner import ScanCandidate
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_hold_match())
+
+        # Candidate stored under US market — should NOT be found for KR market
+        us_candidate = ScanCandidate(
+            stock_code="005930", name="Overlap", price=100,
+            volume=500000, volume_ratio=5.0, rsi=15.0,
+            signal="oversold", score=90.0,
+        )
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,  # KR market
+                stock_code="005930",
+                scan_candidates={"US": {"005930": us_candidate}},  # Wrong market
+            )
+
+        # Should NOT have rsi/volume_ratio because candidate is under US, not KR
+        market_data = engine.evaluate.call_args[0][2]
+        assert "rsi" not in market_data
+        assert "volume_ratio" not in market_data
 
     @pytest.mark.asyncio
     async def test_scenario_engine_called_without_scanner_data(

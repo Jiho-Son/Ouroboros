@@ -10,7 +10,7 @@ import argparse
 import asyncio
 import logging
 import signal
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from src.analysis.scanner import MarketScanner
@@ -89,7 +89,7 @@ async def trading_cycle(
     telegram: TelegramClient,
     market: MarketInfo,
     stock_code: str,
-    scan_candidates: dict[str, ScanCandidate],
+    scan_candidates: dict[str, dict[str, ScanCandidate]],
 ) -> None:
     """Execute one trading cycle for a single stock."""
     cycle_start_time = asyncio.get_event_loop().time()
@@ -148,7 +148,8 @@ async def trading_cycle(
     }
 
     # Enrich market_data with scanner metrics for scenario engine
-    candidate = scan_candidates.get(stock_code)
+    market_candidates = scan_candidates.get(market.code, {})
+    candidate = market_candidates.get(stock_code)
     if candidate:
         market_data["rsi"] = candidate.rsi
         market_data["volume_ratio"] = candidate.volume_ratio
@@ -315,8 +316,8 @@ async def trading_cycle(
 
     # 6. Log trade with selection context
     selection_context = None
-    if stock_code in scan_candidates:
-        candidate = scan_candidates[stock_code]
+    if stock_code in market_candidates:
+        candidate = market_candidates[stock_code]
         selection_context = {
             "rsi": candidate.rsi,
             "volume_ratio": candidate.volume_ratio,
@@ -386,10 +387,11 @@ async def run_daily_session(
 
     logger.info("Starting daily trading session for %d markets", len(open_markets))
 
-    today = date.today()
-
     # Process each open market
     for market in open_markets:
+        # Use market-local date for playbook keying
+        market_today = datetime.now(market.timezone).date()
+
         # Dynamic stock discovery via scanner (no static watchlists)
         candidates_list: list[ScanCandidate] = []
         try:
@@ -406,13 +408,13 @@ async def run_daily_session(
         logger.info("Processing market: %s (%d stocks)", market.name, len(watchlist))
 
         # Generate or load playbook (1 Gemini API call per market per day)
-        playbook = playbook_store.load(today, market.code)
+        playbook = playbook_store.load(market_today, market.code)
         if playbook is None:
             try:
                 playbook = await pre_market_planner.generate_playbook(
                     market=market.code,
                     candidates=candidates_list,
-                    today=today,
+                    today=market_today,
                 )
                 playbook_store.save(playbook)
                 try:
@@ -436,7 +438,7 @@ async def run_daily_session(
                     )
                 except Exception as notify_exc:
                     logger.warning("Playbook failed notification error: %s", notify_exc)
-                playbook = PreMarketPlanner._empty_playbook(today, market.code)
+                playbook = PreMarketPlanner._empty_playbook(market_today, market.code)
 
         # Collect market data for all stocks from scanner
         stocks_data = []
@@ -849,8 +851,8 @@ async def run(settings: Settings) -> None:
         settings=settings,
     )
 
-    # Track scan candidates for selection context logging
-    scan_candidates: dict[str, ScanCandidate] = {}  # stock_code -> candidate
+    # Track scan candidates per market for selection context logging
+    scan_candidates: dict[str, dict[str, ScanCandidate]] = {}  # market -> {stock_code -> candidate}
 
     # Active stocks per market (dynamically discovered by scanner)
     active_stocks: dict[str, list[str]] = {}  # market_code -> [stock_codes]
@@ -1021,9 +1023,10 @@ async def run(settings: Settings) -> None:
                                     candidates
                                 )
 
-                                # Store candidates for selection context logging
-                                for candidate in candidates:
-                                    scan_candidates[candidate.stock_code] = candidate
+                                # Store candidates per market for selection context logging
+                                scan_candidates[market.code] = {
+                                    c.stock_code: c for c in candidates
+                                }
 
                                 logger.info(
                                     "Smart Scanner: Found %d candidates for %s: %s",
@@ -1032,43 +1035,61 @@ async def run(settings: Settings) -> None:
                                     [f"{c.stock_code}(RSI={c.rsi:.0f})" for c in candidates],
                                 )
 
-                                # Generate playbook on first scan (1 Gemini call per market)
+                                # Get market-local date for playbook keying
+                                market_today = datetime.now(
+                                    market.timezone
+                                ).date()
+
+                                # Load or generate playbook (1 Gemini call per market per day)
                                 if market.code not in playbooks:
-                                    try:
-                                        pb = await pre_market_planner.generate_playbook(
-                                            market=market.code,
-                                            candidates=candidates,
+                                    # Try DB first (survives process restart)
+                                    stored_pb = playbook_store.load(market_today, market.code)
+                                    if stored_pb is not None:
+                                        playbooks[market.code] = stored_pb
+                                        logger.info(
+                                            "Loaded existing playbook for %s from DB"
+                                            " (%d stocks, %d scenarios)",
+                                            market.code,
+                                            stored_pb.stock_count,
+                                            stored_pb.scenario_count,
                                         )
-                                        playbook_store.save(pb)
-                                        playbooks[market.code] = pb
+                                    else:
                                         try:
-                                            await telegram.notify_playbook_generated(
+                                            pb = await pre_market_planner.generate_playbook(
                                                 market=market.code,
-                                                stock_count=pb.stock_count,
-                                                scenario_count=pb.scenario_count,
-                                                token_count=pb.token_count,
+                                                candidates=candidates,
+                                                today=market_today,
                                             )
+                                            playbook_store.save(pb)
+                                            playbooks[market.code] = pb
+                                            try:
+                                                await telegram.notify_playbook_generated(
+                                                    market=market.code,
+                                                    stock_count=pb.stock_count,
+                                                    scenario_count=pb.scenario_count,
+                                                    token_count=pb.token_count,
+                                                )
+                                            except Exception as exc:
+                                                logger.warning(
+                                                    "Playbook notification failed: %s", exc
+                                                )
                                         except Exception as exc:
-                                            logger.warning(
-                                                "Playbook notification failed: %s", exc
+                                            logger.error(
+                                                "Playbook generation failed for %s: %s",
+                                                market.code, exc,
                                             )
-                                    except Exception as exc:
-                                        logger.error(
-                                            "Playbook generation failed for %s: %s",
-                                            market.code, exc,
-                                        )
-                                        try:
-                                            await telegram.notify_playbook_failed(
-                                                market=market.code,
-                                                reason=str(exc)[:200],
+                                            try:
+                                                await telegram.notify_playbook_failed(
+                                                    market=market.code,
+                                                    reason=str(exc)[:200],
+                                                )
+                                            except Exception:
+                                                pass
+                                            playbooks[market.code] = (
+                                                PreMarketPlanner._empty_playbook(
+                                                    market_today, market.code
+                                                )
                                             )
-                                        except Exception:
-                                            pass
-                                        playbooks[market.code] = (
-                                            PreMarketPlanner._empty_playbook(
-                                                date.today(), market.code
-                                            )
-                                        )
                             else:
                                 logger.info(
                                     "Smart Scanner: No candidates for %s — no trades", market.name
@@ -1096,7 +1117,9 @@ async def run(settings: Settings) -> None:
                         # Get playbook for this market
                         market_playbook = playbooks.get(
                             market.code,
-                            PreMarketPlanner._empty_playbook(date.today(), market.code),
+                            PreMarketPlanner._empty_playbook(
+                                datetime.now(market.timezone).date(), market.code
+                            ),
                         )
 
                         # Retry logic for connection errors
