@@ -20,6 +20,7 @@ from src.brain.gemini_client import GeminiClient, TradeDecision
 from src.broker.kis_api import KISBroker
 from src.broker.overseas import OverseasBroker
 from src.config import Settings
+from src.context.aggregator import ContextAggregator
 from src.context.layer import ContextLayer
 from src.context.store import ContextStore
 from src.core.criticality import CriticalityAssessor
@@ -706,6 +707,7 @@ async def run(settings: Settings) -> None:
     db_conn = init_db(settings.DB_PATH)
     decision_logger = DecisionLogger(db_conn)
     context_store = ContextStore(db_conn)
+    context_aggregator = ContextAggregator(db_conn)
 
     # V2 proactive strategy components
     context_selector = ContextSelector(context_store)
@@ -990,6 +992,13 @@ async def run(settings: Settings) -> None:
                                 market_info = MARKETS.get(market_code)
                                 if market_info:
                                     await telegram.notify_market_close(market_info.name, 0.0)
+                                    market_date = datetime.now(
+                                        market_info.timezone
+                                    ).date().isoformat()
+                                    context_aggregator.aggregate_daily_from_trades(
+                                        date=market_date,
+                                        market=market_code,
+                                    )
                             except Exception as exc:
                                 logger.warning("Market close notification failed: %s", exc)
                             _market_states[market_code] = False
