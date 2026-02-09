@@ -13,7 +13,6 @@ import signal
 from datetime import UTC, datetime
 from typing import Any
 
-from src.analysis.scanner import MarketScanner
 from src.analysis.smart_scanner import ScanCandidate, SmartVolatilityScanner
 from src.analysis.volatility import VolatilityAnalyzer
 from src.brain.context_selector import ContextSelector
@@ -154,6 +153,38 @@ async def trading_cycle(
         market_data["rsi"] = candidate.rsi
         market_data["volume_ratio"] = candidate.volume_ratio
 
+    # 1.3. Record L7 real-time context (market-scoped keys)
+    timeframe = datetime.now(UTC).isoformat()
+    context_store.set_context(
+        ContextLayer.L7_REALTIME,
+        timeframe,
+        f"volatility_{market.code}_{stock_code}",
+        {
+            "momentum_score": 50.0,
+            "volume_surge": 1.0,
+            "price_change_1m": 0.0,
+        },
+    )
+    context_store.set_context(
+        ContextLayer.L7_REALTIME,
+        timeframe,
+        f"price_{market.code}_{stock_code}",
+        {"current_price": current_price},
+    )
+    if candidate:
+        context_store.set_context(
+            ContextLayer.L7_REALTIME,
+            timeframe,
+            f"rsi_{market.code}_{stock_code}",
+            {"rsi": candidate.rsi},
+        )
+        context_store.set_context(
+            ContextLayer.L7_REALTIME,
+            timeframe,
+            f"volume_ratio_{market.code}_{stock_code}",
+            {"volume_ratio": candidate.volume_ratio},
+        )
+
     # Build portfolio data for global rule evaluation
     portfolio_data = {
         "portfolio_pnl_pct": pnl_pct,
@@ -171,7 +202,7 @@ async def trading_cycle(
         volatility_data = context_store.get_context(
             ContextLayer.L7_REALTIME,
             latest_timeframe,
-            f"volatility_{stock_code}",
+            f"volatility_{market.code}_{stock_code}",
         )
         if volatility_data:
             volatility_score = volatility_data.get("momentum_score", 50.0)
@@ -835,15 +866,6 @@ async def run(settings: Settings) -> None:
 
     # Initialize volatility hunter
     volatility_analyzer = VolatilityAnalyzer(min_volume_surge=2.0, min_price_change=1.0)
-    market_scanner = MarketScanner(
-        broker=broker,
-        overseas_broker=overseas_broker,
-        volatility_analyzer=volatility_analyzer,
-        context_store=context_store,
-        top_n=5,
-        max_concurrent_scans=1,  # Fully serialized to avoid EGW00201
-    )
-
     # Initialize smart scanner (Python-first, AI-last pipeline)
     smart_scanner = SmartVolatilityScanner(
         broker=broker,

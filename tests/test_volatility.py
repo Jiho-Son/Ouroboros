@@ -412,7 +412,7 @@ class TestMarketScanner:
         scan_result = context_store.get_context(
             ContextLayer.L7_REALTIME,
             latest_timeframe,
-            "KR_scan_result",
+            "scan_result_KR",
         )
         assert scan_result is not None
         assert scan_result["total_scanned"] == 3

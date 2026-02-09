@@ -108,7 +108,7 @@ class MarketScanner:
             self.context_store.set_context(
                 ContextLayer.L7_REALTIME,
                 timeframe,
-                f"{market.code}_{stock_code}_volatility",
+                f"volatility_{market.code}_{stock_code}",
                 {
                     "price": metrics.current_price,
                     "atr": metrics.atr,
@@ -179,7 +179,7 @@ class MarketScanner:
         self.context_store.set_context(
             ContextLayer.L7_REALTIME,
             timeframe,
-            f"{market.code}_scan_result",
+            f"scan_result_{market.code}",
             {
                 "total_scanned": len(valid_metrics),
                 "top_movers": [m.stock_code for m in top_movers],
