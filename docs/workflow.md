@@ -74,3 +74,37 @@ task_tool(
 ```
 
 Use `run_in_background=True` for independent tasks that don't block subsequent work.
+
+## Code Review Checklist
+
+**CRITICAL: Every PR review MUST verify plan-implementation consistency.**
+
+Before approving any PR, the reviewer (human or agent) must check ALL of the following:
+
+### 1. Plan Consistency (MANDATORY)
+
+- [ ] **Implementation matches the approved plan** — Compare the actual code changes against the plan created during `EnterPlanMode`. Every item in the plan must be addressed.
+- [ ] **No unplanned changes** — If the implementation includes changes not in the plan, they must be explicitly justified.
+- [ ] **No plan items omitted** — If any planned item was skipped, the reason must be documented in the PR description.
+- [ ] **Scope matches** — The PR does not exceed or fall short of the planned scope.
+
+### 2. Safety & Constraints
+
+- [ ] `src/core/risk_manager.py` is unchanged (READ-ONLY)
+- [ ] Circuit breaker threshold not weakened (only stricter allowed)
+- [ ] Fat-finger protection (30% max order) still enforced
+- [ ] Confidence < 80 still forces HOLD
+- [ ] No hardcoded API keys or secrets
+
+### 3. Quality
+
+- [ ] All new/modified code has corresponding tests
+- [ ] Test coverage >= 80%
+- [ ] `ruff check src/ tests/` passes (no lint errors)
+- [ ] No `assert` statements removed from tests
+
+### 4. Workflow
+
+- [ ] PR references the Gitea issue number
+- [ ] Feature branch follows naming convention (`feature/issue-N-description`)
+- [ ] Commit messages are clear and descriptive
