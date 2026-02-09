@@ -300,9 +300,17 @@ class TestContextAggregator:
         # Verify data exists in each layer
         store = aggregator.store
         assert store.get_context(ContextLayer.L6_DAILY, date, "total_pnl") == 1000.0
-        current_week = datetime.now(UTC).strftime("%Y-W%V")
-        assert store.get_context(ContextLayer.L5_WEEKLY, current_week, "weekly_pnl") is not None
-        # Further layers depend on time alignment, just verify no crashes
+        from datetime import date as date_cls
+        trade_date = date_cls.fromisoformat(date)
+        iso_year, iso_week, _ = trade_date.isocalendar()
+        trade_week = f"{iso_year}-W{iso_week:02d}"
+        assert store.get_context(ContextLayer.L5_WEEKLY, trade_week, "weekly_pnl") is not None
+        trade_month = f"{trade_date.year}-{trade_date.month:02d}"
+        trade_quarter = f"{trade_date.year}-Q{(trade_date.month - 1) // 3 + 1}"
+        trade_year = str(trade_date.year)
+        assert store.get_context(ContextLayer.L4_MONTHLY, trade_month, "monthly_pnl") == 1000.0
+        assert store.get_context(ContextLayer.L3_QUARTERLY, trade_quarter, "quarterly_pnl") == 1000.0
+        assert store.get_context(ContextLayer.L2_ANNUAL, trade_year, "annual_pnl") == 1000.0
 
 
 class TestLayerMetadata:

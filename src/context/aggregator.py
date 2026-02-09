@@ -230,21 +230,44 @@ class ContextAggregator:
             )
 
     def run_all_aggregations(self) -> None:
-        """Run all aggregations from L7 to L1 (bottom-up)."""
+        """Run all aggregations from L7 to L1 (bottom-up).
+
+        All timeframes are derived from the latest trade timestamp so that
+        past data re-aggregation produces consistent results across layers.
+        """
+        cursor = self.conn.execute("SELECT MAX(timestamp) FROM trades")
+        row = cursor.fetchone()
+        if not row or row[0] is None:
+            return
+
+        ts_raw = row[0]
+        if ts_raw.endswith("Z"):
+            ts_raw = ts_raw.replace("Z", "+00:00")
+        latest_ts = datetime.fromisoformat(ts_raw)
+        trade_date = latest_ts.date()
+        date_str = trade_date.isoformat()
+
+        iso_year, iso_week, _ = trade_date.isocalendar()
+        week_str = f"{iso_year}-W{iso_week:02d}"
+        month_str = f"{trade_date.year}-{trade_date.month:02d}"
+        quarter = (trade_date.month - 1) // 3 + 1
+        quarter_str = f"{trade_date.year}-Q{quarter}"
+        year_str = str(trade_date.year)
+
         # L7 (trades) → L6 (daily)
-        self.aggregate_daily_from_trades()
+        self.aggregate_daily_from_trades(date_str)
 
         # L6 (daily) → L5 (weekly)
-        self.aggregate_weekly_from_daily()
+        self.aggregate_weekly_from_daily(week_str)
 
         # L5 (weekly) → L4 (monthly)
-        self.aggregate_monthly_from_weekly()
+        self.aggregate_monthly_from_weekly(month_str)
 
         # L4 (monthly) → L3 (quarterly)
-        self.aggregate_quarterly_from_monthly()
+        self.aggregate_quarterly_from_monthly(quarter_str)
 
         # L3 (quarterly) → L2 (annual)
-        self.aggregate_annual_from_quarterly()
+        self.aggregate_annual_from_quarterly(year_str)
 
         # L2 (annual) → L1 (legacy)
         self.aggregate_legacy_from_annual()
