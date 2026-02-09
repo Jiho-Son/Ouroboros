@@ -1,12 +1,46 @@
-"""Tests for main trading loop telegram integration."""
+"""Tests for main trading loop integration."""
 
-import asyncio
+from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
 from src.main import safe_float, trading_cycle
+from src.strategy.models import (
+    DayPlaybook,
+    ScenarioAction,
+    StockCondition,
+    StockScenario,
+)
+from src.strategy.scenario_engine import ScenarioEngine, ScenarioMatch
+
+
+def _make_playbook(market: str = "KR") -> DayPlaybook:
+    """Create a minimal empty playbook for testing."""
+    return DayPlaybook(date=date(2026, 2, 8), market=market)
+
+
+def _make_buy_match(stock_code: str = "005930") -> ScenarioMatch:
+    """Create a ScenarioMatch that returns BUY."""
+    return ScenarioMatch(
+        stock_code=stock_code,
+        matched_scenario=None,
+        action=ScenarioAction.BUY,
+        confidence=85,
+        rationale="Test buy",
+    )
+
+
+def _make_hold_match(stock_code: str = "005930") -> ScenarioMatch:
+    """Create a ScenarioMatch that returns HOLD."""
+    return ScenarioMatch(
+        stock_code=stock_code,
+        matched_scenario=None,
+        action=ScenarioAction.HOLD,
+        confidence=0,
+        rationale="No scenario conditions met",
+    )
 
 
 class TestSafeFloat:
@@ -81,15 +115,16 @@ class TestTradingCycleTelegramIntegration:
         return broker
 
     @pytest.fixture
-    def mock_brain(self) -> MagicMock:
-        """Create mock brain that decides to buy."""
-        brain = MagicMock()
-        decision = MagicMock()
-        decision.action = "BUY"
-        decision.confidence = 85
-        decision.rationale = "Test buy"
-        brain.decide = AsyncMock(return_value=decision)
-        return brain
+    def mock_scenario_engine(self) -> MagicMock:
+        """Create mock scenario engine that returns BUY."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_buy_match())
+        return engine
+
+    @pytest.fixture
+    def mock_playbook(self) -> DayPlaybook:
+        """Create a minimal day playbook."""
+        return _make_playbook()
 
     @pytest.fixture
     def mock_risk(self) -> MagicMock:
@@ -134,6 +169,7 @@ class TestTradingCycleTelegramIntegration:
         telegram.notify_trade_execution = AsyncMock()
         telegram.notify_fat_finger = AsyncMock()
         telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
         return telegram
 
     @pytest.fixture
@@ -151,7 +187,8 @@ class TestTradingCycleTelegramIntegration:
         self,
         mock_broker: MagicMock,
         mock_overseas_broker: MagicMock,
-        mock_brain: MagicMock,
+        mock_scenario_engine: MagicMock,
+        mock_playbook: DayPlaybook,
         mock_risk: MagicMock,
         mock_db: MagicMock,
         mock_decision_logger: MagicMock,
@@ -165,7 +202,8 @@ class TestTradingCycleTelegramIntegration:
             await trading_cycle(
                 broker=mock_broker,
                 overseas_broker=mock_overseas_broker,
-                brain=mock_brain,
+                scenario_engine=mock_scenario_engine,
+                playbook=mock_playbook,
                 risk=mock_risk,
                 db_conn=mock_db,
                 decision_logger=mock_decision_logger,
@@ -190,7 +228,8 @@ class TestTradingCycleTelegramIntegration:
         self,
         mock_broker: MagicMock,
         mock_overseas_broker: MagicMock,
-        mock_brain: MagicMock,
+        mock_scenario_engine: MagicMock,
+        mock_playbook: DayPlaybook,
         mock_risk: MagicMock,
         mock_db: MagicMock,
         mock_decision_logger: MagicMock,
@@ -208,7 +247,8 @@ class TestTradingCycleTelegramIntegration:
             await trading_cycle(
                 broker=mock_broker,
                 overseas_broker=mock_overseas_broker,
-                brain=mock_brain,
+                scenario_engine=mock_scenario_engine,
+                playbook=mock_playbook,
                 risk=mock_risk,
                 db_conn=mock_db,
                 decision_logger=mock_decision_logger,
@@ -228,7 +268,8 @@ class TestTradingCycleTelegramIntegration:
         self,
         mock_broker: MagicMock,
         mock_overseas_broker: MagicMock,
-        mock_brain: MagicMock,
+        mock_scenario_engine: MagicMock,
+        mock_playbook: DayPlaybook,
         mock_risk: MagicMock,
         mock_db: MagicMock,
         mock_decision_logger: MagicMock,
@@ -250,7 +291,8 @@ class TestTradingCycleTelegramIntegration:
                 await trading_cycle(
                     broker=mock_broker,
                     overseas_broker=mock_overseas_broker,
-                    brain=mock_brain,
+                    scenario_engine=mock_scenario_engine,
+                    playbook=mock_playbook,
                     risk=mock_risk,
                     db_conn=mock_db,
                     decision_logger=mock_decision_logger,
@@ -275,7 +317,8 @@ class TestTradingCycleTelegramIntegration:
         self,
         mock_broker: MagicMock,
         mock_overseas_broker: MagicMock,
-        mock_brain: MagicMock,
+        mock_scenario_engine: MagicMock,
+        mock_playbook: DayPlaybook,
         mock_risk: MagicMock,
         mock_db: MagicMock,
         mock_decision_logger: MagicMock,
@@ -299,7 +342,8 @@ class TestTradingCycleTelegramIntegration:
                 await trading_cycle(
                     broker=mock_broker,
                     overseas_broker=mock_overseas_broker,
-                    brain=mock_brain,
+                    scenario_engine=mock_scenario_engine,
+                    playbook=mock_playbook,
                     risk=mock_risk,
                     db_conn=mock_db,
                     decision_logger=mock_decision_logger,
@@ -319,7 +363,8 @@ class TestTradingCycleTelegramIntegration:
         self,
         mock_broker: MagicMock,
         mock_overseas_broker: MagicMock,
-        mock_brain: MagicMock,
+        mock_scenario_engine: MagicMock,
+        mock_playbook: DayPlaybook,
         mock_risk: MagicMock,
         mock_db: MagicMock,
         mock_decision_logger: MagicMock,
@@ -329,18 +374,15 @@ class TestTradingCycleTelegramIntegration:
         mock_market: MagicMock,
     ) -> None:
         """Test no trade notification sent when decision is HOLD."""
-        # Change brain decision to HOLD
-        decision = MagicMock()
-        decision.action = "HOLD"
-        decision.confidence = 50
-        decision.rationale = "Insufficient signal"
-        mock_brain.decide = AsyncMock(return_value=decision)
+        # Scenario engine returns HOLD
+        mock_scenario_engine.evaluate = MagicMock(return_value=_make_hold_match())
 
         with patch("src.main.log_trade"):
             await trading_cycle(
                 broker=mock_broker,
                 overseas_broker=mock_overseas_broker,
-                brain=mock_brain,
+                scenario_engine=mock_scenario_engine,
+                playbook=mock_playbook,
                 risk=mock_risk,
                 db_conn=mock_db,
                 decision_logger=mock_decision_logger,
@@ -472,15 +514,16 @@ class TestOverseasBalanceParsing:
         return market
 
     @pytest.fixture
-    def mock_brain_hold(self) -> MagicMock:
-        """Create mock brain that always holds."""
-        brain = MagicMock()
-        decision = MagicMock()
-        decision.action = "HOLD"
-        decision.confidence = 50
-        decision.rationale = "Testing balance parsing"
-        brain.decide = AsyncMock(return_value=decision)
-        return brain
+    def mock_scenario_engine_hold(self) -> MagicMock:
+        """Create mock scenario engine that always returns HOLD."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_hold_match("AAPL"))
+        return engine
+
+    @pytest.fixture
+    def mock_playbook(self) -> DayPlaybook:
+        """Create a minimal playbook."""
+        return _make_playbook("US")
 
     @pytest.fixture
     def mock_risk(self) -> MagicMock:
@@ -517,14 +560,17 @@ class TestOverseasBalanceParsing:
     @pytest.fixture
     def mock_telegram(self) -> MagicMock:
         """Create mock telegram client."""
-        return MagicMock()
+        telegram = MagicMock()
+        telegram.notify_scenario_matched = AsyncMock()
+        return telegram
 
     @pytest.mark.asyncio
     async def test_overseas_balance_list_format(
         self,
         mock_domestic_broker: MagicMock,
         mock_overseas_broker_with_list: MagicMock,
-        mock_brain_hold: MagicMock,
+        mock_scenario_engine_hold: MagicMock,
+        mock_playbook: DayPlaybook,
         mock_risk: MagicMock,
         mock_db: MagicMock,
         mock_decision_logger: MagicMock,
@@ -539,7 +585,8 @@ class TestOverseasBalanceParsing:
             await trading_cycle(
                 broker=mock_domestic_broker,
                 overseas_broker=mock_overseas_broker_with_list,
-                brain=mock_brain_hold,
+                scenario_engine=mock_scenario_engine_hold,
+                playbook=mock_playbook,
                 risk=mock_risk,
                 db_conn=mock_db,
                 decision_logger=mock_decision_logger,
@@ -559,7 +606,8 @@ class TestOverseasBalanceParsing:
         self,
         mock_domestic_broker: MagicMock,
         mock_overseas_broker_with_dict: MagicMock,
-        mock_brain_hold: MagicMock,
+        mock_scenario_engine_hold: MagicMock,
+        mock_playbook: DayPlaybook,
         mock_risk: MagicMock,
         mock_db: MagicMock,
         mock_decision_logger: MagicMock,
@@ -574,7 +622,8 @@ class TestOverseasBalanceParsing:
             await trading_cycle(
                 broker=mock_domestic_broker,
                 overseas_broker=mock_overseas_broker_with_dict,
-                brain=mock_brain_hold,
+                scenario_engine=mock_scenario_engine_hold,
+                playbook=mock_playbook,
                 risk=mock_risk,
                 db_conn=mock_db,
                 decision_logger=mock_decision_logger,
@@ -594,7 +643,8 @@ class TestOverseasBalanceParsing:
         self,
         mock_domestic_broker: MagicMock,
         mock_overseas_broker_with_empty: MagicMock,
-        mock_brain_hold: MagicMock,
+        mock_scenario_engine_hold: MagicMock,
+        mock_playbook: DayPlaybook,
         mock_risk: MagicMock,
         mock_db: MagicMock,
         mock_decision_logger: MagicMock,
@@ -609,7 +659,8 @@ class TestOverseasBalanceParsing:
             await trading_cycle(
                 broker=mock_domestic_broker,
                 overseas_broker=mock_overseas_broker_with_empty,
-                brain=mock_brain_hold,
+                scenario_engine=mock_scenario_engine_hold,
+                playbook=mock_playbook,
                 risk=mock_risk,
                 db_conn=mock_db,
                 decision_logger=mock_decision_logger,
@@ -629,7 +680,8 @@ class TestOverseasBalanceParsing:
         self,
         mock_domestic_broker: MagicMock,
         mock_overseas_broker_with_empty_price: MagicMock,
-        mock_brain_hold: MagicMock,
+        mock_scenario_engine_hold: MagicMock,
+        mock_playbook: DayPlaybook,
         mock_risk: MagicMock,
         mock_db: MagicMock,
         mock_decision_logger: MagicMock,
@@ -644,7 +696,8 @@ class TestOverseasBalanceParsing:
             await trading_cycle(
                 broker=mock_domestic_broker,
                 overseas_broker=mock_overseas_broker_with_empty_price,
-                brain=mock_brain_hold,
+                scenario_engine=mock_scenario_engine_hold,
+                playbook=mock_playbook,
                 risk=mock_risk,
                 db_conn=mock_db,
                 decision_logger=mock_decision_logger,
@@ -658,3 +711,341 @@ class TestOverseasBalanceParsing:
 
         # Verify price API was called
         mock_overseas_broker_with_empty_price.get_overseas_price.assert_called_once()
+
+
+class TestScenarioEngineIntegration:
+    """Test scenario engine integration in trading_cycle."""
+
+    @pytest.fixture
+    def mock_broker(self) -> MagicMock:
+        """Create mock broker with standard domestic data."""
+        broker = MagicMock()
+        broker.get_orderbook = AsyncMock(
+            return_value={
+                "output1": {"stck_prpr": "50000", "frgn_ntby_qty": "100"}
+            }
+        )
+        broker.get_balance = AsyncMock(
+            return_value={
+                "output2": [
+                    {
+                        "tot_evlu_amt": "10000000",
+                        "dnca_tot_amt": "5000000",
+                        "pchs_amt_smtl_amt": "9500000",
+                    }
+                ]
+            }
+        )
+        broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+        return broker
+
+    @pytest.fixture
+    def mock_market(self) -> MagicMock:
+        """Create mock KR market."""
+        market = MagicMock()
+        market.name = "Korea"
+        market.code = "KR"
+        market.exchange_code = "KRX"
+        market.is_domestic = True
+        return market
+
+    @pytest.fixture
+    def mock_telegram(self) -> MagicMock:
+        """Create mock telegram with all notification methods."""
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        return telegram
+
+    @pytest.mark.asyncio
+    async def test_scenario_engine_called_with_enriched_market_data(
+        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+    ) -> None:
+        """Test scenario engine receives market_data enriched with scanner metrics."""
+        from src.analysis.smart_scanner import ScanCandidate
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_hold_match())
+        playbook = _make_playbook()
+
+        candidate = ScanCandidate(
+            stock_code="005930", name="Samsung", price=50000,
+            volume=1000000, volume_ratio=3.5, rsi=25.0,
+            signal="oversold", score=85.0,
+        )
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=playbook,
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={"KR": {"005930": candidate}},
+            )
+
+        # Verify evaluate was called
+        engine.evaluate.assert_called_once()
+        call_args = engine.evaluate.call_args
+        market_data = call_args[0][2]  # 3rd positional arg
+        portfolio_data = call_args[0][3]  # 4th positional arg
+
+        # Scanner data should be enriched into market_data
+        assert market_data["rsi"] == 25.0
+        assert market_data["volume_ratio"] == 3.5
+        assert market_data["current_price"] == 50000.0
+
+        # Portfolio data should include pnl
+        assert "portfolio_pnl_pct" in portfolio_data
+        assert "total_cash" in portfolio_data
+
+    @pytest.mark.asyncio
+    async def test_scan_candidates_market_scoped(
+        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+    ) -> None:
+        """Test scan_candidates uses market-scoped lookup, ignoring other markets."""
+        from src.analysis.smart_scanner import ScanCandidate
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_hold_match())
+
+        # Candidate stored under US market — should NOT be found for KR market
+        us_candidate = ScanCandidate(
+            stock_code="005930", name="Overlap", price=100,
+            volume=500000, volume_ratio=5.0, rsi=15.0,
+            signal="oversold", score=90.0,
+        )
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,  # KR market
+                stock_code="005930",
+                scan_candidates={"US": {"005930": us_candidate}},  # Wrong market
+            )
+
+        # Should NOT have rsi/volume_ratio because candidate is under US, not KR
+        market_data = engine.evaluate.call_args[0][2]
+        assert "rsi" not in market_data
+        assert "volume_ratio" not in market_data
+
+    @pytest.mark.asyncio
+    async def test_scenario_engine_called_without_scanner_data(
+        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+    ) -> None:
+        """Test scenario engine works when stock has no scan candidate."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_hold_match())
+        playbook = _make_playbook()
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=playbook,
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},  # No scanner data
+            )
+
+        # Should still work, just without rsi/volume_ratio
+        engine.evaluate.assert_called_once()
+        market_data = engine.evaluate.call_args[0][2]
+        assert "rsi" not in market_data
+        assert "volume_ratio" not in market_data
+        assert market_data["current_price"] == 50000.0
+
+    @pytest.mark.asyncio
+    async def test_scenario_matched_notification_sent(
+        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+    ) -> None:
+        """Test telegram notification sent when a scenario matches."""
+        # Create a match with matched_scenario (not None)
+        scenario = StockScenario(
+            condition=StockCondition(rsi_below=30),
+            action=ScenarioAction.BUY,
+            confidence=88,
+            rationale="RSI oversold bounce",
+        )
+        match = ScenarioMatch(
+            stock_code="005930",
+            matched_scenario=scenario,
+            action=ScenarioAction.BUY,
+            confidence=88,
+            rationale="RSI oversold bounce",
+            match_details={"rsi": 25.0},
+        )
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=match)
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        # Scenario matched notification should be sent
+        mock_telegram.notify_scenario_matched.assert_called_once()
+        call_kwargs = mock_telegram.notify_scenario_matched.call_args.kwargs
+        assert call_kwargs["stock_code"] == "005930"
+        assert call_kwargs["action"] == "BUY"
+        assert "rsi=25.0" in call_kwargs["condition_summary"]
+
+    @pytest.mark.asyncio
+    async def test_no_scenario_matched_notification_on_default_hold(
+        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+    ) -> None:
+        """Test no scenario notification when default HOLD is returned."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_hold_match())
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        # No scenario matched notification for default HOLD
+        mock_telegram.notify_scenario_matched.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_decision_logger_receives_scenario_match_details(
+        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+    ) -> None:
+        """Test decision logger context includes scenario match details."""
+        match = ScenarioMatch(
+            stock_code="005930",
+            matched_scenario=None,
+            action=ScenarioAction.HOLD,
+            confidence=0,
+            rationale="No match",
+            match_details={"rsi": 45.0, "volume_ratio": 1.2},
+        )
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=match)
+        decision_logger = MagicMock()
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=decision_logger,
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        decision_logger.log_decision.assert_called_once()
+        call_kwargs = decision_logger.log_decision.call_args.kwargs
+        assert "scenario_match" in call_kwargs["context_snapshot"]
+        assert call_kwargs["context_snapshot"]["scenario_match"]["rsi"] == 45.0
+
+    @pytest.mark.asyncio
+    async def test_reduce_all_does_not_execute_order(
+        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+    ) -> None:
+        """Test REDUCE_ALL action does not trigger order execution."""
+        match = ScenarioMatch(
+            stock_code="005930",
+            matched_scenario=None,
+            action=ScenarioAction.REDUCE_ALL,
+            confidence=100,
+            rationale="Global rule: portfolio loss > 2%",
+        )
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=match)
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        # REDUCE_ALL is not BUY or SELL — no order sent
+        mock_broker.send_order.assert_not_called()
+        mock_telegram.notify_trade_execution.assert_not_called()
