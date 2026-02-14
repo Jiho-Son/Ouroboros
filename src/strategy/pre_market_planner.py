@@ -95,10 +95,17 @@ class PreMarketPlanner:
         try:
             # 1. Gather context
             context_data = self._gather_context()
+            self_market_scorecard = self.build_self_market_scorecard(market, today)
             cross_market = self.build_cross_market_context(market, today)
 
             # 2. Build prompt
-            prompt = self._build_prompt(market, candidates, context_data, cross_market)
+            prompt = self._build_prompt(
+                market,
+                candidates,
+                context_data,
+                self_market_scorecard,
+                cross_market,
+            )
 
             # 3. Call Gemini
             market_data = {
@@ -176,6 +183,37 @@ class PreMarketPlanner:
             lessons=scorecard_data.get("lessons", []),
         )
 
+    def build_self_market_scorecard(
+        self, market: str, today: date | None = None,
+    ) -> dict[str, Any] | None:
+        """Build previous-day scorecard for the same market."""
+        if today is None:
+            today = date.today()
+        timeframe = (today - timedelta(days=1)).isoformat()
+        scorecard_key = f"scorecard_{market}"
+        scorecard_data = self._context_store.get_context(
+            ContextLayer.L6_DAILY, timeframe, scorecard_key
+        )
+
+        if scorecard_data is None:
+            return None
+
+        if isinstance(scorecard_data, str):
+            try:
+                scorecard_data = json.loads(scorecard_data)
+            except (json.JSONDecodeError, TypeError):
+                return None
+
+        if not isinstance(scorecard_data, dict):
+            return None
+
+        return {
+            "date": timeframe,
+            "total_pnl": float(scorecard_data.get("total_pnl", 0.0)),
+            "win_rate": float(scorecard_data.get("win_rate", 0.0)),
+            "lessons": scorecard_data.get("lessons", []),
+        }
+
     def _gather_context(self) -> dict[str, Any]:
         """Gather strategic context using ContextSelector."""
         layers = self._context_selector.select_layers(
@@ -189,6 +227,7 @@ class PreMarketPlanner:
         market: str,
         candidates: list[ScanCandidate],
         context_data: dict[str, Any],
+        self_market_scorecard: dict[str, Any] | None,
         cross_market: CrossMarketContext | None,
     ) -> str:
         """Build a structured prompt for Gemini to generate scenario JSON."""
@@ -212,6 +251,18 @@ class PreMarketPlanner:
             if cross_market.lessons:
                 cross_market_text += f"- Lessons: {'; '.join(cross_market.lessons[:3])}\n"
 
+        self_market_text = ""
+        if self_market_scorecard:
+            self_market_text = (
+                f"\n## My Market Previous Day ({market})\n"
+                f"- Date: {self_market_scorecard['date']}\n"
+                f"- P&L: {self_market_scorecard['total_pnl']:+.2f}%\n"
+                f"- Win Rate: {self_market_scorecard['win_rate']:.0f}%\n"
+            )
+            lessons = self_market_scorecard.get("lessons", [])
+            if lessons:
+                self_market_text += f"- Lessons: {'; '.join(lessons[:3])}\n"
+
         context_text = ""
         if context_data:
             context_text = "\n## Strategic Context\n"
@@ -225,6 +276,7 @@ class PreMarketPlanner:
             f"You are a pre-market trading strategist for the {market} market.\n"
             f"Generate structured trading scenarios for today.\n\n"
             f"## Candidates (from volatility scanner)\n{candidates_text}\n"
+            f"{self_market_text}"
             f"{cross_market_text}"
             f"{context_text}\n"
             f"## Instructions\n"

@@ -88,6 +88,7 @@ def _make_planner(
     token_count: int = 200,
     context_data: dict | None = None,
     scorecard_data: dict | None = None,
+    scorecard_map: dict[tuple[str, str, str], dict | None] | None = None,
 ) -> PreMarketPlanner:
     """Create a PreMarketPlanner with mocked dependencies."""
     if not gemini_response:
@@ -106,7 +107,14 @@ def _make_planner(
 
     # Mock ContextStore
     store = MagicMock()
-    store.get_context = MagicMock(return_value=scorecard_data)
+    if scorecard_map is not None:
+        store.get_context = MagicMock(
+            side_effect=lambda layer, timeframe, key: scorecard_map.get(
+                (layer.value if hasattr(layer, "value") else layer, timeframe, key)
+            )
+        )
+    else:
+        store.get_context = MagicMock(return_value=scorecard_data)
 
     # Mock ContextSelector
     selector = MagicMock()
@@ -281,6 +289,30 @@ class TestGeneratePlaybook:
             include_realtime=True,
         )
         planner._context_selector.get_context_data.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_generate_playbook_injects_self_and_cross_scorecards(self) -> None:
+        scorecard_map = {
+            (ContextLayer.L6_DAILY.value, "2026-02-07", "scorecard_KR"): {
+                "total_pnl": -1.0,
+                "win_rate": 40,
+                "lessons": ["Tighten entries"],
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-07", "scorecard_US"): {
+                "total_pnl": 1.5,
+                "win_rate": 62,
+                "index_change_pct": 0.9,
+                "lessons": ["Follow momentum"],
+            },
+        }
+        planner = _make_planner(scorecard_map=scorecard_map)
+
+        await planner.generate_playbook("KR", [_candidate()], today=date(2026, 2, 8))
+
+        call_market_data = planner._gemini.decide.call_args.args[0]
+        prompt = call_market_data["prompt_override"]
+        assert "My Market Previous Day (KR)" in prompt
+        assert "Other Market (US)" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -482,6 +514,32 @@ class TestBuildCrossMarketContext:
 
 
 # ---------------------------------------------------------------------------
+# build_self_market_scorecard
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSelfMarketScorecard:
+    def test_reads_previous_day_scorecard(self) -> None:
+        scorecard = {"total_pnl": -1.2, "win_rate": 45, "lessons": ["Reduce overtrading"]}
+        planner = _make_planner(scorecard_data=scorecard)
+
+        data = planner.build_self_market_scorecard("KR", today=date(2026, 2, 8))
+
+        assert data is not None
+        assert data["date"] == "2026-02-07"
+        assert data["total_pnl"] == -1.2
+        assert data["win_rate"] == 45
+        assert "Reduce overtrading" in data["lessons"]
+        planner._context_store.get_context.assert_called_once_with(
+            ContextLayer.L6_DAILY, "2026-02-07", "scorecard_KR"
+        )
+
+    def test_missing_scorecard_returns_none(self) -> None:
+        planner = _make_planner(scorecard_data=None)
+        assert planner.build_self_market_scorecard("US", today=date(2026, 2, 8)) is None
+
+
+# ---------------------------------------------------------------------------
 # _build_prompt
 # ---------------------------------------------------------------------------
 
@@ -491,7 +549,7 @@ class TestBuildPrompt:
         planner = _make_planner()
         candidates = [_candidate(code="005930", name="Samsung")]
 
-        prompt = planner._build_prompt("KR", candidates, {}, None)
+        prompt = planner._build_prompt("KR", candidates, {}, None, None)
 
         assert "005930" in prompt
         assert "Samsung" in prompt
@@ -505,7 +563,7 @@ class TestBuildPrompt:
             win_rate=60, index_change_pct=0.8, lessons=["Cut losses early"],
         )
 
-        prompt = planner._build_prompt("KR", [_candidate()], {}, cross)
+        prompt = planner._build_prompt("KR", [_candidate()], {}, None, cross)
 
         assert "Other Market (US)" in prompt
         assert "+1.50%" in prompt
@@ -515,7 +573,7 @@ class TestBuildPrompt:
         planner = _make_planner()
         context = {"L6_DAILY": {"win_rate": 0.65, "total_pnl": 2.5}}
 
-        prompt = planner._build_prompt("KR", [_candidate()], context, None)
+        prompt = planner._build_prompt("KR", [_candidate()], context, None, None)
 
         assert "Strategic Context" in prompt
         assert "L6_DAILY" in prompt
@@ -523,14 +581,29 @@ class TestBuildPrompt:
 
     def test_prompt_contains_max_scenarios(self) -> None:
         planner = _make_planner()
-        prompt = planner._build_prompt("KR", [_candidate()], {}, None)
+        prompt = planner._build_prompt("KR", [_candidate()], {}, None, None)
 
         assert f"Max {planner._settings.MAX_SCENARIOS_PER_STOCK} scenarios" in prompt
 
     def test_prompt_market_name(self) -> None:
         planner = _make_planner()
-        prompt = planner._build_prompt("US", [_candidate()], {}, None)
+        prompt = planner._build_prompt("US", [_candidate()], {}, None, None)
         assert "US market" in prompt
+
+    def test_prompt_contains_self_market_scorecard(self) -> None:
+        planner = _make_planner()
+        self_scorecard = {
+            "date": "2026-02-07",
+            "total_pnl": -0.8,
+            "win_rate": 45.0,
+            "lessons": ["Avoid midday entries"],
+        }
+        prompt = planner._build_prompt("KR", [_candidate()], {}, self_scorecard, None)
+
+        assert "My Market Previous Day (KR)" in prompt
+        assert "2026-02-07" in prompt
+        assert "-0.80%" in prompt
+        assert "Avoid midday entries" in prompt
 
 
 # ---------------------------------------------------------------------------
