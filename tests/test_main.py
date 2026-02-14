@@ -1,6 +1,6 @@
 """Tests for main trading loop integration."""
 
-from datetime import date
+from datetime import UTC, date
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,8 +8,9 @@ import pytest
 from src.context.layer import ContextLayer
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
 from src.db import init_db, log_trade
+from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
-from src.main import safe_float, trading_cycle
+from src.main import _handle_market_close, safe_float, trading_cycle
 from src.strategy.models import (
     DayPlaybook,
     ScenarioAction,
@@ -1219,3 +1220,78 @@ async def test_sell_updates_original_buy_decision_outcome() -> None:
     assert updated_buy is not None
     assert updated_buy.outcome_pnl == 20.0
     assert updated_buy.outcome_accuracy == 1
+
+
+@pytest.mark.asyncio
+async def test_handle_market_close_runs_daily_review_flow() -> None:
+    """Market close should aggregate, create scorecard, lessons, and notify."""
+    telegram = MagicMock()
+    telegram.notify_market_close = AsyncMock()
+    telegram.send_message = AsyncMock()
+
+    context_aggregator = MagicMock()
+    reviewer = MagicMock()
+    reviewer.generate_scorecard.return_value = DailyScorecard(
+        date="2026-02-14",
+        market="KR",
+        total_decisions=3,
+        buys=1,
+        sells=1,
+        holds=1,
+        total_pnl=12.5,
+        win_rate=50.0,
+        avg_confidence=75.0,
+        scenario_match_rate=66.7,
+    )
+    reviewer.generate_lessons = AsyncMock(return_value=["Cut losers faster"])
+
+    await _handle_market_close(
+        market_code="KR",
+        market_name="Korea",
+        market_timezone=UTC,
+        telegram=telegram,
+        context_aggregator=context_aggregator,
+        daily_reviewer=reviewer,
+    )
+
+    telegram.notify_market_close.assert_called_once_with("Korea", 0.0)
+    context_aggregator.aggregate_daily_from_trades.assert_called_once()
+    reviewer.generate_scorecard.assert_called_once()
+    assert reviewer.store_scorecard_in_context.call_count == 2
+    reviewer.generate_lessons.assert_called_once()
+    telegram.send_message.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_market_close_without_lessons_stores_once() -> None:
+    """If no lessons are generated, scorecard should be stored once."""
+    telegram = MagicMock()
+    telegram.notify_market_close = AsyncMock()
+    telegram.send_message = AsyncMock()
+
+    context_aggregator = MagicMock()
+    reviewer = MagicMock()
+    reviewer.generate_scorecard.return_value = DailyScorecard(
+        date="2026-02-14",
+        market="US",
+        total_decisions=1,
+        buys=0,
+        sells=1,
+        holds=0,
+        total_pnl=-3.0,
+        win_rate=0.0,
+        avg_confidence=65.0,
+        scenario_match_rate=100.0,
+    )
+    reviewer.generate_lessons = AsyncMock(return_value=[])
+
+    await _handle_market_close(
+        market_code="US",
+        market_name="United States",
+        market_timezone=UTC,
+        telegram=telegram,
+        context_aggregator=context_aggregator,
+        daily_reviewer=reviewer,
+    )
+
+    assert reviewer.store_scorecard_in_context.call_count == 1

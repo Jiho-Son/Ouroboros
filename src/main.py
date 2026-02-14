@@ -27,6 +27,7 @@ from src.core.criticality import CriticalityAssessor
 from src.core.priority_queue import PriorityTaskQueue
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
 from src.db import get_latest_buy_trade, init_db, log_trade
+from src.evolution.daily_review import DailyReviewer
 from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
 from src.markets.schedule import MarketInfo, get_next_market_open, get_open_markets
@@ -736,6 +737,41 @@ async def run_daily_session(
     logger.info("Daily trading session completed")
 
 
+async def _handle_market_close(
+    market_code: str,
+    market_name: str,
+    market_timezone: Any,
+    telegram: TelegramClient,
+    context_aggregator: ContextAggregator,
+    daily_reviewer: DailyReviewer,
+) -> None:
+    """Handle market-close tasks: notify, aggregate, review, and store context."""
+    await telegram.notify_market_close(market_name, 0.0)
+
+    market_date = datetime.now(market_timezone).date().isoformat()
+    context_aggregator.aggregate_daily_from_trades(
+        date=market_date,
+        market=market_code,
+    )
+
+    scorecard = daily_reviewer.generate_scorecard(market_date, market_code)
+    daily_reviewer.store_scorecard_in_context(scorecard)
+
+    lessons = await daily_reviewer.generate_lessons(scorecard)
+    if lessons:
+        scorecard.lessons = lessons
+        daily_reviewer.store_scorecard_in_context(scorecard)
+
+    await telegram.send_message(
+        f"<b>Daily Review ({market_code})</b>\n"
+        f"Date: {scorecard.date}\n"
+        f"Decisions: {scorecard.total_decisions}\n"
+        f"P&L: {scorecard.total_pnl:+.2f}\n"
+        f"Win Rate: {scorecard.win_rate:.2f}%\n"
+        f"Lessons: {', '.join(scorecard.lessons) if scorecard.lessons else 'N/A'}"
+    )
+
+
 async def run(settings: Settings) -> None:
     """Main async loop — iterate over open markets on a timer."""
     broker = KISBroker(settings)
@@ -751,6 +787,7 @@ async def run(settings: Settings) -> None:
     context_selector = ContextSelector(context_store)
     scenario_engine = ScenarioEngine()
     playbook_store = PlaybookStore(db_conn)
+    daily_reviewer = DailyReviewer(db_conn, context_store, gemini_client=brain)
     pre_market_planner = PreMarketPlanner(
         gemini_client=brain,
         context_store=context_store,
@@ -1029,13 +1066,13 @@ async def run(settings: Settings) -> None:
 
                                 market_info = MARKETS.get(market_code)
                                 if market_info:
-                                    await telegram.notify_market_close(market_info.name, 0.0)
-                                    market_date = datetime.now(
-                                        market_info.timezone
-                                    ).date().isoformat()
-                                    context_aggregator.aggregate_daily_from_trades(
-                                        date=market_date,
-                                        market=market_code,
+                                    await _handle_market_close(
+                                        market_code=market_code,
+                                        market_name=market_info.name,
+                                        market_timezone=market_info.timezone,
+                                        telegram=telegram,
+                                        context_aggregator=context_aggregator,
+                                        daily_reviewer=daily_reviewer,
                                     )
                             except Exception as exc:
                                 logger.warning("Market close notification failed: %s", exc)
