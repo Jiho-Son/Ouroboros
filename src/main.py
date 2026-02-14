@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import logging
 import signal
+import threading
 from datetime import UTC, datetime
 from typing import Any
 
@@ -844,6 +845,48 @@ async def _run_evolution_loop(
         logger.warning("Evolution notification failed on %s: %s", market_date, exc)
 
 
+def _start_dashboard_server(settings: Settings) -> threading.Thread | None:
+    """Start FastAPI dashboard in a daemon thread when enabled."""
+    if not settings.DASHBOARD_ENABLED:
+        return None
+
+    def _serve() -> None:
+        try:
+            import uvicorn
+
+            from src.dashboard import create_dashboard_app
+
+            app = create_dashboard_app(settings.DB_PATH)
+            uvicorn.run(
+                app,
+                host=settings.DASHBOARD_HOST,
+                port=settings.DASHBOARD_PORT,
+                log_level="info",
+            )
+        except Exception as exc:
+            logger.warning("Dashboard server failed to start: %s", exc)
+
+    thread = threading.Thread(
+        target=_serve,
+        name="dashboard-server",
+        daemon=True,
+    )
+    thread.start()
+    logger.info(
+        "Dashboard server started at http://%s:%d",
+        settings.DASHBOARD_HOST,
+        settings.DASHBOARD_PORT,
+    )
+    return thread
+
+
+def _apply_dashboard_flag(settings: Settings, dashboard_flag: bool) -> Settings:
+    """Apply CLI dashboard flag over environment settings."""
+    if dashboard_flag and not settings.DASHBOARD_ENABLED:
+        return settings.model_copy(update={"DASHBOARD_ENABLED": True})
+    return settings
+
+
 async def run(settings: Settings) -> None:
     """Main async loop — iterate over open markets on a timer."""
     broker = KISBroker(settings)
@@ -1042,6 +1085,7 @@ async def run(settings: Settings) -> None:
         low_volatility_threshold=30.0,
     )
     priority_queue = PriorityTaskQueue(max_size=1000)
+    _start_dashboard_server(settings)
 
     # Track last scan time for each market
     last_scan_time: dict[str, float] = {}
@@ -1395,10 +1439,16 @@ def main() -> None:
         default="paper",
         help="Trading mode (default: paper)",
     )
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Enable FastAPI dashboard server in background thread",
+    )
     args = parser.parse_args()
 
     setup_logging()
     settings = Settings(MODE=args.mode)  # type: ignore[call-arg]
+    settings = _apply_dashboard_flag(settings, args.dashboard)
     asyncio.run(run(settings))
 
 
