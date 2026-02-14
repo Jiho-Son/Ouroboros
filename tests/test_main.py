@@ -1,16 +1,17 @@
 """Tests for main trading loop integration."""
 
-from datetime import UTC, date
+from datetime import UTC, date, datetime
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.context.layer import ContextLayer
+from src.context.scheduler import ScheduleResult
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
 from src.db import init_db, log_trade
 from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
-from src.main import _handle_market_close, safe_float, trading_cycle
+from src.main import _handle_market_close, _run_context_scheduler, safe_float, trading_cycle
 from src.strategy.models import (
     DayPlaybook,
     ScenarioAction,
@@ -1295,3 +1296,13 @@ async def test_handle_market_close_without_lessons_stores_once() -> None:
     )
 
     assert reviewer.store_scorecard_in_context.call_count == 1
+
+
+def test_run_context_scheduler_invokes_scheduler() -> None:
+    """Scheduler helper should call run_if_due with provided datetime."""
+    scheduler = MagicMock()
+    scheduler.run_if_due = MagicMock(return_value=ScheduleResult(cleanup=True))
+
+    _run_context_scheduler(scheduler, now=datetime(2026, 2, 14, tzinfo=UTC))
+
+    scheduler.run_if_due.assert_called_once()
