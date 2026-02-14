@@ -6,6 +6,7 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 
 def init_db(db_path: str) -> sqlite3.Connection:
@@ -26,7 +27,8 @@ def init_db(db_path: str) -> sqlite3.Connection:
             price REAL,
             pnl REAL DEFAULT 0.0,
             market TEXT DEFAULT 'KR',
-            exchange_code TEXT DEFAULT 'KRX'
+            exchange_code TEXT DEFAULT 'KRX',
+            decision_id TEXT
         )
         """
     )
@@ -41,6 +43,8 @@ def init_db(db_path: str) -> sqlite3.Connection:
         conn.execute("ALTER TABLE trades ADD COLUMN exchange_code TEXT DEFAULT 'KRX'")
     if "selection_context" not in columns:
         conn.execute("ALTER TABLE trades ADD COLUMN selection_context TEXT")
+    if "decision_id" not in columns:
+        conn.execute("ALTER TABLE trades ADD COLUMN decision_id TEXT")
 
     # Context tree tables for multi-layered memory management
     conn.execute(
@@ -143,6 +147,7 @@ def log_trade(
     market: str = "KR",
     exchange_code: str = "KRX",
     selection_context: dict[str, any] | None = None,
+    decision_id: str | None = None,
 ) -> None:
     """Insert a trade record into the database.
 
@@ -166,9 +171,9 @@ def log_trade(
         """
         INSERT INTO trades (
             timestamp, stock_code, action, confidence, rationale,
-            quantity, price, pnl, market, exchange_code, selection_context
+            quantity, price, pnl, market, exchange_code, selection_context, decision_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             datetime.now(UTC).isoformat(),
@@ -182,6 +187,30 @@ def log_trade(
             market,
             exchange_code,
             context_json,
+            decision_id,
         ),
     )
     conn.commit()
+
+
+def get_latest_buy_trade(
+    conn: sqlite3.Connection, stock_code: str, market: str
+) -> dict[str, Any] | None:
+    """Fetch the most recent BUY trade for a stock and market."""
+    cursor = conn.execute(
+        """
+        SELECT decision_id, price, quantity
+        FROM trades
+        WHERE stock_code = ?
+          AND market = ?
+          AND action = 'BUY'
+          AND decision_id IS NOT NULL
+        ORDER BY timestamp DESC
+        LIMIT 1
+        """,
+        (stock_code, market),
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    return {"decision_id": row[0], "price": row[1], "quantity": row[2]}

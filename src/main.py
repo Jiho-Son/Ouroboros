@@ -26,7 +26,7 @@ from src.context.store import ContextStore
 from src.core.criticality import CriticalityAssessor
 from src.core.priority_queue import PriorityTaskQueue
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
-from src.db import init_db, log_trade
+from src.db import get_latest_buy_trade, init_db, log_trade
 from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
 from src.markets.schedule import MarketInfo, get_next_market_open, get_open_markets
@@ -279,7 +279,7 @@ async def trading_cycle(
         "pnl_pct": pnl_pct,
     }
 
-    decision_logger.log_decision(
+    decision_id = decision_logger.log_decision(
         stock_code=stock_code,
         market=market.code,
         exchange_code=market.exchange_code,
@@ -291,6 +291,9 @@ async def trading_cycle(
     )
 
     # 3. Execute if actionable
+    quantity = 0
+    trade_price = current_price
+    trade_pnl = 0.0
     if decision.action in ("BUY", "SELL"):
         # Determine order size (simplified: 1 lot)
         quantity = 1
@@ -346,6 +349,18 @@ async def trading_cycle(
         except Exception as exc:
             logger.warning("Telegram notification failed: %s", exc)
 
+        if decision.action == "SELL":
+            buy_trade = get_latest_buy_trade(db_conn, stock_code, market.code)
+            if buy_trade and buy_trade.get("price") is not None:
+                buy_price = float(buy_trade["price"])
+                buy_qty = int(buy_trade.get("quantity") or 1)
+                trade_pnl = (trade_price - buy_price) * buy_qty
+                decision_logger.update_outcome(
+                    decision_id=buy_trade["decision_id"],
+                    pnl=trade_pnl,
+                    accuracy=1 if trade_pnl > 0 else 0,
+                )
+
     # 6. Log trade with selection context
     selection_context = None
     if stock_code in market_candidates:
@@ -363,9 +378,13 @@ async def trading_cycle(
         action=decision.action,
         confidence=decision.confidence,
         rationale=decision.rationale,
+        quantity=quantity,
+        price=trade_price,
+        pnl=trade_pnl,
         market=market.code,
         exchange_code=market.exchange_code,
         selection_context=selection_context,
+        decision_id=decision_id,
     )
 
     # 7. Latency monitoring
@@ -600,7 +619,7 @@ async def run_daily_session(
                 "pnl_pct": pnl_pct,
             }
 
-            decision_logger.log_decision(
+            decision_id = decision_logger.log_decision(
                 stock_code=stock_code,
                 market=market.code,
                 exchange_code=market.exchange_code,
@@ -612,6 +631,9 @@ async def run_daily_session(
             )
 
             # Execute if actionable
+            quantity = 0
+            trade_price = stock_data["current_price"]
+            trade_pnl = 0.0
             if decision.action in ("BUY", "SELL"):
                 quantity = 1
                 order_amount = stock_data["current_price"] * quantity
@@ -684,6 +706,18 @@ async def run_daily_session(
                     )
                     continue
 
+                if decision.action == "SELL":
+                    buy_trade = get_latest_buy_trade(db_conn, stock_code, market.code)
+                    if buy_trade and buy_trade.get("price") is not None:
+                        buy_price = float(buy_trade["price"])
+                        buy_qty = int(buy_trade.get("quantity") or 1)
+                        trade_pnl = (trade_price - buy_price) * buy_qty
+                        decision_logger.update_outcome(
+                            decision_id=buy_trade["decision_id"],
+                            pnl=trade_pnl,
+                            accuracy=1 if trade_pnl > 0 else 0,
+                        )
+
             # Log trade
             log_trade(
                 conn=db_conn,
@@ -691,8 +725,12 @@ async def run_daily_session(
                 action=decision.action,
                 confidence=decision.confidence,
                 rationale=decision.rationale,
+                quantity=quantity,
+                price=trade_price,
+                pnl=trade_pnl,
                 market=market.code,
                 exchange_code=market.exchange_code,
+                decision_id=decision_id,
             )
 
     logger.info("Daily trading session completed")
