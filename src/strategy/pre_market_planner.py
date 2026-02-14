@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from src.analysis.smart_scanner import ScanCandidate
@@ -145,7 +145,8 @@ class PreMarketPlanner:
         other_market = "US" if target_market == "KR" else "KR"
         if today is None:
             today = date.today()
-        timeframe = today.isoformat()
+        timeframe_date = today - timedelta(days=1) if target_market == "KR" else today
+        timeframe = timeframe_date.isoformat()
 
         scorecard_key = f"scorecard_{other_market}"
         scorecard_data = self._context_store.get_context(

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.analysis.smart_scanner import ScanCandidate
+from src.brain.context_selector import DecisionType
 from src.brain.gemini_client import TradeDecision
 from src.config import Settings
 from src.context.store import ContextLayer
@@ -16,11 +17,9 @@ from src.strategy.models import (
     CrossMarketContext,
     DayPlaybook,
     MarketOutlook,
-    PlaybookStatus,
     ScenarioAction,
 )
 from src.strategy.pre_market_planner import PreMarketPlanner
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -111,7 +110,9 @@ def _make_planner(
 
     # Mock ContextSelector
     selector = MagicMock()
-    selector.select_layers = MagicMock(return_value=[ContextLayer.L7_REALTIME, ContextLayer.L6_DAILY])
+    selector.select_layers = MagicMock(
+        return_value=[ContextLayer.L7_REALTIME, ContextLayer.L6_DAILY]
+    )
     selector.get_context_data = MagicMock(return_value=context_data or {})
 
     settings = Settings(
@@ -220,11 +221,25 @@ class TestGeneratePlaybook:
         stocks = [
             {
                 "stock_code": "005930",
-                "scenarios": [{"condition": {"rsi_below": 30}, "action": "BUY", "confidence": 85, "rationale": "ok"}],
+                "scenarios": [
+                    {
+                        "condition": {"rsi_below": 30},
+                        "action": "BUY",
+                        "confidence": 85,
+                        "rationale": "ok",
+                    }
+                ],
             },
             {
                 "stock_code": "UNKNOWN",
-                "scenarios": [{"condition": {"rsi_below": 20}, "action": "BUY", "confidence": 90, "rationale": "bad"}],
+                "scenarios": [
+                    {
+                        "condition": {"rsi_below": 20},
+                        "action": "BUY",
+                        "confidence": 90,
+                        "rationale": "bad",
+                    }
+                ],
             },
         ]
         planner = _make_planner(gemini_response=_gemini_response_json(stocks=stocks))
@@ -253,6 +268,19 @@ class TestGeneratePlaybook:
         pb = await planner.generate_playbook("KR", candidates, today=date(2026, 2, 8))
 
         assert pb.token_count == 450
+
+    @pytest.mark.asyncio
+    async def test_generate_playbook_uses_strategic_context_selector(self) -> None:
+        planner = _make_planner()
+        candidates = [_candidate()]
+
+        await planner.generate_playbook("KR", candidates, today=date(2026, 2, 8))
+
+        planner._context_selector.select_layers.assert_called_once_with(
+            decision_type=DecisionType.STRATEGIC,
+            include_realtime=True,
+        )
+        planner._context_selector.get_context_data.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +430,12 @@ class TestParseResponse:
 
 class TestBuildCrossMarketContext:
     def test_kr_reads_us_scorecard(self) -> None:
-        scorecard = {"total_pnl": 2.5, "win_rate": 65, "index_change_pct": 0.8, "lessons": ["Stay patient"]}
+        scorecard = {
+            "total_pnl": 2.5,
+            "win_rate": 65,
+            "index_change_pct": 0.8,
+            "lessons": ["Stay patient"],
+        }
         planner = _make_planner(scorecard_data=scorecard)
 
         ctx = planner.build_cross_market_context("KR", today=date(2026, 2, 8))
@@ -415,8 +448,9 @@ class TestBuildCrossMarketContext:
 
         # Verify it queried scorecard_US
         planner._context_store.get_context.assert_called_once_with(
-            ContextLayer.L6_DAILY, "2026-02-08", "scorecard_US"
+            ContextLayer.L6_DAILY, "2026-02-07", "scorecard_US"
         )
+        assert ctx.date == "2026-02-07"
 
     def test_us_reads_kr_scorecard(self) -> None:
         scorecard = {"total_pnl": -1.0, "win_rate": 40, "index_change_pct": -0.5}
