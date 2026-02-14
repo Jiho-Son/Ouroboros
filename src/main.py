@@ -29,6 +29,7 @@ from src.core.priority_queue import PriorityTaskQueue
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
 from src.db import get_latest_buy_trade, init_db, log_trade
 from src.evolution.daily_review import DailyReviewer
+from src.evolution.optimizer import EvolutionOptimizer
 from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
 from src.markets.schedule import MarketInfo, get_next_market_open, get_open_markets
@@ -745,6 +746,7 @@ async def _handle_market_close(
     telegram: TelegramClient,
     context_aggregator: ContextAggregator,
     daily_reviewer: DailyReviewer,
+    evolution_optimizer: EvolutionOptimizer | None = None,
 ) -> None:
     """Handle market-close tasks: notify, aggregate, review, and store context."""
     await telegram.notify_market_close(market_name, 0.0)
@@ -771,6 +773,14 @@ async def _handle_market_close(
         f"Win Rate: {scorecard.win_rate:.2f}%\n"
         f"Lessons: {', '.join(scorecard.lessons) if scorecard.lessons else 'N/A'}"
     )
+
+    if evolution_optimizer is not None:
+        await _run_evolution_loop(
+            evolution_optimizer=evolution_optimizer,
+            telegram=telegram,
+            market_code=market_code,
+            market_date=market_date,
+        )
 
 
 def _run_context_scheduler(
@@ -802,6 +812,35 @@ def _run_context_scheduler(
         )
 
 
+async def _run_evolution_loop(
+    evolution_optimizer: EvolutionOptimizer,
+    telegram: TelegramClient,
+    market_code: str,
+    market_date: str,
+) -> None:
+    """Run evolution loop once at US close (end of trading day)."""
+    if market_code != "US":
+        return
+
+    try:
+        pr_info = await evolution_optimizer.evolve()
+    except Exception as exc:
+        logger.warning("Evolution loop failed on %s: %s", market_date, exc)
+        return
+
+    if pr_info is None:
+        logger.info("Evolution loop skipped on %s (no actionable failures)", market_date)
+        return
+
+    await telegram.send_message(
+        "<b>Evolution Update</b>\n"
+        f"Date: {market_date}\n"
+        f"PR: {pr_info.get('title', 'N/A')}\n"
+        f"Branch: {pr_info.get('branch', 'N/A')}\n"
+        f"Status: {pr_info.get('status', 'N/A')}"
+    )
+
+
 async def run(settings: Settings) -> None:
     """Main async loop — iterate over open markets on a timer."""
     broker = KISBroker(settings)
@@ -816,6 +855,7 @@ async def run(settings: Settings) -> None:
         aggregator=context_aggregator,
         store=context_store,
     )
+    evolution_optimizer = EvolutionOptimizer(settings)
 
     # V2 proactive strategy components
     context_selector = ContextSelector(context_store)
@@ -1109,6 +1149,7 @@ async def run(settings: Settings) -> None:
                                         telegram=telegram,
                                         context_aggregator=context_aggregator,
                                         daily_reviewer=daily_reviewer,
+                                        evolution_optimizer=evolution_optimizer,
                                     )
                             except Exception as exc:
                                 logger.warning("Market close notification failed: %s", exc)
