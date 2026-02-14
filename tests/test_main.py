@@ -5,8 +5,10 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
 from src.context.layer import ContextLayer
+from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
+from src.db import init_db, log_trade
+from src.logging.decision_logger import DecisionLogger
 from src.main import safe_float, trading_cycle
 from src.strategy.models import (
     DayPlaybook,
@@ -41,6 +43,17 @@ def _make_hold_match(stock_code: str = "005930") -> ScenarioMatch:
         action=ScenarioAction.HOLD,
         confidence=0,
         rationale="No scenario conditions met",
+    )
+
+
+def _make_sell_match(stock_code: str = "005930") -> ScenarioMatch:
+    """Create a ScenarioMatch that returns SELL."""
+    return ScenarioMatch(
+        stock_code=stock_code,
+        matched_scenario=None,
+        action=ScenarioAction.SELL,
+        confidence=90,
+        rationale="Test sell",
     )
 
 
@@ -1113,3 +1126,96 @@ class TestScenarioEngineIntegration:
         # REDUCE_ALL is not BUY or SELL — no order sent
         mock_broker.send_order.assert_not_called()
         mock_telegram.notify_trade_execution.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sell_updates_original_buy_decision_outcome() -> None:
+    """SELL should update the original BUY decision outcome in decision_logs."""
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    buy_decision_id = decision_logger.log_decision(
+        stock_code="005930",
+        market="KR",
+        exchange_code="KRX",
+        action="BUY",
+        confidence=85,
+        rationale="Initial buy",
+        context_snapshot={},
+        input_data={},
+    )
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=85,
+        rationale="Initial buy",
+        quantity=1,
+        price=100.0,
+        pnl=0.0,
+        market="KR",
+        exchange_code="KRX",
+        decision_id=buy_decision_id,
+    )
+
+    broker = MagicMock()
+    broker.get_orderbook = AsyncMock(
+        return_value={"output1": {"stck_prpr": "120", "frgn_ntby_qty": "0"}}
+    )
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "10000",
+                    "pchs_amt_smtl_amt": "90000",
+                }
+            ]
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    overseas_broker = MagicMock()
+    engine = MagicMock(spec=ScenarioEngine)
+    engine.evaluate = MagicMock(return_value=_make_sell_match())
+    risk = MagicMock()
+    context_store = MagicMock(
+        get_latest_timeframe=MagicMock(return_value=None),
+        set_context=MagicMock(),
+    )
+    criticality_assessor = MagicMock(
+        assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+        get_timeout=MagicMock(return_value=5.0),
+    )
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    await trading_cycle(
+        broker=broker,
+        overseas_broker=overseas_broker,
+        scenario_engine=engine,
+        playbook=_make_playbook(),
+        risk=risk,
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        context_store=context_store,
+        criticality_assessor=criticality_assessor,
+        telegram=telegram,
+        market=market,
+        stock_code="005930",
+        scan_candidates={},
+    )
+
+    updated_buy = decision_logger.get_decision_by_id(buy_decision_id)
+    assert updated_buy is not None
+    assert updated_buy.outcome_pnl == 20.0
+    assert updated_buy.outcome_accuracy == 1
