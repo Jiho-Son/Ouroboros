@@ -11,7 +11,13 @@ from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
 from src.db import init_db, log_trade
 from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
-from src.main import _handle_market_close, _run_context_scheduler, safe_float, trading_cycle
+from src.main import (
+    _handle_market_close,
+    _run_context_scheduler,
+    _run_evolution_loop,
+    safe_float,
+    trading_cycle,
+)
 from src.strategy.models import (
     DayPlaybook,
     ScenarioAction,
@@ -1306,3 +1312,45 @@ def test_run_context_scheduler_invokes_scheduler() -> None:
     _run_context_scheduler(scheduler, now=datetime(2026, 2, 14, tzinfo=UTC))
 
     scheduler.run_if_due.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_evolution_loop_skips_non_us_market() -> None:
+    optimizer = MagicMock()
+    optimizer.evolve = AsyncMock()
+    telegram = MagicMock()
+    telegram.send_message = AsyncMock()
+
+    await _run_evolution_loop(
+        evolution_optimizer=optimizer,
+        telegram=telegram,
+        market_code="KR",
+        market_date="2026-02-14",
+    )
+
+    optimizer.evolve.assert_not_called()
+    telegram.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_evolution_loop_notifies_when_pr_generated() -> None:
+    optimizer = MagicMock()
+    optimizer.evolve = AsyncMock(
+        return_value={
+            "title": "[Evolution] New strategy: v20260214_050000",
+            "branch": "evolution/v20260214_050000",
+            "status": "ready_for_review",
+        }
+    )
+    telegram = MagicMock()
+    telegram.send_message = AsyncMock()
+
+    await _run_evolution_loop(
+        evolution_optimizer=optimizer,
+        telegram=telegram,
+        market_code="US",
+        market_date="2026-02-14",
+    )
+
+    optimizer.evolve.assert_called_once()
+    telegram.send_message.assert_called_once()
