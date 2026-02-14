@@ -832,13 +832,16 @@ async def _run_evolution_loop(
         logger.info("Evolution loop skipped on %s (no actionable failures)", market_date)
         return
 
-    await telegram.send_message(
-        "<b>Evolution Update</b>\n"
-        f"Date: {market_date}\n"
-        f"PR: {pr_info.get('title', 'N/A')}\n"
-        f"Branch: {pr_info.get('branch', 'N/A')}\n"
-        f"Status: {pr_info.get('status', 'N/A')}"
-    )
+    try:
+        await telegram.send_message(
+            "<b>Evolution Update</b>\n"
+            f"Date: {market_date}\n"
+            f"PR: {pr_info.get('title', 'N/A')}\n"
+            f"Branch: {pr_info.get('branch', 'N/A')}\n"
+            f"Status: {pr_info.get('status', 'N/A')}"
+        )
+    except Exception as exc:
+        logger.warning("Evolution notification failed on %s: %s", market_date, exc)
 
 
 async def run(settings: Settings) -> None:

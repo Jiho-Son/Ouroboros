@@ -1304,6 +1304,82 @@ async def test_handle_market_close_without_lessons_stores_once() -> None:
     assert reviewer.store_scorecard_in_context.call_count == 1
 
 
+@pytest.mark.asyncio
+async def test_handle_market_close_triggers_evolution_for_us() -> None:
+    telegram = MagicMock()
+    telegram.notify_market_close = AsyncMock()
+    telegram.send_message = AsyncMock()
+
+    context_aggregator = MagicMock()
+    reviewer = MagicMock()
+    reviewer.generate_scorecard.return_value = DailyScorecard(
+        date="2026-02-14",
+        market="US",
+        total_decisions=2,
+        buys=1,
+        sells=1,
+        holds=0,
+        total_pnl=3.0,
+        win_rate=50.0,
+        avg_confidence=80.0,
+        scenario_match_rate=100.0,
+    )
+    reviewer.generate_lessons = AsyncMock(return_value=[])
+
+    evolution_optimizer = MagicMock()
+    evolution_optimizer.evolve = AsyncMock(return_value=None)
+
+    await _handle_market_close(
+        market_code="US",
+        market_name="United States",
+        market_timezone=UTC,
+        telegram=telegram,
+        context_aggregator=context_aggregator,
+        daily_reviewer=reviewer,
+        evolution_optimizer=evolution_optimizer,
+    )
+
+    evolution_optimizer.evolve.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_market_close_skips_evolution_for_kr() -> None:
+    telegram = MagicMock()
+    telegram.notify_market_close = AsyncMock()
+    telegram.send_message = AsyncMock()
+
+    context_aggregator = MagicMock()
+    reviewer = MagicMock()
+    reviewer.generate_scorecard.return_value = DailyScorecard(
+        date="2026-02-14",
+        market="KR",
+        total_decisions=1,
+        buys=1,
+        sells=0,
+        holds=0,
+        total_pnl=1.0,
+        win_rate=100.0,
+        avg_confidence=90.0,
+        scenario_match_rate=100.0,
+    )
+    reviewer.generate_lessons = AsyncMock(return_value=[])
+
+    evolution_optimizer = MagicMock()
+    evolution_optimizer.evolve = AsyncMock(return_value=None)
+
+    await _handle_market_close(
+        market_code="KR",
+        market_name="Korea",
+        market_timezone=UTC,
+        telegram=telegram,
+        context_aggregator=context_aggregator,
+        daily_reviewer=reviewer,
+        evolution_optimizer=evolution_optimizer,
+    )
+
+    evolution_optimizer.evolve.assert_not_called()
+
+
 def test_run_context_scheduler_invokes_scheduler() -> None:
     """Scheduler helper should call run_if_due with provided datetime."""
     scheduler = MagicMock()
@@ -1344,6 +1420,30 @@ async def test_run_evolution_loop_notifies_when_pr_generated() -> None:
     )
     telegram = MagicMock()
     telegram.send_message = AsyncMock()
+
+    await _run_evolution_loop(
+        evolution_optimizer=optimizer,
+        telegram=telegram,
+        market_code="US",
+        market_date="2026-02-14",
+    )
+
+    optimizer.evolve.assert_called_once()
+    telegram.send_message.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_evolution_loop_notification_error_is_ignored() -> None:
+    optimizer = MagicMock()
+    optimizer.evolve = AsyncMock(
+        return_value={
+            "title": "[Evolution] New strategy: v20260214_050000",
+            "branch": "evolution/v20260214_050000",
+            "status": "ready_for_review",
+        }
+    )
+    telegram = MagicMock()
+    telegram.send_message = AsyncMock(side_effect=RuntimeError("telegram down"))
 
     await _run_evolution_loop(
         evolution_optimizer=optimizer,
