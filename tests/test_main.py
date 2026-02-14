@@ -5,6 +5,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.config import Settings
 from src.context.layer import ContextLayer
 from src.context.scheduler import ScheduleResult
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
@@ -12,9 +13,11 @@ from src.db import init_db, log_trade
 from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
 from src.main import (
+    _apply_dashboard_flag,
     _handle_market_close,
     _run_context_scheduler,
     _run_evolution_loop,
+    _start_dashboard_server,
     safe_float,
     trading_cycle,
 )
@@ -1454,3 +1457,44 @@ async def test_run_evolution_loop_notification_error_is_ignored() -> None:
 
     optimizer.evolve.assert_called_once()
     telegram.send_message.assert_called_once()
+
+
+def test_apply_dashboard_flag_enables_dashboard() -> None:
+    settings = Settings(
+        KIS_APP_KEY="test_key",
+        KIS_APP_SECRET="test_secret",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="test_gemini_key",
+        DASHBOARD_ENABLED=False,
+    )
+    updated = _apply_dashboard_flag(settings, dashboard_flag=True)
+    assert updated.DASHBOARD_ENABLED is True
+
+
+def test_start_dashboard_server_disabled_returns_none() -> None:
+    settings = Settings(
+        KIS_APP_KEY="test_key",
+        KIS_APP_SECRET="test_secret",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="test_gemini_key",
+        DASHBOARD_ENABLED=False,
+    )
+    thread = _start_dashboard_server(settings)
+    assert thread is None
+
+
+def test_start_dashboard_server_enabled_starts_thread() -> None:
+    settings = Settings(
+        KIS_APP_KEY="test_key",
+        KIS_APP_SECRET="test_secret",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="test_gemini_key",
+        DASHBOARD_ENABLED=True,
+    )
+    mock_thread = MagicMock()
+    with patch("src.main.threading.Thread", return_value=mock_thread) as mock_thread_cls:
+        thread = _start_dashboard_server(settings)
+
+    assert thread == mock_thread
+    mock_thread_cls.assert_called_once()
+    mock_thread.start.assert_called_once()

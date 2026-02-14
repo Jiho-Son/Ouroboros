@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     TELEGRAM_COMMANDS_ENABLED: bool = True
     TELEGRAM_POLLING_INTERVAL: float = 1.0  # seconds
 
+    # Dashboard (optional)
+    DASHBOARD_ENABLED: bool = False
+    DASHBOARD_HOST: str = "127.0.0.1"
+    DASHBOARD_PORT: int = Field(default=8080, ge=1, le=65535)
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     @property
