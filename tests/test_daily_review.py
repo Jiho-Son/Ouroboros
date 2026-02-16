@@ -16,6 +16,10 @@ from src.evolution.daily_review import DailyReviewer
 from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
 
+from datetime import UTC, datetime
+
+TODAY = datetime.now(UTC).strftime("%Y-%m-%d")
+
 
 @pytest.fixture
 def db_conn() -> sqlite3.Connection:
@@ -116,7 +120,7 @@ def test_generate_scorecard_market_scoped(
         exchange_code="NASDAQ",
     )
 
-    scorecard = reviewer.generate_scorecard("2026-02-14", "KR")
+    scorecard = reviewer.generate_scorecard(TODAY, "KR")
 
     assert scorecard.market == "KR"
     assert scorecard.total_decisions == 2
@@ -158,7 +162,7 @@ def test_generate_scorecard_top_winners_and_losers(
             decision_id=decision_id,
         )
 
-    scorecard = reviewer.generate_scorecard("2026-02-14", "KR")
+    scorecard = reviewer.generate_scorecard(TODAY, "KR")
     assert scorecard.top_winners == ["005930", "000660"]
     assert scorecard.top_losers == ["035420", "051910"]
 
@@ -167,7 +171,7 @@ def test_generate_scorecard_empty_day(
     db_conn: sqlite3.Connection, context_store: ContextStore,
 ) -> None:
     reviewer = DailyReviewer(db_conn, context_store)
-    scorecard = reviewer.generate_scorecard("2026-02-14", "KR")
+    scorecard = reviewer.generate_scorecard(TODAY, "KR")
 
     assert scorecard.total_decisions == 0
     assert scorecard.total_pnl == 0.0
