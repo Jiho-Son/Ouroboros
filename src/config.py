@@ -101,4 +101,7 @@ class Settings(BaseSettings):
     @property
     def enabled_market_list(self) -> list[str]:
         """Parse ENABLED_MARKETS into list of market codes."""
-        return [m.strip() for m in self.ENABLED_MARKETS.split(",") if m.strip()]
+        from src.markets.schedule import expand_market_codes
+
+        raw = [m.strip() for m in self.ENABLED_MARKETS.split(",") if m.strip()]
+        return expand_market_codes(raw)

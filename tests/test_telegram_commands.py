@@ -682,6 +682,10 @@ class TestBasicCommands:
                 "/help - Show available commands\n"
                 "/status - Trading status (mode, markets, P&L)\n"
                 "/positions - Current holdings\n"
+                "/report - Daily summary report\n"
+                "/scenarios - Today's playbook scenarios\n"
+                "/review - Recent scorecards\n"
+                "/dashboard - Dashboard URL/status\n"
                 "/stop - Pause trading\n"
                 "/resume - Resume trading"
             )
@@ -707,8 +711,104 @@ class TestBasicCommands:
             assert "/help" in payload["text"]
             assert "/status" in payload["text"]
             assert "/positions" in payload["text"]
+            assert "/report" in payload["text"]
+            assert "/scenarios" in payload["text"]
+            assert "/review" in payload["text"]
+            assert "/dashboard" in payload["text"]
             assert "/stop" in payload["text"]
             assert "/resume" in payload["text"]
+
+
+class TestExtendedCommands:
+    """Test additional bot commands."""
+
+    @pytest.mark.asyncio
+    async def test_report_command(self) -> None:
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_report() -> None:
+            await client.send_message("<b>📈 Daily Report</b>\n\nTrades: 1")
+
+        handler.register_command("report", mock_report)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await handler._handle_update(
+                {"update_id": 1, "message": {"chat": {"id": 456}, "text": "/report"}}
+            )
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Daily Report" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_scenarios_command(self) -> None:
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_scenarios() -> None:
+            await client.send_message("<b>🧠 Today's Scenarios</b>\n\n- AAPL: BUY (85)")
+
+        handler.register_command("scenarios", mock_scenarios)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await handler._handle_update(
+                {"update_id": 1, "message": {"chat": {"id": 456}, "text": "/scenarios"}}
+            )
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Today's Scenarios" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_review_command(self) -> None:
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_review() -> None:
+            await client.send_message("<b>📝 Recent Reviews</b>\n\n- 2026-02-14 KR")
+
+        handler.register_command("review", mock_review)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await handler._handle_update(
+                {"update_id": 1, "message": {"chat": {"id": 456}, "text": "/review"}}
+            )
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Recent Reviews" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_dashboard_command(self) -> None:
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        async def mock_dashboard() -> None:
+            await client.send_message("<b>🖥️ Dashboard</b>\n\nURL: http://127.0.0.1:8080")
+
+        handler.register_command("dashboard", mock_dashboard)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await handler._handle_update(
+                {"update_id": 1, "message": {"chat": {"id": 456}, "text": "/dashboard"}}
+            )
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Dashboard" in payload["text"]
 
 
 class TestGetUpdates:

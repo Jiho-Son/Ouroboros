@@ -7,6 +7,7 @@ import pytest
 
 from src.markets.schedule import (
     MARKETS,
+    expand_market_codes,
     get_next_market_open,
     get_open_markets,
     is_market_open,
@@ -199,3 +200,28 @@ class TestGetNextMarketOpen:
             enabled_markets=["INVALID", "KR"], now=test_time
         )
         assert market.code == "KR"
+
+
+class TestExpandMarketCodes:
+    """Test shorthand market expansion."""
+
+    def test_expand_us_shorthand(self) -> None:
+        assert expand_market_codes(["US"]) == ["US_NASDAQ", "US_NYSE", "US_AMEX"]
+
+    def test_expand_cn_shorthand(self) -> None:
+        assert expand_market_codes(["CN"]) == ["CN_SHA", "CN_SZA"]
+
+    def test_expand_vn_shorthand(self) -> None:
+        assert expand_market_codes(["VN"]) == ["VN_HAN", "VN_HCM"]
+
+    def test_expand_mixed_codes(self) -> None:
+        assert expand_market_codes(["KR", "US", "JP"]) == [
+            "KR",
+            "US_NASDAQ",
+            "US_NYSE",
+            "US_AMEX",
+            "JP",
+        ]
+
+    def test_expand_preserves_unknown_code(self) -> None:
+        assert expand_market_codes(["KR", "UNKNOWN"]) == ["KR", "UNKNOWN"]

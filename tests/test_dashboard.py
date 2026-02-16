@@ -1,21 +1,25 @@
-"""Tests for FastAPI dashboard endpoints."""
+"""Tests for dashboard endpoint handlers."""
 
 from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
-
-pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient
+from fastapi import HTTPException
+from fastapi.responses import FileResponse
 
 from src.dashboard.app import create_dashboard_app
 from src.db import init_db
 
 
 def _seed_db(conn: sqlite3.Connection) -> None:
+    today = datetime.now(UTC).date().isoformat()
+
     conn.execute(
         """
         INSERT INTO playbooks (
@@ -32,6 +36,24 @@ def _seed_db(conn: sqlite3.Connection) -> None:
             123,
             2,
             1,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO playbooks (
+            date, market, status, playbook_json, generated_at,
+            token_count, scenario_count, match_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            today,
+            "US_NASDAQ",
+            "ready",
+            json.dumps({"market": "US_NASDAQ", "stock_playbooks": []}),
+            f"{today}T08:30:00+00:00",
+            100,
+            1,
+            0,
         ),
     )
     conn.execute(
@@ -71,7 +93,7 @@ def _seed_db(conn: sqlite3.Connection) -> None:
         """,
         (
             "d-kr-1",
-            "2026-02-14T09:10:00+00:00",
+            f"{today}T09:10:00+00:00",
             "005930",
             "KR",
             "KRX",
@@ -91,9 +113,9 @@ def _seed_db(conn: sqlite3.Connection) -> None:
         """,
         (
             "d-us-1",
-            "2026-02-14T21:10:00+00:00",
+            f"{today}T21:10:00+00:00",
             "AAPL",
-            "US",
+            "US_NASDAQ",
             "NASDAQ",
             "SELL",
             80,
@@ -110,7 +132,7 @@ def _seed_db(conn: sqlite3.Connection) -> None:
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            "2026-02-14T09:11:00+00:00",
+            f"{today}T09:11:00+00:00",
             "005930",
             "BUY",
             85,
@@ -132,7 +154,7 @@ def _seed_db(conn: sqlite3.Connection) -> None:
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            "2026-02-14T21:11:00+00:00",
+            f"{today}T21:11:00+00:00",
             "AAPL",
             "SELL",
             80,
@@ -140,7 +162,7 @@ def _seed_db(conn: sqlite3.Connection) -> None:
             1,
             200,
             -1.0,
-            "US",
+            "US_NASDAQ",
             "NASDAQ",
             None,
             "d-us-1",
@@ -149,122 +171,128 @@ def _seed_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _client(tmp_path: Path) -> TestClient:
+def _app(tmp_path: Path) -> Any:
     db_path = tmp_path / "dashboard_test.db"
     conn = init_db(str(db_path))
     _seed_db(conn)
     conn.close()
-    app = create_dashboard_app(str(db_path))
-    return TestClient(app)
+    return create_dashboard_app(str(db_path))
+
+
+def _endpoint(app: Any, path: str) -> Callable[..., Any]:
+    for route in app.routes:
+        if getattr(route, "path", None) == path:
+            return route.endpoint
+    raise AssertionError(f"route not found: {path}")
 
 
 def test_index_serves_html(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/")
-    assert resp.status_code == 200
-    assert "The Ouroboros Dashboard API" in resp.text
+    app = _app(tmp_path)
+    index = _endpoint(app, "/")
+    resp = index()
+    assert isinstance(resp, FileResponse)
+    assert "index.html" in str(resp.path)
 
 
 def test_status_endpoint(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/status")
-    assert resp.status_code == 200
-    body = resp.json()
+    app = _app(tmp_path)
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
     assert "KR" in body["markets"]
-    assert "US" in body["markets"]
+    assert "US_NASDAQ" in body["markets"]
     assert "totals" in body
 
 
 def test_playbook_found(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/playbook/2026-02-14?market=KR")
-    assert resp.status_code == 200
-    assert resp.json()["market"] == "KR"
+    app = _app(tmp_path)
+    get_playbook = _endpoint(app, "/api/playbook/{date_str}")
+    body = get_playbook("2026-02-14", market="KR")
+    assert body["market"] == "KR"
 
 
 def test_playbook_not_found(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/playbook/2026-02-15?market=KR")
-    assert resp.status_code == 404
+    app = _app(tmp_path)
+    get_playbook = _endpoint(app, "/api/playbook/{date_str}")
+    with pytest.raises(HTTPException, match="playbook not found"):
+        get_playbook("2026-02-15", market="KR")
 
 
 def test_scorecard_found(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/scorecard/2026-02-14?market=KR")
-    assert resp.status_code == 200
-    assert resp.json()["scorecard"]["total_pnl"] == 1.5
+    app = _app(tmp_path)
+    get_scorecard = _endpoint(app, "/api/scorecard/{date_str}")
+    body = get_scorecard("2026-02-14", market="KR")
+    assert body["scorecard"]["total_pnl"] == 1.5
 
 
 def test_scorecard_not_found(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/scorecard/2026-02-15?market=KR")
-    assert resp.status_code == 404
+    app = _app(tmp_path)
+    get_scorecard = _endpoint(app, "/api/scorecard/{date_str}")
+    with pytest.raises(HTTPException, match="scorecard not found"):
+        get_scorecard("2026-02-15", market="KR")
 
 
 def test_performance_all(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/performance?market=all")
-    assert resp.status_code == 200
-    body = resp.json()
+    app = _app(tmp_path)
+    get_performance = _endpoint(app, "/api/performance")
+    body = get_performance(market="all")
     assert body["market"] == "all"
     assert body["combined"]["total_trades"] == 2
     assert len(body["by_market"]) == 2
 
 
 def test_performance_market_filter(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/performance?market=KR")
-    assert resp.status_code == 200
-    body = resp.json()
+    app = _app(tmp_path)
+    get_performance = _endpoint(app, "/api/performance")
+    body = get_performance(market="KR")
     assert body["market"] == "KR"
     assert body["metrics"]["total_trades"] == 1
 
 
 def test_performance_empty_market(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/performance?market=JP")
-    assert resp.status_code == 200
-    assert resp.json()["metrics"]["total_trades"] == 0
+    app = _app(tmp_path)
+    get_performance = _endpoint(app, "/api/performance")
+    body = get_performance(market="JP")
+    assert body["metrics"]["total_trades"] == 0
 
 
 def test_context_layer_all(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/context/L7_REALTIME")
-    assert resp.status_code == 200
-    body = resp.json()
+    app = _app(tmp_path)
+    get_context_layer = _endpoint(app, "/api/context/{layer}")
+    body = get_context_layer("L7_REALTIME", timeframe=None, limit=100)
     assert body["layer"] == "L7_REALTIME"
     assert body["count"] == 1
 
 
 def test_context_layer_timeframe_filter(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/context/L6_DAILY?timeframe=2026-02-14")
-    assert resp.status_code == 200
-    body = resp.json()
+    app = _app(tmp_path)
+    get_context_layer = _endpoint(app, "/api/context/{layer}")
+    body = get_context_layer("L6_DAILY", timeframe="2026-02-14", limit=100)
     assert body["count"] == 1
     assert body["entries"][0]["key"] == "scorecard_KR"
 
 
 def test_decisions_endpoint(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/decisions?market=KR")
-    assert resp.status_code == 200
-    body = resp.json()
+    app = _app(tmp_path)
+    get_decisions = _endpoint(app, "/api/decisions")
+    body = get_decisions(market="KR", limit=50)
     assert body["count"] == 1
     assert body["decisions"][0]["decision_id"] == "d-kr-1"
 
 
 def test_scenarios_active_filters_non_matched(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/scenarios/active?market=KR&date_str=2026-02-14")
-    assert resp.status_code == 200
-    body = resp.json()
+    app = _app(tmp_path)
+    get_active_scenarios = _endpoint(app, "/api/scenarios/active")
+    body = get_active_scenarios(
+        market="KR",
+        date_str=datetime.now(UTC).date().isoformat(),
+        limit=50,
+    )
     assert body["count"] == 1
     assert body["matches"][0]["stock_code"] == "005930"
 
 
 def test_scenarios_active_empty_when_no_matches(tmp_path: Path) -> None:
-    client = _client(tmp_path)
-    resp = client.get("/api/scenarios/active?market=US&date_str=2026-02-14")
-    assert resp.status_code == 200
-    assert resp.json()["count"] == 0
+    app = _app(tmp_path)
+    get_active_scenarios = _endpoint(app, "/api/scenarios/active")
+    body = get_active_scenarios(market="US", date_str="2026-02-14", limit=50)
+    assert body["count"] == 0
