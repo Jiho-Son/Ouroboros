@@ -220,7 +220,7 @@ class SmartVolatilityScanner:
         self,
         market: MarketInfo,
     ) -> list[ScanCandidate]:
-        """Build overseas candidates from ranking APIs."""
+        """Build overseas candidates from ranking APIs using volatility-first scoring."""
         assert self.overseas_broker is not None
         try:
             fluct_rows = await self.overseas_broker.fetch_overseas_rankings(
@@ -237,39 +237,45 @@ class SmartVolatilityScanner:
         if not fluct_rows:
             return []
 
+        volume_rank_bonus: dict[str, float] = {}
+        try:
+            volume_rows = await self.overseas_broker.fetch_overseas_rankings(
+                exchange_code=market.exchange_code,
+                ranking_type="volume",
+                limit=50,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Overseas volume ranking failed for %s: %s", market.code, exc
+            )
+            volume_rows = []
+
+        for idx, row in enumerate(volume_rows):
+            code = _extract_stock_code(row)
+            if not code:
+                continue
+            # Top-ranked by traded value/volume gets higher liquidity bonus.
+            volume_rank_bonus[code] = max(0.0, 15.0 - idx * 0.3)
+
         candidates: list[ScanCandidate] = []
         for row in fluct_rows:
-            stock_code = (
-                str(
-                    row.get("symb")
-                    or row.get("ovrs_pdno")
-                    or row.get("stock_code")
-                    or row.get("pdno")
-                    or ""
-                )
-                .strip()
-                .upper()
-            )
+            stock_code = _extract_stock_code(row)
             if not stock_code:
                 continue
 
-            price = _safe_float(
-                row.get("last")
-                or row.get("ovrs_nmix_prpr")
-                or row.get("stck_prpr")
-            )
-            change_rate = _safe_float(
-                row.get("rate")
-                or row.get("prdy_ctrt")
-                or row.get("evlu_pfls_rt")
-                or row.get("chg_rt")
-            )
-            volume = _safe_float(row.get("tvol") or row.get("acml_vol") or row.get("vol"))
+            price = _extract_last_price(row)
+            change_rate = _extract_change_rate_pct(row)
+            volume = _extract_volume(row)
+            intraday_range_pct = _extract_intraday_range_pct(row, price)
+            volatility_pct = max(abs(change_rate), intraday_range_pct)
 
-            if price <= 0 or abs(change_rate) < 0.8:
+            # Volatility-first filter (not simple gainers/value ranking).
+            if price <= 0 or volatility_pct < 0.8:
                 continue
 
-            score = min(abs(change_rate) / 8.0, 1.0) * 100.0
+            volatility_score = min(volatility_pct / 10.0, 1.0) * 85.0
+            liquidity_score = volume_rank_bonus.get(stock_code, 0.0)
+            score = min(100.0, volatility_score + liquidity_score)
             signal = "momentum" if change_rate >= 0 else "oversold"
             implied_rsi = max(0.0, min(100.0, 50.0 + (change_rate * 4.0)))
             candidates.append(
@@ -278,7 +284,7 @@ class SmartVolatilityScanner:
                     name=str(row.get("name") or row.get("ovrs_item_name") or stock_code),
                     price=price,
                     volume=volume,
-                    volume_ratio=max(1.0, abs(change_rate) / 2.0),
+                    volume_ratio=max(1.0, volatility_pct / 2.0),
                     rsi=implied_rsi,
                     signal=signal,
                     score=score,
@@ -311,22 +317,16 @@ class SmartVolatilityScanner:
                     market.exchange_code, stock_code
                 )
                 output = price_data.get("output", {})
-                price = _safe_float(
-                    output.get("last")
-                    or output.get("ovrs_nmix_prpr")
-                    or output.get("stck_prpr")
-                )
-                change_rate = _safe_float(
-                    output.get("rate")
-                    or output.get("prdy_ctrt")
-                    or output.get("evlu_pfls_rt")
-                )
-                volume = _safe_float(output.get("tvol") or output.get("acml_vol"))
+                price = _extract_last_price(output)
+                change_rate = _extract_change_rate_pct(output)
+                volume = _extract_volume(output)
+                intraday_range_pct = _extract_intraday_range_pct(output, price)
+                volatility_pct = max(abs(change_rate), intraday_range_pct)
 
-                if price <= 0 or abs(change_rate) < 0.8:
+                if price <= 0 or volatility_pct < 0.8:
                     continue
 
-                score = min(abs(change_rate) / 8.0, 1.0) * 100.0
+                score = min(volatility_pct / 10.0, 1.0) * 100.0
                 signal = "momentum" if change_rate >= 0 else "oversold"
                 implied_rsi = max(0.0, min(100.0, 50.0 + (change_rate * 4.0)))
                 candidates.append(
@@ -335,7 +335,7 @@ class SmartVolatilityScanner:
                         name=stock_code,
                         price=price,
                         volume=volume,
-                        volume_ratio=max(1.0, abs(change_rate) / 2.0),
+                        volume_ratio=max(1.0, volatility_pct / 2.0),
                         rsi=implied_rsi,
                         signal=signal,
                         score=score,
@@ -367,3 +367,64 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _extract_stock_code(row: dict[str, Any]) -> str:
+    """Extract normalized stock code from various API schemas."""
+    return (
+        str(
+            row.get("symb")
+            or row.get("ovrs_pdno")
+            or row.get("stock_code")
+            or row.get("pdno")
+            or ""
+        )
+        .strip()
+        .upper()
+    )
+
+
+def _extract_last_price(row: dict[str, Any]) -> float:
+    """Extract last/close-like price from API schema variants."""
+    return _safe_float(
+        row.get("last")
+        or row.get("ovrs_nmix_prpr")
+        or row.get("stck_prpr")
+        or row.get("close")
+    )
+
+
+def _extract_change_rate_pct(row: dict[str, Any]) -> float:
+    """Extract daily change rate (%) from API schema variants."""
+    return _safe_float(
+        row.get("rate")
+        or row.get("prdy_ctrt")
+        or row.get("evlu_pfls_rt")
+        or row.get("chg_rt")
+    )
+
+
+def _extract_volume(row: dict[str, Any]) -> float:
+    """Extract volume/traded-amount proxy from schema variants."""
+    return _safe_float(row.get("tvol") or row.get("acml_vol") or row.get("vol"))
+
+
+def _extract_intraday_range_pct(row: dict[str, Any], price: float) -> float:
+    """Estimate intraday range percentage from high/low fields."""
+    if price <= 0:
+        return 0.0
+    high = _safe_float(
+        row.get("high")
+        or row.get("ovrs_hgpr")
+        or row.get("stck_hgpr")
+        or row.get("day_hgpr")
+    )
+    low = _safe_float(
+        row.get("low")
+        or row.get("ovrs_lwpr")
+        or row.get("stck_lwpr")
+        or row.get("day_lwpr")
+    )
+    if high <= 0 or low <= 0 or high < low:
+        return 0.0
+    return (high - low) / price * 100.0

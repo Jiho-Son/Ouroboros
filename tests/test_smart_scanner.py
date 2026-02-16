@@ -392,7 +392,7 @@ class TestSmartVolatilityScanner:
 
         candidates = await scanner.scan(market=market, fallback_stocks=["AAPL", "TSLA"])
 
-        mock_overseas_broker.fetch_overseas_rankings.assert_called_once()
+        assert mock_overseas_broker.fetch_overseas_rankings.call_count >= 1
         mock_overseas_broker.get_overseas_price.assert_not_called()
         assert [c.stock_code for c in candidates] == ["NVDA"]
 
@@ -417,6 +417,40 @@ class TestSmartVolatilityScanner:
         candidates = await scanner.scan(market=market, fallback_stocks=[])
 
         assert candidates == []
+
+    @pytest.mark.asyncio
+    async def test_scan_overseas_picks_high_intraday_range_even_with_low_change(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock, mock_settings: Settings
+    ) -> None:
+        """Volatility selection should consider intraday range, not only change rate."""
+        analyzer = VolatilityAnalyzer()
+        scanner = SmartVolatilityScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=analyzer,
+            settings=mock_settings,
+        )
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        # change rate is tiny, but high-low range is large (15%).
+        mock_overseas_broker.fetch_overseas_rankings.return_value = [
+            {
+                "symb": "ABCD",
+                "last": "100",
+                "rate": "0.2",
+                "high": "110",
+                "low": "95",
+                "tvol": "800000",
+            }
+        ]
+
+        candidates = await scanner.scan(market=market, fallback_stocks=[])
+
+        assert [c.stock_code for c in candidates] == ["ABCD"]
 
 
 class TestRSICalculation:
