@@ -111,3 +111,57 @@
 - 이전 시도(2개 커밋)는 기존 내용을 과도하게 삭제하여 폐기, main 기준으로 재작업
 
 **이슈/PR:** #131, PR #134
+
+### 해외 스캐너 개선: 랭킹 연동 + 변동성 우선 선별
+
+**배경:**
+- `run_overnight` 실운영에서 미국장 동안 거래가 0건 지속
+- 원인: 해외 시장에서도 국내 랭킹/일봉 API 경로를 사용하던 구조적 불일치
+
+**요구사항:**
+1. 해외 시장도 랭킹 API 기반 유니버스 탐색 지원
+2. 단순 상승률/거래대금 상위가 아니라, **변동성이 큰 종목**을 우선 선별
+3. 고정 티커 fallback 금지
+
+**구현 결과:**
+- `src/broker/overseas.py`
+  - `fetch_overseas_rankings()` 추가 (fluctuation / volume)
+  - 해외 랭킹 API 경로/TR_ID를 설정값으로 오버라이드 가능하게 구현
+- `src/analysis/smart_scanner.py`
+  - market-aware 스캔(국내/해외 분리)
+  - 해외: 랭킹 API 유니버스 + 변동성 우선 점수(일변동률 vs 장중 고저폭)
+  - 거래대금/거래량 랭킹은 유동성 보정 점수로 활용
+  - 랭킹 실패 시에는 동적 유니버스(active/recent/holdings)만 사용
+- `src/config.py`
+  - `OVERSEAS_RANKING_*` 설정 추가
+
+**효과:**
+- 해외 시장에서 스캐너 후보 0개로 정지되는 상황 완화
+- 종목 선정 기준이 단순 상승률 중심에서 변동성 중심으로 개선
+- 고정 티커 없이도 시장 주도 변동 종목 탐지 가능
+
+### 국내 스캐너/주문수량 정렬: 변동성 우선 + 리스크 타기팅
+
+**배경:**
+- 해외만 변동성 우선으로 동작하고, 국내는 RSI/거래량 필터 중심으로 동작해 시장 간 전략 일관성이 낮았음
+- 매수 수량이 고정 1주라서 변동성 구간별 익스포저 관리가 어려웠음
+
+**요구사항:**
+1. 국내 스캐너도 변동성 우선 선별로 해외와 통일
+2. 고변동 종목일수록 포지션 크기를 줄이는 수량 산식 적용
+
+**구현 결과:**
+- `src/analysis/smart_scanner.py`
+  - 국내: `fluctuation ranking + volume ranking bonus` 기반 점수화로 전환
+  - 점수는 `max(abs(change_rate), intraday_range_pct)` 중심으로 계산
+  - 국내 랭킹 응답 스키마 키(`price`, `change_rate`, `volume`) 파싱 보강
+- `src/main.py`
+  - `_determine_order_quantity()` 추가
+  - BUY 시 변동성 점수 기반 동적 수량 산정 적용
+  - `trading_cycle`, `run_daily_session` 경로 모두 동일 수량 로직 사용
+- `src/config.py`
+  - `POSITION_SIZING_*` 설정 추가
+
+**효과:**
+- 국내/해외 스캐너 기준이 변동성 중심으로 일관화
+- 고변동 구간에서 자동 익스포저 축소, 저변동 구간에서 과소진입 완화

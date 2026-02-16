@@ -29,7 +29,13 @@ from src.context.store import ContextStore
 from src.core.criticality import CriticalityAssessor
 from src.core.priority_queue import PriorityTaskQueue
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
-from src.db import get_latest_buy_trade, get_open_position, init_db, log_trade
+from src.db import (
+    get_latest_buy_trade,
+    get_open_position,
+    get_recent_symbols,
+    init_db,
+    log_trade,
+)
 from src.evolution.daily_review import DailyReviewer
 from src.evolution.optimizer import EvolutionOptimizer
 from src.logging.decision_logger import DecisionLogger
@@ -81,6 +87,102 @@ DAILY_TRADE_SESSIONS = 4  # Number of trading sessions per day
 TRADE_SESSION_INTERVAL_HOURS = 6  # Hours between sessions
 
 
+def _extract_symbol_from_holding(item: dict[str, Any]) -> str:
+    """Extract symbol from overseas holding payload variants."""
+    for key in (
+        "ovrs_pdno",
+        "pdno",
+        "ovrs_item_name",
+        "prdt_name",
+        "symb",
+        "symbol",
+        "stock_code",
+    ):
+        value = item.get(key)
+        if isinstance(value, str):
+            symbol = value.strip().upper()
+            if symbol and symbol.replace(".", "").replace("-", "").isalnum():
+                return symbol
+    return ""
+
+
+def _determine_order_quantity(
+    *,
+    action: str,
+    current_price: float,
+    total_cash: float,
+    candidate: ScanCandidate | None,
+    settings: Settings | None,
+) -> int:
+    """Determine order quantity using volatility-aware position sizing."""
+    if action != "BUY":
+        return 1
+    if current_price <= 0 or total_cash <= 0:
+        return 0
+
+    if settings is None or not settings.POSITION_SIZING_ENABLED:
+        return 1
+
+    target_score = max(1.0, settings.POSITION_VOLATILITY_TARGET_SCORE)
+    observed_score = candidate.score if candidate else target_score
+    observed_score = max(1.0, min(100.0, observed_score))
+
+    # Higher observed volatility score => smaller allocation.
+    scaled_pct = settings.POSITION_BASE_ALLOCATION_PCT * (target_score / observed_score)
+    allocation_pct = min(
+        settings.POSITION_MAX_ALLOCATION_PCT,
+        max(settings.POSITION_MIN_ALLOCATION_PCT, scaled_pct),
+    )
+
+    budget = total_cash * (allocation_pct / 100.0)
+    quantity = int(budget // current_price)
+    if quantity <= 0:
+        return 0
+    return quantity
+
+
+async def build_overseas_symbol_universe(
+    db_conn: Any,
+    overseas_broker: OverseasBroker,
+    market: MarketInfo,
+    active_stocks: dict[str, list[str]],
+) -> list[str]:
+    """Build dynamic overseas symbol universe from runtime, DB, and holdings."""
+    symbols: list[str] = []
+
+    # 1) Keep current active stocks first to avoid sudden churn between cycles.
+    symbols.extend(active_stocks.get(market.code, []))
+
+    # 2) Add recent symbols from own trading history (no fixed list).
+    symbols.extend(get_recent_symbols(db_conn, market.code, limit=30))
+
+    # 3) Add current overseas holdings from broker balance if available.
+    try:
+        balance_data = await overseas_broker.get_overseas_balance(market.exchange_code)
+        output1 = balance_data.get("output1", [])
+        if isinstance(output1, dict):
+            output1 = [output1]
+        if isinstance(output1, list):
+            for row in output1:
+                if not isinstance(row, dict):
+                    continue
+                symbol = _extract_symbol_from_holding(row)
+                if symbol:
+                    symbols.append(symbol)
+    except Exception as exc:
+        logger.warning("Failed to build overseas holdings universe for %s: %s", market.code, exc)
+
+    seen: set[str] = set()
+    ordered_unique: list[str] = []
+    for symbol in symbols:
+        normalized = symbol.strip().upper()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        ordered_unique.append(normalized)
+    return ordered_unique
+
+
 async def trading_cycle(
     broker: KISBroker,
     overseas_broker: OverseasBroker,
@@ -95,6 +197,7 @@ async def trading_cycle(
     market: MarketInfo,
     stock_code: str,
     scan_candidates: dict[str, dict[str, ScanCandidate]],
+    settings: Settings | None = None,
 ) -> None:
     """Execute one trading cycle for a single stock."""
     cycle_start_time = asyncio.get_event_loop().time()
@@ -332,8 +435,23 @@ async def trading_cycle(
     trade_price = current_price
     trade_pnl = 0.0
     if decision.action in ("BUY", "SELL"):
-        # Determine order size (simplified: 1 lot)
-        quantity = 1
+        quantity = _determine_order_quantity(
+            action=decision.action,
+            current_price=current_price,
+            total_cash=total_cash,
+            candidate=candidate,
+            settings=settings,
+        )
+        if quantity <= 0:
+            logger.info(
+                "Skip %s %s (%s): no affordable quantity (cash=%.2f, price=%.2f)",
+                decision.action,
+                stock_code,
+                market.name,
+                total_cash,
+                current_price,
+            )
+            return
         order_amount = current_price * quantity
 
         # 4. Risk check BEFORE order
@@ -482,8 +600,28 @@ async def run_daily_session(
 
         # Dynamic stock discovery via scanner (no static watchlists)
         candidates_list: list[ScanCandidate] = []
+        fallback_stocks: list[str] | None = None
+        if not market.is_domestic:
+            fallback_stocks = await build_overseas_symbol_universe(
+                db_conn=db_conn,
+                overseas_broker=overseas_broker,
+                market=market,
+                active_stocks={},
+            )
+            if not fallback_stocks:
+                logger.warning(
+                    "No dynamic overseas symbol universe for %s; scanner cannot run",
+                    market.code,
+                )
         try:
-            candidates_list = await smart_scanner.scan() if smart_scanner else []
+            candidates_list = (
+                await smart_scanner.scan(
+                    market=market,
+                    fallback_stocks=fallback_stocks,
+                )
+                if smart_scanner
+                else []
+            )
         except Exception as exc:
             logger.error("Smart Scanner failed for %s: %s", market.name, exc)
 
@@ -679,7 +817,23 @@ async def run_daily_session(
             trade_price = stock_data["current_price"]
             trade_pnl = 0.0
             if decision.action in ("BUY", "SELL"):
-                quantity = 1
+                quantity = _determine_order_quantity(
+                    action=decision.action,
+                    current_price=stock_data["current_price"],
+                    total_cash=total_cash,
+                    candidate=candidate_map.get(stock_code),
+                    settings=settings,
+                )
+                if quantity <= 0:
+                    logger.info(
+                        "Skip %s %s (%s): no affordable quantity (cash=%.2f, price=%.2f)",
+                        decision.action,
+                        stock_code,
+                        market.name,
+                        total_cash,
+                        stock_data["current_price"],
+                    )
+                    continue
                 order_amount = stock_data["current_price"] * quantity
 
                 # Risk check
@@ -1263,6 +1417,7 @@ async def run(settings: Settings) -> None:
     # Initialize smart scanner (Python-first, AI-last pipeline)
     smart_scanner = SmartVolatilityScanner(
         broker=broker,
+        overseas_broker=overseas_broker,
         volatility_analyzer=volatility_analyzer,
         settings=settings,
     )
@@ -1442,7 +1597,25 @@ async def run(settings: Settings) -> None:
                         try:
                             logger.info("Smart Scanner: Scanning %s market", market.name)
 
-                            candidates = await smart_scanner.scan()
+                            fallback_stocks: list[str] | None = None
+                            if not market.is_domestic:
+                                fallback_stocks = await build_overseas_symbol_universe(
+                                    db_conn=db_conn,
+                                    overseas_broker=overseas_broker,
+                                    market=market,
+                                    active_stocks=active_stocks,
+                                )
+                                if not fallback_stocks:
+                                    logger.warning(
+                                        "No dynamic overseas symbol universe for %s;"
+                                        " scanner cannot run",
+                                        market.code,
+                                    )
+
+                            candidates = await smart_scanner.scan(
+                                market=market,
+                                fallback_stocks=fallback_stocks,
+                            )
 
                             if candidates:
                                 # Use scanner results directly as trading candidates
@@ -1566,6 +1739,7 @@ async def run(settings: Settings) -> None:
                                     market,
                                     stock_code,
                                     scan_candidates,
+                                    settings,
                                 )
                                 break  # Success — exit retry loop
                             except CircuitBreakerTripped as exc:

@@ -64,6 +64,65 @@ class OverseasBroker:
                 f"Network error fetching overseas price: {exc}"
             ) from exc
 
+    async def fetch_overseas_rankings(
+        self,
+        exchange_code: str,
+        ranking_type: str = "fluctuation",
+        limit: int = 30,
+    ) -> list[dict[str, Any]]:
+        """Fetch overseas rankings (price change or volume amount).
+
+        Ranking API specs may differ by account/product. Endpoint paths and
+        TR_IDs are configurable via settings and can be overridden in .env.
+        """
+        if not self._broker._settings.OVERSEAS_RANKING_ENABLED:
+            return []
+
+        await self._broker._rate_limiter.acquire()
+        session = self._broker._get_session()
+
+        if ranking_type == "volume":
+            tr_id = self._broker._settings.OVERSEAS_RANKING_VOLUME_TR_ID
+            path = self._broker._settings.OVERSEAS_RANKING_VOLUME_PATH
+        else:
+            tr_id = self._broker._settings.OVERSEAS_RANKING_FLUCT_TR_ID
+            path = self._broker._settings.OVERSEAS_RANKING_FLUCT_PATH
+
+        headers = await self._broker._auth_headers(tr_id)
+        url = f"{self._broker._base_url}{path}"
+
+        # Try common param variants used by KIS overseas quotation APIs.
+        param_variants = [
+            {"AUTH": "", "EXCD": exchange_code, "NREC": str(max(limit, 30))},
+            {"AUTH": "", "OVRS_EXCG_CD": exchange_code, "NREC": str(max(limit, 30))},
+            {"AUTH": "", "EXCD": exchange_code},
+            {"AUTH": "", "OVRS_EXCG_CD": exchange_code},
+        ]
+
+        last_error: str | None = None
+        for params in param_variants:
+            try:
+                async with session.get(url, headers=headers, params=params) as resp:
+                    text = await resp.text()
+                    if resp.status != 200:
+                        last_error = f"HTTP {resp.status}: {text}"
+                        continue
+
+                    data = await resp.json()
+                    rows = self._extract_ranking_rows(data)
+                    if rows:
+                        return rows[:limit]
+
+                    # keep trying another param variant if response has no usable rows
+                    last_error = f"empty output (keys={list(data.keys())})"
+            except (TimeoutError, aiohttp.ClientError) as exc:
+                last_error = str(exc)
+                continue
+
+        raise ConnectionError(
+            f"fetch_overseas_rankings failed for {exchange_code}/{ranking_type}: {last_error}"
+        )
+
     async def get_overseas_balance(self, exchange_code: str) -> dict[str, Any]:
         """
         Fetch overseas account balance.
@@ -198,3 +257,11 @@ class OverseasBroker:
             "HSX": "VND",
         }
         return currency_map.get(exchange_code, "USD")
+
+    def _extract_ranking_rows(self, data: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract list rows from ranking response across schema variants."""
+        candidates = [data.get("output"), data.get("output1"), data.get("output2")]
+        for value in candidates:
+            if isinstance(value, list):
+                return [row for row in value if isinstance(row, dict)]
+        return []
