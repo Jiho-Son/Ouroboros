@@ -69,6 +69,10 @@ High-frequency trading with individual stock analysis:
 - `get_next_market_open()` finds next market to open and when
 - 10 global markets defined (KR, US_NASDAQ, US_NYSE, US_AMEX, JP, HK, CN_SHA, CN_SZA, VN_HNX, VN_HSX)
 
+**Overseas Ranking API Methods** (added in v0.10.x):
+- `fetch_overseas_rankings()` — Fetch overseas ranking universe (fluctuation / volume)
+- Ranking endpoint paths and TR_IDs are configurable via environment variables
+
 ### 2. Analysis (`src/analysis/`)
 
 **VolatilityAnalyzer** (`volatility.py`) — Technical indicator calculations
@@ -82,14 +86,20 @@ High-frequency trading with individual stock analysis:
 
 **SmartVolatilityScanner** (`smart_scanner.py`) — Python-first filtering pipeline
 
-- **Step 1**: Fetch volume rankings from KIS API (top 30 stocks)
-- **Step 2**: Calculate RSI and volume ratio for each stock
-- **Step 3**: Apply filters:
+- **Domestic (KR)**:
+  - **Step 1**: Fetch volume rankings from KIS API (top 30 stocks)
+  - **Step 2**: Calculate RSI and volume ratio for each stock
+  - **Step 3**: Apply filters:
   - Volume ratio >= `VOL_MULTIPLIER` (default 2.0x previous day)
   - RSI < `RSI_OVERSOLD_THRESHOLD` (30) OR RSI > `RSI_MOMENTUM_THRESHOLD` (70)
-- **Step 4**: Score candidates by RSI extremity (60%) + volume surge (40%)
-- **Step 5**: Return top N candidates (default 3) for AI analysis
-- **Fallback**: Uses static watchlist if ranking API unavailable
+  - **Step 4**: Score candidates by RSI extremity (60%) + volume surge (40%)
+- **Overseas (US/JP/HK/CN/VN)**:
+  - **Step 1**: Fetch overseas ranking universe (fluctuation rank + volume rank bonus)
+  - **Step 2**: Compute volatility-first score (max of daily change% and intraday range%)
+  - **Step 3**: Apply liquidity bonus from volume ranking
+  - **Step 4**: Return top N candidates (default 3)
+- **Fallback (overseas only)**: If ranking API is unavailable, uses dynamic universe
+  from runtime active symbols + recent traded symbols + current holdings (no static watchlist)
 - **Realtime mode only**: Daily mode uses batch processing for API efficiency
 
 ### 3. Brain (`src/brain/`)
@@ -363,11 +373,13 @@ High-frequency trading with individual stock analysis:
                            │
                            ▼
         ┌──────────────────────────────────┐
-        │ Smart Scanner (Python-first)     │
-        │ - Fetch volume rankings (KIS)    │
-        │ - Get 20d price history per stock│
-        │ - Calculate RSI(14) + vol ratio  │
-        │ - Filter: vol>2x AND RSI extreme │
+        │ Smart Scanner (Python-first)      │
+        │ - Domestic: fluctuation rank     │
+        │   + volume rank bonus            │
+        │   + volatility-first scoring     │
+        │ - Overseas: ranking universe     │
+        │   + volatility-first scoring     │
+        │ - Fallback: dynamic universe     │
         │ - Return top 3 qualified stocks  │
         └──────────────────┬───────────────┘
                            │
@@ -568,6 +580,13 @@ S3_REGION=...
 NEWS_API_KEY=...
 NEWS_API_PROVIDER=...
 MARKET_DATA_API_KEY=...
+
+# Overseas Ranking API (optional override; account-dependent)
+OVERSEAS_RANKING_ENABLED=true
+OVERSEAS_RANKING_FLUCT_TR_ID=HHDFS76200100
+OVERSEAS_RANKING_VOLUME_TR_ID=HHDFS76200200
+OVERSEAS_RANKING_FLUCT_PATH=/uapi/overseas-price/v1/quotations/inquire-updown-rank
+OVERSEAS_RANKING_VOLUME_PATH=/uapi/overseas-price/v1/quotations/inquire-volume-rank
 ```
 
 Tests use in-memory SQLite (`DB_PATH=":memory:"`) and dummy credentials via `tests/conftest.py`.
