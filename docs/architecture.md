@@ -87,12 +87,10 @@ High-frequency trading with individual stock analysis:
 **SmartVolatilityScanner** (`smart_scanner.py`) — Python-first filtering pipeline
 
 - **Domestic (KR)**:
-  - **Step 1**: Fetch volume rankings from KIS API (top 30 stocks)
-  - **Step 2**: Calculate RSI and volume ratio for each stock
-  - **Step 3**: Apply filters:
-  - Volume ratio >= `VOL_MULTIPLIER` (default 2.0x previous day)
-  - RSI < `RSI_OVERSOLD_THRESHOLD` (30) OR RSI > `RSI_MOMENTUM_THRESHOLD` (70)
-  - **Step 4**: Score candidates by RSI extremity (60%) + volume surge (40%)
+  - **Step 1**: Fetch domestic fluctuation ranking as primary universe
+  - **Step 2**: Fetch domestic volume ranking for liquidity bonus
+  - **Step 3**: Compute volatility-first score (max of daily change% and intraday range%)
+  - **Step 4**: Apply liquidity bonus and return top N candidates
 - **Overseas (US/JP/HK/CN/VN)**:
   - **Step 1**: Fetch overseas ranking universe (fluctuation rank + volume rank bonus)
   - **Step 2**: Compute volatility-first score (max of daily change% and intraday range%)
@@ -101,6 +99,11 @@ High-frequency trading with individual stock analysis:
 - **Fallback (overseas only)**: If ranking API is unavailable, uses dynamic universe
   from runtime active symbols + recent traded symbols + current holdings (no static watchlist)
 - **Realtime mode only**: Daily mode uses batch processing for API efficiency
+
+**Benefits:**
+- Reduces Gemini API calls from 20-30 stocks to 1-3 qualified candidates
+- Fast Python-based filtering before expensive AI judgment
+- Logs selection context (RSI-compatible proxy, volume_ratio, signal, score) for Evolution system
 
 ### 3. Brain (`src/brain/`)
 
@@ -580,6 +583,18 @@ S3_REGION=...
 NEWS_API_KEY=...
 NEWS_API_PROVIDER=...
 MARKET_DATA_API_KEY=...
+
+# Position Sizing (optional)
+POSITION_SIZING_ENABLED=true
+POSITION_BASE_ALLOCATION_PCT=5.0
+POSITION_MIN_ALLOCATION_PCT=1.0
+POSITION_MAX_ALLOCATION_PCT=10.0
+POSITION_VOLATILITY_TARGET_SCORE=50.0
+
+# Legacy/compat scanner thresholds (kept for backward compatibility)
+RSI_OVERSOLD_THRESHOLD=30
+RSI_MOMENTUM_THRESHOLD=70
+VOL_MULTIPLIER=2.0
 
 # Overseas Ranking API (optional override; account-dependent)
 OVERSEAS_RANKING_ENABLED=true

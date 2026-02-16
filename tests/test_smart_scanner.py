@@ -63,52 +63,51 @@ class TestSmartVolatilityScanner:
     """Test suite for SmartVolatilityScanner."""
 
     @pytest.mark.asyncio
-    async def test_scan_finds_oversold_candidates(
+    async def test_scan_domestic_prefers_volatility_with_liquidity_bonus(
         self, scanner: SmartVolatilityScanner, mock_broker: MagicMock
     ) -> None:
-        """Test that scanner identifies oversold stocks with high volume."""
-        # Mock rankings
-        mock_broker.fetch_market_rankings.return_value = [
+        """Domestic scan should score by volatility first and volume rank second."""
+        fluctuation_rows = [
             {
                 "stock_code": "005930",
                 "name": "Samsung",
                 "price": 70000,
                 "volume": 5000000,
-                "change_rate": -3.5,
+                "change_rate": -5.0,
                 "volume_increase_rate": 250,
             },
+            {
+                "stock_code": "035420",
+                "name": "NAVER",
+                "price": 250000,
+                "volume": 3000000,
+                "change_rate": 3.0,
+                "volume_increase_rate": 200,
+            },
         ]
-
-        # Mock daily prices - trending down (oversold)
-        prices = []
-        for i in range(20):
-            prices.append({
-                "date": f"2026020{i:02d}",
-                "open": 75000 - i * 200,
-                "high": 75500 - i * 200,
-                "low": 74500 - i * 200,
-                "close": 75000 - i * 250,  # Steady decline
-                "volume": 2000000,
-            })
-        mock_broker.get_daily_prices.return_value = prices
+        volume_rows = [
+            {"stock_code": "035420", "name": "NAVER", "price": 250000, "volume": 3000000},
+            {"stock_code": "005930", "name": "Samsung", "price": 70000, "volume": 5000000},
+        ]
+        mock_broker.fetch_market_rankings.side_effect = [fluctuation_rows, volume_rows]
+        mock_broker.get_daily_prices.return_value = [
+            {"open": 1, "high": 1, "low": 1, "close": 1, "volume": 1000000},
+            {"open": 1, "high": 1, "low": 1, "close": 1, "volume": 1000000},
+        ]
 
         candidates = await scanner.scan()
 
-        # Should find at least one candidate (depending on exact RSI calculation)
-        mock_broker.fetch_market_rankings.assert_called_once()
-        mock_broker.get_daily_prices.assert_called_once_with("005930", days=20)
-
-        # If qualified, should have oversold signal
-        if candidates:
-            assert candidates[0].signal in ["oversold", "momentum"]
-            assert candidates[0].volume_ratio >= scanner.vol_multiplier
+        assert len(candidates) >= 1
+        # Samsung has higher absolute move, so it should lead despite lower volume rank bonus.
+        assert candidates[0].stock_code == "005930"
+        assert candidates[0].signal == "oversold"
 
     @pytest.mark.asyncio
-    async def test_scan_finds_momentum_candidates(
+    async def test_scan_domestic_finds_momentum_candidate(
         self, scanner: SmartVolatilityScanner, mock_broker: MagicMock
     ) -> None:
-        """Test that scanner identifies momentum stocks with high volume."""
-        mock_broker.fetch_market_rankings.return_value = [
+        """Positive change should be represented as momentum signal."""
+        fluctuation_rows = [
             {
                 "stock_code": "035420",
                 "name": "NAVER",
@@ -118,124 +117,67 @@ class TestSmartVolatilityScanner:
                 "volume_increase_rate": 300,
             },
         ]
-
-        # Mock daily prices - trending up (momentum)
-        prices = []
-        for i in range(20):
-            prices.append({
-                "date": f"2026020{i:02d}",
-                "open": 230000 + i * 500,
-                "high": 231000 + i * 500,
-                "low": 229000 + i * 500,
-                "close": 230500 + i * 500,  # Steady rise
-                "volume": 1000000,
-            })
-        mock_broker.get_daily_prices.return_value = prices
+        mock_broker.fetch_market_rankings.side_effect = [fluctuation_rows, fluctuation_rows]
+        mock_broker.get_daily_prices.return_value = [
+            {"open": 1, "high": 1, "low": 1, "close": 1, "volume": 1000000},
+            {"open": 1, "high": 1, "low": 1, "close": 1, "volume": 1000000},
+        ]
 
         candidates = await scanner.scan()
 
-        mock_broker.fetch_market_rankings.assert_called_once()
+        assert [c.stock_code for c in candidates] == ["035420"]
+        assert candidates[0].signal == "momentum"
 
     @pytest.mark.asyncio
-    async def test_scan_filters_low_volume(
+    async def test_scan_domestic_filters_low_volatility(
         self, scanner: SmartVolatilityScanner, mock_broker: MagicMock
     ) -> None:
-        """Test that stocks with low volume ratio are filtered out."""
-        mock_broker.fetch_market_rankings.return_value = [
+        """Domestic scan should drop symbols below volatility threshold."""
+        fluctuation_rows = [
             {
                 "stock_code": "000660",
                 "name": "SK Hynix",
                 "price": 150000,
                 "volume": 500000,
-                "change_rate": -5.0,
-                "volume_increase_rate": 50,  # Only 50% increase (< 200%)
+                "change_rate": 0.2,
+                "volume_increase_rate": 50,
             },
         ]
-
-        # Low volume
-        prices = []
-        for i in range(20):
-            prices.append({
-                "date": f"2026020{i:02d}",
-                "open": 150000 - i * 100,
-                "high": 151000 - i * 100,
-                "low": 149000 - i * 100,
-                "close": 150000 - i * 150,  # Declining (would be oversold)
-                "volume": 1000000,  # Current 500k < 2x prev day 1M
-            })
-        mock_broker.get_daily_prices.return_value = prices
+        mock_broker.fetch_market_rankings.side_effect = [fluctuation_rows, fluctuation_rows]
+        mock_broker.get_daily_prices.return_value = [
+            {"open": 1, "high": 150100, "low": 149900, "close": 150000, "volume": 1000000},
+            {"open": 1, "high": 150100, "low": 149900, "close": 150000, "volume": 1000000},
+        ]
 
         candidates = await scanner.scan()
 
-        # Should be filtered out due to low volume ratio
-        assert len(candidates) == 0
-
-    @pytest.mark.asyncio
-    async def test_scan_filters_neutral_rsi(
-        self, scanner: SmartVolatilityScanner, mock_broker: MagicMock
-    ) -> None:
-        """Test that stocks with neutral RSI are filtered out."""
-        mock_broker.fetch_market_rankings.return_value = [
-            {
-                "stock_code": "051910",
-                "name": "LG Chem",
-                "price": 500000,
-                "volume": 3000000,
-                "change_rate": 0.5,
-                "volume_increase_rate": 300,  # High volume
-            },
-        ]
-
-        # Flat prices (neutral RSI ~50)
-        prices = []
-        for i in range(20):
-            prices.append({
-                "date": f"2026020{i:02d}",
-                "open": 500000 + (i % 2) * 100,  # Small oscillation
-                "high": 500500,
-                "low": 499500,
-                "close": 500000 + (i % 2) * 50,
-                "volume": 1000000,
-            })
-        mock_broker.get_daily_prices.return_value = prices
-
-        candidates = await scanner.scan()
-
-        # Should be filtered out (RSI ~50, not < 30 or > 70)
         assert len(candidates) == 0
 
     @pytest.mark.asyncio
     async def test_scan_uses_fallback_on_api_error(
         self, scanner: SmartVolatilityScanner, mock_broker: MagicMock
     ) -> None:
-        """Test fallback to static list when ranking API fails."""
-        mock_broker.fetch_market_rankings.side_effect = ConnectionError("API unavailable")
-
-        # Fallback stocks should still be analyzed
-        prices = []
-        for i in range(20):
-            prices.append({
-                "date": f"2026020{i:02d}",
-                "open": 50000 - i * 50,
-                "high": 51000 - i * 50,
-                "low": 49000 - i * 50,
-                "close": 50000 - i * 75,  # Declining
-                "volume": 1000000,
-            })
-        mock_broker.get_daily_prices.return_value = prices
+        """Domestic scan should remain operational using fallback symbols."""
+        mock_broker.fetch_market_rankings.side_effect = [
+            ConnectionError("API unavailable"),
+            ConnectionError("API unavailable"),
+        ]
+        mock_broker.get_daily_prices.return_value = [
+            {"open": 1, "high": 103, "low": 97, "close": 100, "volume": 1000000},
+            {"open": 1, "high": 103, "low": 97, "close": 100, "volume": 800000},
+        ]
 
         candidates = await scanner.scan(fallback_stocks=["005930", "000660"])
 
-        # Should not crash
         assert isinstance(candidates, list)
+        assert len(candidates) >= 1
 
     @pytest.mark.asyncio
     async def test_scan_returns_top_n_only(
         self, scanner: SmartVolatilityScanner, mock_broker: MagicMock
     ) -> None:
         """Test that scan returns at most top_n candidates."""
-        # Return many stocks
-        mock_broker.fetch_market_rankings.return_value = [
+        fluctuation_rows = [
             {
                 "stock_code": f"00{i}000",
                 "name": f"Stock{i}",
@@ -246,61 +188,16 @@ class TestSmartVolatilityScanner:
             }
             for i in range(1, 10)
         ]
-
-        # All oversold with high volume
-        def make_prices(code: str) -> list[dict]:
-            prices = []
-            for i in range(20):
-                prices.append({
-                    "date": f"2026020{i:02d}",
-                    "open": 10000 - i * 100,
-                    "high": 10500 - i * 100,
-                    "low": 9500 - i * 100,
-                    "close": 10000 - i * 150,
-                    "volume": 1000000,
-                })
-            return prices
-
-        mock_broker.get_daily_prices.side_effect = make_prices
+        mock_broker.fetch_market_rankings.side_effect = [fluctuation_rows, fluctuation_rows]
+        mock_broker.get_daily_prices.return_value = [
+            {"open": 1, "high": 105, "low": 95, "close": 100, "volume": 1000000},
+            {"open": 1, "high": 105, "low": 95, "close": 100, "volume": 900000},
+        ]
 
         candidates = await scanner.scan()
 
         # Should respect top_n limit (3)
         assert len(candidates) <= scanner.top_n
-
-    @pytest.mark.asyncio
-    async def test_scan_skips_insufficient_price_history(
-        self, scanner: SmartVolatilityScanner, mock_broker: MagicMock
-    ) -> None:
-        """Test that stocks with insufficient history are skipped."""
-        mock_broker.fetch_market_rankings.return_value = [
-            {
-                "stock_code": "005930",
-                "name": "Samsung",
-                "price": 70000,
-                "volume": 5000000,
-                "change_rate": -5.0,
-                "volume_increase_rate": 300,
-            },
-        ]
-
-        # Only 5 days of data (need 15+ for RSI)
-        mock_broker.get_daily_prices.return_value = [
-            {
-                "date": f"2026020{i:02d}",
-                "open": 70000,
-                "high": 71000,
-                "low": 69000,
-                "close": 70000,
-                "volume": 2000000,
-            }
-            for i in range(5)
-        ]
-
-        candidates = await scanner.scan()
-
-        # Should skip due to insufficient data
-        assert len(candidates) == 0
 
     @pytest.mark.asyncio
     async def test_get_stock_codes(

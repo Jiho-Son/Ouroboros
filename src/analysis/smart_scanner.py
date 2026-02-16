@@ -1,8 +1,4 @@
-"""Smart Volatility Scanner with RSI and volume filters.
-
-Fetches market rankings from KIS API and applies technical filters
-to identify high-probability trading candidates.
-"""
+"""Smart Volatility Scanner with volatility-first market ranking logic."""
 
 from __future__ import annotations
 
@@ -34,14 +30,13 @@ class ScanCandidate:
 
 
 class SmartVolatilityScanner:
-    """Scans market rankings and applies RSI/volume filters.
+    """Scans market rankings and applies volatility-first filters.
 
     Flow:
-    1. Fetch volume rankings from KIS API
-    2. For each ranked stock, fetch daily prices
-    3. Calculate RSI and volume ratio
-    4. Apply filters: volume > VOL_MULTIPLIER AND (RSI < 30 OR RSI > 70)
-    5. Return top N qualified candidates
+    1. Fetch fluctuation rankings as primary universe
+    2. Fetch volume rankings for liquidity bonus
+    3. Score by volatility first, liquidity second
+    4. Return top N qualified candidates
     """
 
     def __init__(
@@ -92,98 +87,108 @@ class SmartVolatilityScanner:
         self,
         fallback_stocks: list[str] | None = None,
     ) -> list[ScanCandidate]:
-        """Scan domestic market using ranking API + RSI/volume filters."""
-        # Step 1: Fetch rankings
+        """Scan domestic market using volatility-first ranking + liquidity bonus."""
+        # 1) Primary universe from fluctuation ranking.
         try:
-            rankings = await self.broker.fetch_market_rankings(
-                ranking_type="volume",
-                limit=30,  # Fetch more than needed for filtering
+            fluct_rows = await self.broker.fetch_market_rankings(
+                ranking_type="fluctuation",
+                limit=50,
             )
-            logger.info("Fetched %d stocks from volume rankings", len(rankings))
         except ConnectionError as exc:
-            logger.warning("Ranking API failed, using fallback: %s", exc)
-            if fallback_stocks:
-                # Create minimal ranking data for fallback
-                rankings = [
-                    {
-                        "stock_code": code,
-                        "name": code,
-                        "price": 0,
-                        "volume": 0,
-                        "change_rate": 0,
-                        "volume_increase_rate": 0,
-                    }
-                    for code in fallback_stocks
-                ]
-            else:
-                return []
+            logger.warning("Domestic fluctuation ranking failed: %s", exc)
+            fluct_rows = []
 
-        # Step 2: Analyze each stock
+        # 2) Liquidity bonus from volume ranking.
+        try:
+            volume_rows = await self.broker.fetch_market_rankings(
+                ranking_type="volume",
+                limit=50,
+            )
+        except ConnectionError as exc:
+            logger.warning("Domestic volume ranking failed: %s", exc)
+            volume_rows = []
+
+        if not fluct_rows and fallback_stocks:
+            logger.info(
+                "Domestic ranking unavailable; using fallback symbols (%d)",
+                len(fallback_stocks),
+            )
+            fluct_rows = [
+                {
+                    "stock_code": code,
+                    "name": code,
+                    "price": 0.0,
+                    "volume": 0.0,
+                    "change_rate": 0.0,
+                    "volume_increase_rate": 0.0,
+                }
+                for code in fallback_stocks
+            ]
+
+        if not fluct_rows:
+            return []
+
+        volume_rank_bonus: dict[str, float] = {}
+        for idx, row in enumerate(volume_rows):
+            code = _extract_stock_code(row)
+            if not code:
+                continue
+            volume_rank_bonus[code] = max(0.0, 15.0 - idx * 0.3)
+
         candidates: list[ScanCandidate] = []
-
-        for stock in rankings:
-            stock_code = stock["stock_code"]
+        for stock in fluct_rows:
+            stock_code = _extract_stock_code(stock)
             if not stock_code:
                 continue
 
             try:
-                # Fetch daily prices for RSI calculation
-                daily_prices = await self.broker.get_daily_prices(stock_code, days=20)
+                price = _extract_last_price(stock)
+                change_rate = _extract_change_rate_pct(stock)
+                volume = _extract_volume(stock)
 
-                if len(daily_prices) < 15:  # Need at least 14+1 for RSI
-                    logger.debug("Insufficient price history for %s", stock_code)
+                intraday_range_pct = 0.0
+                volume_ratio = _safe_float(stock.get("volume_increase_rate"), 0.0) / 100.0 + 1.0
+
+                # Use daily chart to refine range/volume when available.
+                daily_prices = await self.broker.get_daily_prices(stock_code, days=2)
+                if daily_prices:
+                    latest = daily_prices[-1]
+                    latest_close = _safe_float(latest.get("close"), default=price)
+                    if price <= 0:
+                        price = latest_close
+                    latest_high = _safe_float(latest.get("high"))
+                    latest_low = _safe_float(latest.get("low"))
+                    if latest_close > 0 and latest_high > 0 and latest_low > 0 and latest_high >= latest_low:
+                        intraday_range_pct = (latest_high - latest_low) / latest_close * 100.0
+                    if volume <= 0:
+                        volume = _safe_float(latest.get("volume"))
+                    if len(daily_prices) >= 2:
+                        prev_day_volume = _safe_float(daily_prices[-2].get("volume"))
+                        if prev_day_volume > 0:
+                            volume_ratio = max(volume_ratio, volume / prev_day_volume)
+
+                volatility_pct = max(abs(change_rate), intraday_range_pct)
+                if price <= 0 or volatility_pct < 0.8:
                     continue
 
-                # Calculate RSI
-                close_prices = [p["close"] for p in daily_prices]
-                rsi = self.analyzer.calculate_rsi(close_prices, period=14)
+                volatility_score = min(volatility_pct / 10.0, 1.0) * 85.0
+                liquidity_score = volume_rank_bonus.get(stock_code, 0.0)
+                score = min(100.0, volatility_score + liquidity_score)
+                signal = "momentum" if change_rate >= 0 else "oversold"
+                implied_rsi = max(0.0, min(100.0, 50.0 + (change_rate * 4.0)))
 
-                # Calculate volume ratio (today vs previous day avg)
-                if len(daily_prices) >= 2:
-                    prev_day_volume = daily_prices[-2]["volume"]
-                    current_volume = stock.get("volume", 0) or daily_prices[-1]["volume"]
-                    volume_ratio = (
-                        current_volume / prev_day_volume if prev_day_volume > 0 else 1.0
+                candidates.append(
+                    ScanCandidate(
+                        stock_code=stock_code,
+                        name=stock.get("name", stock_code),
+                        price=price,
+                        volume=volume,
+                        volume_ratio=max(1.0, volume_ratio, volatility_pct / 2.0),
+                        rsi=implied_rsi,
+                        signal=signal,
+                        score=score,
                     )
-                else:
-                    volume_ratio = stock.get("volume_increase_rate", 0) / 100 + 1  # Fallback
-
-                # Apply filters
-                volume_qualified = volume_ratio >= self.vol_multiplier
-                rsi_oversold = rsi < self.rsi_oversold
-                rsi_momentum = rsi > self.rsi_momentum
-
-                if volume_qualified and (rsi_oversold or rsi_momentum):
-                    signal = "oversold" if rsi_oversold else "momentum"
-
-                    # Calculate composite score
-                    # Higher score for: extreme RSI + high volume
-                    rsi_extremity = abs(rsi - 50) / 50  # 0-1 scale
-                    volume_score = min(volume_ratio / 5, 1.0)  # Cap at 5x
-                    score = (rsi_extremity * 0.6 + volume_score * 0.4) * 100
-
-                    candidates.append(
-                        ScanCandidate(
-                            stock_code=stock_code,
-                            name=stock.get("name", stock_code),
-                            price=stock.get("price", daily_prices[-1]["close"]),
-                            volume=current_volume,
-                            volume_ratio=volume_ratio,
-                            rsi=rsi,
-                            signal=signal,
-                            score=score,
-                        )
-                    )
-
-                    logger.info(
-                        "Qualified: %s (%s) RSI=%.1f vol=%.1fx signal=%s score=%.1f",
-                        stock_code,
-                        stock.get("name", ""),
-                        rsi,
-                        volume_ratio,
-                        signal,
-                        score,
-                    )
+                )
 
             except ConnectionError as exc:
                 logger.warning("Failed to analyze %s: %s", stock_code, exc)
@@ -192,7 +197,7 @@ class SmartVolatilityScanner:
                 logger.error("Unexpected error analyzing %s: %s", stock_code, exc)
                 continue
 
-        # Sort by score and return top N
+        logger.info("Domestic ranking scan found %d candidates", len(candidates))
         candidates.sort(key=lambda c: c.score, reverse=True)
         return candidates[: self.top_n]
 
@@ -390,6 +395,7 @@ def _extract_last_price(row: dict[str, Any]) -> float:
         row.get("last")
         or row.get("ovrs_nmix_prpr")
         or row.get("stck_prpr")
+        or row.get("price")
         or row.get("close")
     )
 
@@ -398,6 +404,7 @@ def _extract_change_rate_pct(row: dict[str, Any]) -> float:
     """Extract daily change rate (%) from API schema variants."""
     return _safe_float(
         row.get("rate")
+        or row.get("change_rate")
         or row.get("prdy_ctrt")
         or row.get("evlu_pfls_rt")
         or row.get("chg_rt")
@@ -406,7 +413,9 @@ def _extract_change_rate_pct(row: dict[str, Any]) -> float:
 
 def _extract_volume(row: dict[str, Any]) -> float:
     """Extract volume/traded-amount proxy from schema variants."""
-    return _safe_float(row.get("tvol") or row.get("acml_vol") or row.get("vol"))
+    return _safe_float(
+        row.get("tvol") or row.get("acml_vol") or row.get("vol") or row.get("volume")
+    )
 
 
 def _extract_intraday_range_pct(row: dict[str, Any], price: float) -> float:

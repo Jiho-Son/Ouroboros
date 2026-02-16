@@ -106,6 +106,41 @@ def _extract_symbol_from_holding(item: dict[str, Any]) -> str:
     return ""
 
 
+def _determine_order_quantity(
+    *,
+    action: str,
+    current_price: float,
+    total_cash: float,
+    candidate: ScanCandidate | None,
+    settings: Settings | None,
+) -> int:
+    """Determine order quantity using volatility-aware position sizing."""
+    if action != "BUY":
+        return 1
+    if current_price <= 0 or total_cash <= 0:
+        return 0
+
+    if settings is None or not settings.POSITION_SIZING_ENABLED:
+        return 1
+
+    target_score = max(1.0, settings.POSITION_VOLATILITY_TARGET_SCORE)
+    observed_score = candidate.score if candidate else target_score
+    observed_score = max(1.0, min(100.0, observed_score))
+
+    # Higher observed volatility score => smaller allocation.
+    scaled_pct = settings.POSITION_BASE_ALLOCATION_PCT * (target_score / observed_score)
+    allocation_pct = min(
+        settings.POSITION_MAX_ALLOCATION_PCT,
+        max(settings.POSITION_MIN_ALLOCATION_PCT, scaled_pct),
+    )
+
+    budget = total_cash * (allocation_pct / 100.0)
+    quantity = int(budget // current_price)
+    if quantity <= 0:
+        return 0
+    return quantity
+
+
 async def build_overseas_symbol_universe(
     db_conn: Any,
     overseas_broker: OverseasBroker,
@@ -162,6 +197,7 @@ async def trading_cycle(
     market: MarketInfo,
     stock_code: str,
     scan_candidates: dict[str, dict[str, ScanCandidate]],
+    settings: Settings | None = None,
 ) -> None:
     """Execute one trading cycle for a single stock."""
     cycle_start_time = asyncio.get_event_loop().time()
@@ -399,8 +435,23 @@ async def trading_cycle(
     trade_price = current_price
     trade_pnl = 0.0
     if decision.action in ("BUY", "SELL"):
-        # Determine order size (simplified: 1 lot)
-        quantity = 1
+        quantity = _determine_order_quantity(
+            action=decision.action,
+            current_price=current_price,
+            total_cash=total_cash,
+            candidate=candidate,
+            settings=settings,
+        )
+        if quantity <= 0:
+            logger.info(
+                "Skip %s %s (%s): no affordable quantity (cash=%.2f, price=%.2f)",
+                decision.action,
+                stock_code,
+                market.name,
+                total_cash,
+                current_price,
+            )
+            return
         order_amount = current_price * quantity
 
         # 4. Risk check BEFORE order
@@ -766,7 +817,23 @@ async def run_daily_session(
             trade_price = stock_data["current_price"]
             trade_pnl = 0.0
             if decision.action in ("BUY", "SELL"):
-                quantity = 1
+                quantity = _determine_order_quantity(
+                    action=decision.action,
+                    current_price=stock_data["current_price"],
+                    total_cash=total_cash,
+                    candidate=candidate_map.get(stock_code),
+                    settings=settings,
+                )
+                if quantity <= 0:
+                    logger.info(
+                        "Skip %s %s (%s): no affordable quantity (cash=%.2f, price=%.2f)",
+                        decision.action,
+                        stock_code,
+                        market.name,
+                        total_cash,
+                        stock_data["current_price"],
+                    )
+                    continue
                 order_amount = stock_data["current_price"] * quantity
 
                 # Risk check
@@ -1672,6 +1739,7 @@ async def run(settings: Settings) -> None:
                                     market,
                                     stock_code,
                                     scan_candidates,
+                                    settings,
                                 )
                                 break  # Success — exit retry loop
                             except CircuitBreakerTripped as exc:

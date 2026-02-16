@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     RSI_MOMENTUM_THRESHOLD: int = Field(default=70, ge=50, le=100)
     VOL_MULTIPLIER: float = Field(default=2.0, gt=1.0, le=10.0)
     SCANNER_TOP_N: int = Field(default=3, ge=1, le=10)
+    POSITION_SIZING_ENABLED: bool = True
+    POSITION_BASE_ALLOCATION_PCT: float = Field(default=5.0, gt=0.0, le=30.0)
+    POSITION_MIN_ALLOCATION_PCT: float = Field(default=1.0, gt=0.0, le=20.0)
+    POSITION_MAX_ALLOCATION_PCT: float = Field(default=10.0, gt=0.0, le=50.0)
+    POSITION_VOLATILITY_TARGET_SCORE: float = Field(default=50.0, gt=0.0, le=100.0)
 
     # Database
     DB_PATH: str = "data/trade_logs.db"
