@@ -116,6 +116,7 @@ class TestTradingCycleTelegramIntegration:
                 "output1": {
                     "stck_prpr": "50000",
                     "frgn_ntby_qty": "100",
+                    "prdy_ctrt": "1.23",
                 }
             }
         )
@@ -747,7 +748,7 @@ class TestScenarioEngineIntegration:
         broker = MagicMock()
         broker.get_orderbook = AsyncMock(
             return_value={
-                "output1": {"stck_prpr": "50000", "frgn_ntby_qty": "100"}
+                "output1": {"stck_prpr": "50000", "frgn_ntby_qty": "100", "prdy_ctrt": "2.50"}
             }
         )
         broker.get_balance = AsyncMock(
@@ -830,6 +831,7 @@ class TestScenarioEngineIntegration:
         assert market_data["rsi"] == 25.0
         assert market_data["volume_ratio"] == 3.5
         assert market_data["current_price"] == 50000.0
+        assert market_data["price_change_pct"] == 2.5
 
         # Portfolio data should include pnl
         assert "portfolio_pnl_pct" in portfolio_data
@@ -1233,6 +1235,107 @@ async def test_sell_updates_original_buy_decision_outcome() -> None:
 
 
 @pytest.mark.asyncio
+async def test_hold_overridden_to_sell_when_stop_loss_triggered() -> None:
+    """HOLD decision should be overridden to SELL when stop-loss threshold is breached."""
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    buy_decision_id = decision_logger.log_decision(
+        stock_code="005930",
+        market="KR",
+        exchange_code="KRX",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        context_snapshot={},
+        input_data={},
+    )
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        quantity=1,
+        price=100.0,
+        market="KR",
+        exchange_code="KRX",
+        decision_id=buy_decision_id,
+    )
+
+    broker = MagicMock()
+    broker.get_orderbook = AsyncMock(
+        return_value={"output1": {"stck_prpr": "95", "frgn_ntby_qty": "0", "prdy_ctrt": "-5.0"}}
+    )
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "10000",
+                    "pchs_amt_smtl_amt": "90000",
+                }
+            ]
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    scenario = StockScenario(
+        condition=StockCondition(rsi_below=30),
+        action=ScenarioAction.BUY,
+        confidence=88,
+        stop_loss_pct=-2.0,
+        rationale="stop loss policy",
+    )
+    playbook = DayPlaybook(
+        date=date(2026, 2, 8),
+        market="KR",
+        stock_playbooks=[
+            {"stock_code": "005930", "stock_name": "Samsung", "scenarios": [scenario]}
+        ],
+    )
+    engine = MagicMock(spec=ScenarioEngine)
+    engine.evaluate = MagicMock(return_value=_make_hold_match())
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    await trading_cycle(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        scenario_engine=engine,
+        playbook=playbook,
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        context_store=MagicMock(
+            get_latest_timeframe=MagicMock(return_value=None),
+            set_context=MagicMock(),
+        ),
+        criticality_assessor=MagicMock(
+            assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+            get_timeout=MagicMock(return_value=5.0),
+        ),
+        telegram=telegram,
+        market=market,
+        stock_code="005930",
+        scan_candidates={},
+    )
+
+    broker.send_order.assert_called_once()
+    assert broker.send_order.call_args.kwargs["order_type"] == "SELL"
+
+
+@pytest.mark.asyncio
 async def test_handle_market_close_runs_daily_review_flow() -> None:
     """Market close should aggregate, create scorecard, lessons, and notify."""
     telegram = MagicMock()
@@ -1427,7 +1530,7 @@ async def test_run_evolution_loop_notifies_when_pr_generated() -> None:
     await _run_evolution_loop(
         evolution_optimizer=optimizer,
         telegram=telegram,
-        market_code="US",
+        market_code="US_NASDAQ",
         market_date="2026-02-14",
     )
 
@@ -1451,7 +1554,7 @@ async def test_run_evolution_loop_notification_error_is_ignored() -> None:
     await _run_evolution_loop(
         evolution_optimizer=optimizer,
         telegram=telegram,
-        market_code="US",
+        market_code="US_NYSE",
         market_date="2026-02-14",
     )
 

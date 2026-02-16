@@ -214,3 +214,24 @@ def get_latest_buy_trade(
     if not row:
         return None
     return {"decision_id": row[0], "price": row[1], "quantity": row[2]}
+
+
+def get_open_position(
+    conn: sqlite3.Connection, stock_code: str, market: str
+) -> dict[str, Any] | None:
+    """Return open position if latest trade is BUY, else None."""
+    cursor = conn.execute(
+        """
+        SELECT action, decision_id, price, quantity
+        FROM trades
+        WHERE stock_code = ?
+          AND market = ?
+        ORDER BY timestamp DESC
+        LIMIT 1
+        """,
+        (stock_code, market),
+    )
+    row = cursor.fetchone()
+    if not row or row[0] != "BUY":
+        return None
+    return {"decision_id": row[1], "price": row[2], "quantity": row[3]}

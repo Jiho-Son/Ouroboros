@@ -123,6 +123,23 @@ MARKETS: dict[str, MarketInfo] = {
     ),
 }
 
+MARKET_SHORTHAND: dict[str, list[str]] = {
+    "US": ["US_NASDAQ", "US_NYSE", "US_AMEX"],
+    "CN": ["CN_SHA", "CN_SZA"],
+    "VN": ["VN_HAN", "VN_HCM"],
+}
+
+
+def expand_market_codes(codes: list[str]) -> list[str]:
+    """Expand shorthand market codes into concrete exchange market codes."""
+    expanded: list[str] = []
+    for code in codes:
+        if code in MARKET_SHORTHAND:
+            expanded.extend(MARKET_SHORTHAND[code])
+        else:
+            expanded.append(code)
+    return expanded
+
 
 def is_market_open(market: MarketInfo, now: datetime | None = None) -> bool:
     """

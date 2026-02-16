@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import signal
 import threading
@@ -28,7 +29,7 @@ from src.context.store import ContextStore
 from src.core.criticality import CriticalityAssessor
 from src.core.priority_queue import PriorityTaskQueue
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
-from src.db import get_latest_buy_trade, init_db, log_trade
+from src.db import get_latest_buy_trade, get_open_position, init_db, log_trade
 from src.evolution.daily_review import DailyReviewer
 from src.evolution.optimizer import EvolutionOptimizer
 from src.logging.decision_logger import DecisionLogger
@@ -114,6 +115,7 @@ async def trading_cycle(
 
         current_price = safe_float(orderbook.get("output1", {}).get("stck_prpr", "0"))
         foreigner_net = safe_float(orderbook.get("output1", {}).get("frgn_ntby_qty", "0"))
+        price_change_pct = safe_float(orderbook.get("output1", {}).get("prdy_ctrt", "0"))
     else:
         # Overseas market
         price_data = await overseas_broker.get_overseas_price(
@@ -136,6 +138,7 @@ async def trading_cycle(
 
         current_price = safe_float(price_data.get("output", {}).get("last", "0"))
         foreigner_net = 0.0  # Not available for overseas
+        price_change_pct = safe_float(price_data.get("output", {}).get("rate", "0"))
 
     # Calculate daily P&L %
     pnl_pct = (
@@ -149,6 +152,7 @@ async def trading_cycle(
         "market_name": market.name,
         "current_price": current_price,
         "foreigner_net": foreigner_net,
+        "price_change_pct": price_change_pct,
     }
 
     # Enrich market_data with scanner metrics for scenario engine
@@ -240,6 +244,34 @@ async def trading_cycle(
         confidence=match.confidence,
         rationale=match.rationale,
     )
+    stock_playbook = playbook.get_stock_playbook(stock_code)
+
+    if decision.action == "HOLD":
+        open_position = get_open_position(db_conn, stock_code, market.code)
+        if open_position:
+            entry_price = safe_float(open_position.get("price"), 0.0)
+            if entry_price > 0:
+                loss_pct = (current_price - entry_price) / entry_price * 100
+                stop_loss_threshold = -2.0
+                if stock_playbook and stock_playbook.scenarios:
+                    stop_loss_threshold = stock_playbook.scenarios[0].stop_loss_pct
+
+                if loss_pct <= stop_loss_threshold:
+                    decision = TradeDecision(
+                        action="SELL",
+                        confidence=95,
+                        rationale=(
+                            f"Stop-loss triggered ({loss_pct:.2f}% <= "
+                            f"{stop_loss_threshold:.2f}%)"
+                        ),
+                    )
+                    logger.info(
+                        "Stop-loss override for %s (%s): %.2f%% <= %.2f%%",
+                        stock_code,
+                        market.name,
+                        loss_pct,
+                        stop_loss_threshold,
+                    )
     logger.info(
         "Decision for %s (%s): %s (confidence=%d)",
         stock_code,
@@ -278,6 +310,7 @@ async def trading_cycle(
     input_data = {
         "current_price": current_price,
         "foreigner_net": foreigner_net,
+        "price_change_pct": price_change_pct,
         "total_eval": total_eval,
         "total_cash": total_cash,
         "pnl_pct": pnl_pct,
@@ -507,6 +540,9 @@ async def run_daily_session(
                     foreigner_net = safe_float(
                         orderbook.get("output1", {}).get("frgn_ntby_qty", "0")
                     )
+                    price_change_pct = safe_float(
+                        orderbook.get("output1", {}).get("prdy_ctrt", "0")
+                    )
                 else:
                     price_data = await overseas_broker.get_overseas_price(
                         market.exchange_code, stock_code
@@ -515,12 +551,16 @@ async def run_daily_session(
                         price_data.get("output", {}).get("last", "0")
                     )
                     foreigner_net = 0.0
+                    price_change_pct = safe_float(
+                        price_data.get("output", {}).get("rate", "0")
+                    )
 
                 stock_data: dict[str, Any] = {
                     "stock_code": stock_code,
                     "market_name": market.name,
                     "current_price": current_price,
                     "foreigner_net": foreigner_net,
+                    "price_change_pct": price_change_pct,
                 }
                 # Enrich with scanner metrics
                 cand = candidate_map.get(stock_code)
@@ -820,7 +860,7 @@ async def _run_evolution_loop(
     market_date: str,
 ) -> None:
     """Run evolution loop once at US close (end of trading day)."""
-    if market_code != "US":
+    if not market_code.startswith("US"):
         return
 
     try:
@@ -936,6 +976,10 @@ async def run(settings: Settings) -> None:
             "/help - Show available commands\n"
             "/status - Trading status (mode, markets, P&L)\n"
             "/positions - Current holdings\n"
+            "/report - Daily summary report\n"
+            "/scenarios - Today's playbook scenarios\n"
+            "/review - Recent scorecards\n"
+            "/dashboard - Dashboard URL/status\n"
             "/stop - Pause trading\n"
             "/resume - Resume trading"
         )
@@ -1055,11 +1099,164 @@ async def run(settings: Settings) -> None:
                 "<b>⚠️ Error</b>\n\nFailed to retrieve positions."
             )
 
+    async def handle_report() -> None:
+        """Handle /report command - show daily summary metrics."""
+        try:
+            today = datetime.now(UTC).date().isoformat()
+            trade_row = db_conn.execute(
+                """
+                SELECT COUNT(*) AS trade_count,
+                       COALESCE(SUM(pnl), 0.0) AS total_pnl,
+                       SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS wins
+                FROM trades
+                WHERE DATE(timestamp) = ?
+                """,
+                (today,),
+            ).fetchone()
+            decision_row = db_conn.execute(
+                """
+                SELECT COUNT(*) AS decision_count,
+                       COALESCE(AVG(confidence), 0.0) AS avg_confidence
+                FROM decision_logs
+                WHERE DATE(timestamp) = ?
+                """,
+                (today,),
+            ).fetchone()
+
+            trade_count = int(trade_row[0] if trade_row else 0)
+            total_pnl = float(trade_row[1] if trade_row else 0.0)
+            wins = int(trade_row[2] if trade_row and trade_row[2] is not None else 0)
+            decision_count = int(decision_row[0] if decision_row else 0)
+            avg_confidence = float(decision_row[1] if decision_row else 0.0)
+            win_rate = (wins / trade_count * 100.0) if trade_count > 0 else 0.0
+
+            await telegram.send_message(
+                "<b>📈 Daily Report</b>\n\n"
+                f"<b>Date:</b> {today}\n"
+                f"<b>Trades:</b> {trade_count}\n"
+                f"<b>Total P&L:</b> {total_pnl:+.2f}\n"
+                f"<b>Win Rate:</b> {win_rate:.2f}%\n"
+                f"<b>Decisions:</b> {decision_count}\n"
+                f"<b>Avg Confidence:</b> {avg_confidence:.2f}"
+            )
+        except Exception as exc:
+            logger.error("Error in /report handler: %s", exc)
+            await telegram.send_message(
+                "<b>⚠️ Error</b>\n\nFailed to generate daily report."
+            )
+
+    async def handle_scenarios() -> None:
+        """Handle /scenarios command - show today's playbook scenarios."""
+        try:
+            today = datetime.now(UTC).date().isoformat()
+            rows = db_conn.execute(
+                """
+                SELECT market, playbook_json
+                FROM playbooks
+                WHERE date = ?
+                ORDER BY market
+                """,
+                (today,),
+            ).fetchall()
+
+            if not rows:
+                await telegram.send_message(
+                    "<b>🧠 Today's Scenarios</b>\n\nNo playbooks found for today."
+                )
+                return
+
+            lines = ["<b>🧠 Today's Scenarios</b>", ""]
+            for market, playbook_json in rows:
+                lines.append(f"<b>{market}</b>")
+                playbook_data = {}
+                try:
+                    playbook_data = json.loads(playbook_json)
+                except Exception:
+                    playbook_data = {}
+
+                stock_playbooks = playbook_data.get("stock_playbooks", [])
+                if not stock_playbooks:
+                    lines.append("- No scenarios")
+                    lines.append("")
+                    continue
+
+                for stock_pb in stock_playbooks:
+                    stock_code = stock_pb.get("stock_code", "N/A")
+                    scenarios = stock_pb.get("scenarios", [])
+                    for sc in scenarios:
+                        action = sc.get("action", "HOLD")
+                        confidence = sc.get("confidence", 0)
+                        lines.append(f"- {stock_code}: {action} ({confidence})")
+                lines.append("")
+
+            await telegram.send_message("\n".join(lines).strip())
+        except Exception as exc:
+            logger.error("Error in /scenarios handler: %s", exc)
+            await telegram.send_message(
+                "<b>⚠️ Error</b>\n\nFailed to retrieve scenarios."
+            )
+
+    async def handle_review() -> None:
+        """Handle /review command - show recent scorecards."""
+        try:
+            rows = db_conn.execute(
+                """
+                SELECT timeframe, key, value
+                FROM contexts
+                WHERE layer = 'L6_DAILY' AND key LIKE 'scorecard_%'
+                ORDER BY updated_at DESC
+                LIMIT 5
+                """
+            ).fetchall()
+
+            if not rows:
+                await telegram.send_message(
+                    "<b>📝 Recent Reviews</b>\n\nNo scorecards available."
+                )
+                return
+
+            lines = ["<b>📝 Recent Reviews</b>", ""]
+            for timeframe, key, value in rows:
+                scorecard = json.loads(value)
+                market = key.replace("scorecard_", "")
+                total_pnl = float(scorecard.get("total_pnl", 0.0))
+                win_rate = float(scorecard.get("win_rate", 0.0))
+                decisions = int(scorecard.get("total_decisions", 0))
+                lines.append(
+                    f"- {timeframe} {market}: P&L {total_pnl:+.2f}, "
+                    f"Win {win_rate:.2f}%, Decisions {decisions}"
+                )
+
+            await telegram.send_message("\n".join(lines))
+        except Exception as exc:
+            logger.error("Error in /review handler: %s", exc)
+            await telegram.send_message(
+                "<b>⚠️ Error</b>\n\nFailed to retrieve reviews."
+            )
+
+    async def handle_dashboard() -> None:
+        """Handle /dashboard command - show dashboard URL if enabled."""
+        if not settings.DASHBOARD_ENABLED:
+            await telegram.send_message(
+                "<b>🖥️ Dashboard</b>\n\nDashboard is not enabled."
+            )
+            return
+
+        url = f"http://{settings.DASHBOARD_HOST}:{settings.DASHBOARD_PORT}"
+        await telegram.send_message(
+            "<b>🖥️ Dashboard</b>\n\n"
+            f"<b>URL:</b> {url}"
+        )
+
     command_handler.register_command("help", handle_help)
     command_handler.register_command("stop", handle_stop)
     command_handler.register_command("resume", handle_resume)
     command_handler.register_command("status", handle_status)
     command_handler.register_command("positions", handle_positions)
+    command_handler.register_command("report", handle_report)
+    command_handler.register_command("scenarios", handle_scenarios)
+    command_handler.register_command("review", handle_review)
+    command_handler.register_command("dashboard", handle_dashboard)
 
     # Initialize volatility hunter
     volatility_analyzer = VolatilityAnalyzer(min_volume_surge=2.0, min_price_change=1.0)

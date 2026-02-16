@@ -26,7 +26,19 @@ def create_dashboard_app(db_path: str) -> FastAPI:
     def get_status() -> dict[str, Any]:
         today = datetime.now(UTC).date().isoformat()
         with _connect(db_path) as conn:
-            markets = ["KR", "US"]
+            market_rows = conn.execute(
+                """
+                SELECT DISTINCT market FROM (
+                    SELECT market FROM trades WHERE DATE(timestamp) = ?
+                    UNION
+                    SELECT market FROM decision_logs WHERE DATE(timestamp) = ?
+                    UNION
+                    SELECT market FROM playbooks WHERE date = ?
+                ) ORDER BY market
+                """,
+                (today, today, today),
+            ).fetchall()
+            markets = [row[0] for row in market_rows] if market_rows else []
             market_status: dict[str, Any] = {}
             total_trades = 0
             total_pnl = 0.0
