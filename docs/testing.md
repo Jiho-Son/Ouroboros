@@ -2,51 +2,29 @@
 
 ## Test Structure
 
-**54 tests** across four files. `asyncio_mode = "auto"` in pyproject.toml — async tests need no special decorator.
+**551 tests** across **25 files**. `asyncio_mode = "auto"` in pyproject.toml — async tests need no special decorator.
 
 The `settings` fixture in `conftest.py` provides safe defaults with test credentials and in-memory DB.
 
 ### Test Files
 
-#### `tests/test_risk.py` (11 tests)
-- Circuit breaker boundaries
-- Fat-finger edge cases
+#### Core Components
+
+##### `tests/test_risk.py` (14 tests)
+- Circuit breaker boundaries and exact threshold triggers
+- Fat-finger edge cases and percentage validation
 - P&L calculation edge cases
 - Order validation logic
 
-**Example:**
-```python
-def test_circuit_breaker_exact_threshold(risk_manager):
-    """Circuit breaker should trip at exactly -3.0%."""
-    with pytest.raises(CircuitBreakerTripped):
-        risk_manager.validate_order(
-            current_pnl_pct=-3.0,
-            order_amount=1000,
-            total_cash=10000
-        )
-```
-
-#### `tests/test_broker.py` (6 tests)
+##### `tests/test_broker.py` (11 tests)
 - OAuth token lifecycle
 - Rate limiting enforcement
 - Hash key generation
 - Network error handling
 - SSL context configuration
 
-**Example:**
-```python
-async def test_rate_limiter(broker):
-    """Rate limiter should delay requests to stay under 10 RPS."""
-    start = time.monotonic()
-    for _ in range(15):  # 15 requests
-        await broker._rate_limiter.acquire()
-    elapsed = time.monotonic() - start
-    assert elapsed >= 1.0  # Should take at least 1 second
-```
-
-#### `tests/test_brain.py` (18 tests)
-- Valid JSON parsing
-- Markdown-wrapped JSON handling
+##### `tests/test_brain.py` (24 tests)
+- Valid JSON parsing and markdown-wrapped JSON handling
 - Malformed JSON fallback
 - Missing fields handling
 - Invalid action validation
@@ -54,33 +32,143 @@ async def test_rate_limiter(broker):
 - Empty response handling
 - Prompt construction for different markets
 
-**Example:**
-```python
-async def test_confidence_below_threshold_forces_hold(brain):
-    """Decisions below confidence threshold should force HOLD."""
-    decision = brain.parse_response('{"action":"BUY","confidence":70,"rationale":"test"}')
-    assert decision.action == "HOLD"
-    assert decision.confidence == 70
-```
-
-#### `tests/test_market_schedule.py` (19 tests)
+##### `tests/test_market_schedule.py` (24 tests)
 - Market open/close logic
 - Timezone handling (UTC, Asia/Seoul, America/New_York, etc.)
 - DST (Daylight Saving Time) transitions
-- Weekend handling
-- Lunch break logic
+- Weekend handling and lunch break logic
 - Multiple market filtering
 - Next market open calculation
 
-**Example:**
-```python
-def test_is_market_open_during_trading_hours():
-    """Market should be open during regular trading hours."""
-    # KRX: 9:00-15:30 KST, no lunch break
-    market = MARKETS["KR"]
-    trading_time = datetime(2026, 2, 3, 10, 0, tzinfo=ZoneInfo("Asia/Seoul"))  # Monday 10:00
-    assert is_market_open(market, trading_time) is True
-```
+##### `tests/test_db.py` (3 tests)
+- Database initialization and table creation
+- Trade logging with all fields (market, exchange_code, decision_id)
+- Query and retrieval operations
+
+##### `tests/test_main.py` (37 tests)
+- Trading loop orchestration
+- Market iteration and stock processing
+- Dashboard integration (`--dashboard` flag)
+- Telegram command handler wiring
+- Error handling and graceful shutdown
+
+#### Strategy & Playbook (v2)
+
+##### `tests/test_pre_market_planner.py` (37 tests)
+- Pre-market playbook generation
+- Gemini API integration for scenario creation
+- Timeout handling and defensive playbook fallback
+- Multi-market playbook generation
+
+##### `tests/test_scenario_engine.py` (44 tests)
+- Scenario matching against live market data
+- Confidence scoring and threshold filtering
+- Multiple scenario type handling
+- Edge cases (no match, partial match, expired scenarios)
+
+##### `tests/test_playbook_store.py` (23 tests)
+- Playbook persistence to SQLite
+- Date-based retrieval and market filtering
+- Playbook status management (generated, active, expired)
+- JSON serialization/deserialization
+
+##### `tests/test_strategy_models.py` (33 tests)
+- Pydantic model validation for scenarios, playbooks, decisions
+- Field constraints and default values
+- Serialization round-trips
+
+#### Analysis & Scanning
+
+##### `tests/test_volatility.py` (24 tests)
+- ATR and RSI calculation accuracy
+- Volume surge ratio computation
+- Momentum scoring
+- Breakout/breakdown pattern detection
+- Market scanner watchlist management
+
+##### `tests/test_smart_scanner.py` (13 tests)
+- Python-first filtering pipeline
+- RSI and volume ratio filter logic
+- Candidate scoring and ranking
+- Fallback to static watchlist
+
+#### Context & Memory
+
+##### `tests/test_context.py` (18 tests)
+- L1-L7 layer storage and retrieval
+- Context key-value CRUD operations
+- Timeframe-based queries
+- Layer metadata management
+
+##### `tests/test_context_scheduler.py` (5 tests)
+- Periodic context aggregation scheduling
+- Layer summarization triggers
+
+#### Evolution & Review
+
+##### `tests/test_evolution.py` (24 tests)
+- Strategy optimization loop
+- High-confidence losing trade analysis
+- Generated strategy validation
+
+##### `tests/test_daily_review.py` (10 tests)
+- End-of-day review generation
+- Trade performance summarization
+- Context layer (L6_DAILY) integration
+
+##### `tests/test_scorecard.py` (3 tests)
+- Daily scorecard metrics calculation
+- Win rate, P&L, confidence tracking
+
+#### Notifications & Commands
+
+##### `tests/test_telegram.py` (25 tests)
+- Message sending and formatting
+- Rate limiting (leaky bucket)
+- Error handling (network timeout, invalid token)
+- Auto-disable on missing credentials
+- Notification types (trade, circuit breaker, fat-finger, market events)
+
+##### `tests/test_telegram_commands.py` (31 tests)
+- 9 command handlers (/help, /status, /positions, /report, /scenarios, /review, /dashboard, /stop, /resume)
+- Long polling and command dispatch
+- Authorization filtering by chat_id
+- Command response formatting
+
+#### Dashboard
+
+##### `tests/test_dashboard.py` (14 tests)
+- FastAPI endpoint responses (8 API routes)
+- Status, playbook, scorecard, performance, context, decisions, scenarios
+- Query parameter handling (market, date, limit)
+
+#### Performance & Quality
+
+##### `tests/test_token_efficiency.py` (34 tests)
+- Gemini token usage optimization
+- Prompt size reduction verification
+- Cache effectiveness
+
+##### `tests/test_latency_control.py` (30 tests)
+- API call latency measurement
+- Rate limiter timing accuracy
+- Async operation overhead
+
+##### `tests/test_decision_logger.py` (9 tests)
+- Decision audit trail completeness
+- Context snapshot capture
+- Outcome tracking (P&L, accuracy)
+
+##### `tests/test_data_integration.py` (38 tests)
+- External data source integration
+- News API, market data, economic calendar
+- Error handling for API failures
+
+##### `tests/test_backup.py` (23 tests)
+- Backup scheduler and execution
+- Cloud storage (S3) upload
+- Health monitoring
+- Data export functionality
 
 ## Coverage Requirements
 
@@ -89,20 +177,6 @@ def test_is_market_open_during_trading_hours():
 Check coverage:
 ```bash
 pytest -v --cov=src --cov-report=term-missing
-```
-
-Expected output:
-```
-Name                          Stmts   Miss  Cover   Missing
------------------------------------------------------------
-src/brain/gemini_client.py       85      5    94%   165-169
-src/broker/kis_api.py           120     12    90%   ...
-src/core/risk_manager.py         35      2    94%   ...
-src/db.py                        25      1    96%   ...
-src/main.py                     150     80    47%   (excluded from CI)
-src/markets/schedule.py          95      3    97%   ...
------------------------------------------------------------
-TOTAL                           510     103   80%
 ```
 
 **Note:** `main.py` has lower coverage as it contains the main loop which is tested via integration/manual testing.

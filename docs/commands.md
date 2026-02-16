@@ -119,7 +119,7 @@ No decorator needed for async tests.
 # Install all dependencies (production + dev)
 pip install -e ".[dev]"
 
-# Run full test suite with coverage
+# Run full test suite with coverage (551 tests across 25 files)
 pytest -v --cov=src --cov-report=term-missing
 
 # Run a single test file
@@ -137,10 +137,60 @@ mypy src/ --strict
 # Run the trading agent
 python -m src.main --mode=paper
 
+# Run with dashboard enabled
+python -m src.main --mode=paper --dashboard
+
 # Docker
 docker compose up -d ouroboros          # Run agent
 docker compose --profile test up test   # Run tests in container
 ```
+
+## Dashboard
+
+The FastAPI dashboard provides read-only monitoring of the trading system.
+
+### Starting the Dashboard
+
+```bash
+# Via CLI flag
+python -m src.main --mode=paper --dashboard
+
+# Via environment variable
+DASHBOARD_ENABLED=true python -m src.main --mode=paper
+```
+
+Dashboard runs as a daemon thread on `DASHBOARD_HOST:DASHBOARD_PORT` (default: `127.0.0.1:8080`).
+
+### API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | HTML dashboard UI |
+| `GET /api/status` | Daily trading status by market |
+| `GET /api/playbook/{date}` | Playbook for specific date (query: `market`) |
+| `GET /api/scorecard/{date}` | Daily scorecard from L6_DAILY context |
+| `GET /api/performance` | Performance metrics by market and combined |
+| `GET /api/context/{layer}` | Context data by layer L1-L7 (query: `timeframe`) |
+| `GET /api/decisions` | Decision log entries (query: `limit`, `market`) |
+| `GET /api/scenarios/active` | Today's matched scenarios |
+
+## Telegram Commands
+
+When `TELEGRAM_COMMANDS_ENABLED=true` (default), the bot accepts these interactive commands:
+
+| Command | Description |
+|---------|-------------|
+| `/help` | List available commands |
+| `/status` | Show trading status (mode, markets, P&L) |
+| `/positions` | Display account summary (balance, cash, P&L) |
+| `/report` | Daily summary metrics (trades, P&L, win rate) |
+| `/scenarios` | Show today's playbook scenarios |
+| `/review` | Display recent scorecards (L6_DAILY layer) |
+| `/dashboard` | Show dashboard URL if enabled |
+| `/stop` | Pause trading |
+| `/resume` | Resume trading |
+
+Commands are only processed from the authorized `TELEGRAM_CHAT_ID`.
 
 ## Environment Setup
 

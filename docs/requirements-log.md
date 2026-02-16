@@ -86,3 +86,28 @@
   - Plan Consistency (필수), Safety & Constraints, Quality, Workflow 4개 카테고리
 
 **이슈/PR:** #114
+
+---
+
+## 2026-02-16
+
+### 문서 v2 동기화 (전체 문서 현행화)
+
+**배경:**
+- v2 기능 구현 완료 후 문서가 실제 코드 상태와 크게 괴리
+- 문서에는 54 tests / 4 files로 기록되었으나 실제로는 551 tests / 25 files
+- v2 핵심 기능(Playbook, Scenario Engine, Dashboard, Telegram Commands, Daily Review, Context System, Backup) 문서화 누락
+
+**요구사항:**
+1. `docs/testing.md` — 551 tests / 25 files 반영, 전체 테스트 파일 설명
+2. `docs/architecture.md` — v2 컴포넌트(Strategy, Context, Dashboard, Decision Logger 등) 추가, Playbook Mode 데이터 플로우, DB 스키마 5개 테이블, v2 환경변수
+3. `docs/commands.md` — Dashboard 실행 명령어, Telegram 명령어 9종 레퍼런스
+4. `CLAUDE.md` — Project Structure 트리 확장, 테스트 수 업데이트, `--dashboard` 플래그
+5. `docs/skills.md` — DB 파일명 `trades.db`로 통일, Dashboard 명령어 추가
+6. 기존에 유효한 트러블슈팅, 코드 예제 등은 유지
+
+**구현 결과:**
+- 6개 문서 파일 업데이트
+- 이전 시도(2개 커밋)는 기존 내용을 과도하게 삭제하여 폐기, main 기준으로 재작업
+
+**이슈/PR:** #131, PR #134
