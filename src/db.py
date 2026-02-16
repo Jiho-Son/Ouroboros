@@ -235,3 +235,21 @@ def get_open_position(
     if not row or row[0] != "BUY":
         return None
     return {"decision_id": row[1], "price": row[2], "quantity": row[3]}
+
+
+def get_recent_symbols(
+    conn: sqlite3.Connection, market: str, limit: int = 30
+) -> list[str]:
+    """Return recent unique symbols for a market, newest first."""
+    cursor = conn.execute(
+        """
+        SELECT stock_code, MAX(timestamp) AS last_ts
+        FROM trades
+        WHERE market = ?
+        GROUP BY stock_code
+        ORDER BY last_ts DESC
+        LIMIT ?
+        """,
+        (market, limit),
+    )
+    return [row[0] for row in cursor.fetchall() if row and row[0]]

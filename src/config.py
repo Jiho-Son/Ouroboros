@@ -83,6 +83,18 @@ class Settings(BaseSettings):
     TELEGRAM_COMMANDS_ENABLED: bool = True
     TELEGRAM_POLLING_INTERVAL: float = 1.0  # seconds
 
+    # Overseas ranking API (KIS endpoint/TR_ID may vary by account/product)
+    # Override these from .env if your account uses different specs.
+    OVERSEAS_RANKING_ENABLED: bool = True
+    OVERSEAS_RANKING_FLUCT_TR_ID: str = "HHDFS76200100"
+    OVERSEAS_RANKING_VOLUME_TR_ID: str = "HHDFS76200200"
+    OVERSEAS_RANKING_FLUCT_PATH: str = (
+        "/uapi/overseas-price/v1/quotations/inquire-updown-rank"
+    )
+    OVERSEAS_RANKING_VOLUME_PATH: str = (
+        "/uapi/overseas-price/v1/quotations/inquire-volume-rank"
+    )
+
     # Dashboard (optional)
     DASHBOARD_ENABLED: bool = False
     DASHBOARD_HOST: str = "127.0.0.1"

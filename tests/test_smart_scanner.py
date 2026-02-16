@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 from src.analysis.smart_scanner import ScanCandidate, SmartVolatilityScanner
 from src.analysis.volatility import VolatilityAnalyzer
 from src.broker.kis_api import KISBroker
+from src.broker.overseas import OverseasBroker
 from src.config import Settings
 
 
@@ -43,9 +44,19 @@ def scanner(mock_broker: MagicMock, mock_settings: Settings) -> SmartVolatilityS
     analyzer = VolatilityAnalyzer()
     return SmartVolatilityScanner(
         broker=mock_broker,
+        overseas_broker=None,
         volatility_analyzer=analyzer,
         settings=mock_settings,
     )
+
+
+@pytest.fixture
+def mock_overseas_broker() -> MagicMock:
+    """Create mock overseas broker."""
+    broker = MagicMock(spec=OverseasBroker)
+    broker.get_overseas_price = AsyncMock()
+    broker.fetch_overseas_rankings = AsyncMock(return_value=[])
+    return broker
 
 
 class TestSmartVolatilityScanner:
@@ -322,6 +333,90 @@ class TestSmartVolatilityScanner:
         codes = scanner.get_stock_codes(candidates)
 
         assert codes == ["005930", "035420"]
+
+    @pytest.mark.asyncio
+    async def test_scan_overseas_uses_dynamic_symbols(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock, mock_settings: Settings
+    ) -> None:
+        """Overseas scan should use provided dynamic universe symbols."""
+        analyzer = VolatilityAnalyzer()
+        scanner = SmartVolatilityScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=analyzer,
+            settings=mock_settings,
+        )
+
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        mock_overseas_broker.get_overseas_price.side_effect = [
+            {"output": {"last": "210.5", "rate": "1.6", "tvol": "1500000"}},
+            {"output": {"last": "330.1", "rate": "0.2", "tvol": "900000"}},
+        ]
+
+        candidates = await scanner.scan(
+            market=market,
+            fallback_stocks=["AAPL", "MSFT"],
+        )
+
+        assert [c.stock_code for c in candidates] == ["AAPL"]
+        assert candidates[0].signal == "momentum"
+        assert candidates[0].price == 210.5
+
+    @pytest.mark.asyncio
+    async def test_scan_overseas_uses_ranking_api_first(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock, mock_settings: Settings
+    ) -> None:
+        """Overseas scan should prioritize ranking API when available."""
+        analyzer = VolatilityAnalyzer()
+        scanner = SmartVolatilityScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=analyzer,
+            settings=mock_settings,
+        )
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        mock_overseas_broker.fetch_overseas_rankings.return_value = [
+            {"symb": "NVDA", "last": "780.2", "rate": "2.4", "tvol": "1200000"},
+            {"symb": "MSFT", "last": "420.0", "rate": "0.3", "tvol": "900000"},
+        ]
+
+        candidates = await scanner.scan(market=market, fallback_stocks=["AAPL", "TSLA"])
+
+        mock_overseas_broker.fetch_overseas_rankings.assert_called_once()
+        mock_overseas_broker.get_overseas_price.assert_not_called()
+        assert [c.stock_code for c in candidates] == ["NVDA"]
+
+    @pytest.mark.asyncio
+    async def test_scan_overseas_without_symbols_returns_empty(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock, mock_settings: Settings
+    ) -> None:
+        """Overseas scan should return empty list when no symbol universe exists."""
+        analyzer = VolatilityAnalyzer()
+        scanner = SmartVolatilityScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=analyzer,
+            settings=mock_settings,
+        )
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        candidates = await scanner.scan(market=market, fallback_stocks=[])
+
+        assert candidates == []
 
 
 class TestRSICalculation:
