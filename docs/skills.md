@@ -34,6 +34,12 @@ python -m src.main --mode=paper
 ```
 Runs the agent in paper-trading mode (no real orders).
 
+### Start Trading Agent with Dashboard
+```bash
+python -m src.main --mode=paper --dashboard
+```
+Runs the agent with FastAPI dashboard on `127.0.0.1:8080` (configurable via `DASHBOARD_HOST`/`DASHBOARD_PORT`).
+
 ### Start Trading Agent (Production)
 ```bash
 docker compose up -d ouroboros
@@ -59,7 +65,7 @@ Analyze the last 30 days of trade logs and generate performance metrics.
 python -m src.evolution.optimizer --evolve
 ```
 Triggers the evolution engine to:
-1. Analyze `trade_logs.db` for failing patterns
+1. Analyze `trades.db` for failing patterns
 2. Ask Gemini to generate a new strategy
 3. Run tests on the new strategy
 4. Create a PR if tests pass
@@ -91,12 +97,12 @@ curl http://localhost:8080/health
 
 ### View Trade Logs
 ```bash
-sqlite3 data/trade_logs.db "SELECT * FROM trades ORDER BY timestamp DESC LIMIT 20;"
+sqlite3 data/trades.db "SELECT * FROM trades ORDER BY timestamp DESC LIMIT 20;"
 ```
 
 ### Export Trade History
 ```bash
-sqlite3 -header -csv data/trade_logs.db "SELECT * FROM trades;" > trades_export.csv
+sqlite3 -header -csv data/trades.db "SELECT * FROM trades;" > trades_export.csv
 ```
 
 ## Safety Checklist (Pre-Deploy)

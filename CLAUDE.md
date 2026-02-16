@@ -15,6 +15,9 @@ pytest -v --cov=src
 
 # Run (paper trading)
 python -m src.main --mode=paper
+
+# Run with dashboard
+python -m src.main --mode=paper --dashboard
 ```
 
 ## Telegram Notifications (Optional)
@@ -42,6 +45,10 @@ Get real-time alerts for trades, circuit breakers, and system events via Telegra
 - ⚠️ Fat-finger rejections (oversized orders blocked)
 - ℹ️ Market open/close notifications
 - 📝 System startup/shutdown status
+
+### Interactive Commands
+
+With `TELEGRAM_COMMANDS_ENABLED=true` (default), the bot supports 9 bidirectional commands: `/help`, `/status`, `/positions`, `/report`, `/scenarios`, `/review`, `/dashboard`, `/stop`, `/resume`.
 
 **Fail-safe**: Notifications never crash the trading system. Missing credentials or API errors are logged but trading continues normally.
 
@@ -109,17 +116,23 @@ User requirements and feedback are tracked in [docs/requirements-log.md](docs/re
 ```
 src/
 ├── analysis/        # Technical analysis (RSI, volatility, smart scanner)
+├── backup/          # Disaster recovery (scheduler, cloud storage, health)
+├── brain/           # Gemini AI decision engine (prompt optimizer, context selector)
 ├── broker/          # KIS API client (domestic + overseas)
-├── brain/           # Gemini AI decision engine
+├── context/         # L1-L7 hierarchical memory system
 ├── core/            # Risk manager (READ-ONLY)
-├── evolution/       # Self-improvement optimizer
+├── dashboard/       # FastAPI read-only monitoring (8 API endpoints)
+├── data/            # External data integration (news, market data, calendar)
+├── evolution/       # Self-improvement (optimizer, daily review, scorecard)
+├── logging/         # Decision logger (audit trail)
 ├── markets/         # Market schedules and timezone handling
-├── notifications/   # Telegram real-time alerts
+├── notifications/   # Telegram alerts + bidirectional commands (9 commands)
+├── strategy/        # Pre-market planner, scenario engine, playbook store
 ├── db.py            # SQLite trade logging
 ├── main.py          # Trading loop orchestrator
 └── config.py        # Settings (from .env)
 
-tests/               # 343 tests across 14 files
+tests/               # 551 tests across 25 files
 docs/                # Extended documentation
 ```
 
@@ -131,6 +144,7 @@ ruff check src/ tests/           # Lint
 mypy src/ --strict               # Type check
 
 python -m src.main --mode=paper  # Paper trading
+python -m src.main --mode=paper --dashboard  # With dashboard
 python -m src.main --mode=live   # Live trading (⚠️ real money)
 
 # Gitea workflow (requires tea CLI)
