@@ -91,13 +91,13 @@ class Settings(BaseSettings):
     # Overseas ranking API (KIS endpoint/TR_ID may vary by account/product)
     # Override these from .env if your account uses different specs.
     OVERSEAS_RANKING_ENABLED: bool = True
-    OVERSEAS_RANKING_FLUCT_TR_ID: str = "HHDFS76200100"
-    OVERSEAS_RANKING_VOLUME_TR_ID: str = "HHDFS76200200"
+    OVERSEAS_RANKING_FLUCT_TR_ID: str = "HHDFS76290000"
+    OVERSEAS_RANKING_VOLUME_TR_ID: str = "HHDFS76270000"
     OVERSEAS_RANKING_FLUCT_PATH: str = (
-        "/uapi/overseas-price/v1/quotations/inquire-updown-rank"
+        "/uapi/overseas-stock/v1/ranking/updown-rate"
     )
     OVERSEAS_RANKING_VOLUME_PATH: str = (
-        "/uapi/overseas-price/v1/quotations/inquire-volume-rank"
+        "/uapi/overseas-stock/v1/ranking/volume-surge"
     )
 
     # Dashboard (optional)

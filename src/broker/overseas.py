@@ -12,6 +12,20 @@ from src.broker.kis_api import KISBroker
 logger = logging.getLogger(__name__)
 
 
+# Ranking API uses different exchange codes than order/quote APIs.
+_RANKING_EXCHANGE_MAP: dict[str, str] = {
+    "NASD": "NAS",
+    "NYSE": "NYS",
+    "AMEX": "AMS",
+    "SEHK": "HKS",
+    "SHAA": "SHS",
+    "SZAA": "SZS",
+    "HSX": "HSX",
+    "HNX": "HNX",
+    "TSE": "TSE",
+}
+
+
 class OverseasBroker:
     """KIS Overseas Stock API wrapper that reuses KISBroker infrastructure."""
 
@@ -70,7 +84,7 @@ class OverseasBroker:
         ranking_type: str = "fluctuation",
         limit: int = 30,
     ) -> list[dict[str, Any]]:
-        """Fetch overseas rankings (price change or volume amount).
+        """Fetch overseas rankings (price change or volume surge).
 
         Ranking API specs may differ by account/product. Endpoint paths and
         TR_IDs are configurable via settings and can be overridden in .env.
@@ -81,66 +95,63 @@ class OverseasBroker:
         await self._broker._rate_limiter.acquire()
         session = self._broker._get_session()
 
+        ranking_excd = _RANKING_EXCHANGE_MAP.get(exchange_code, exchange_code)
+
         if ranking_type == "volume":
-            configured_tr_id = self._broker._settings.OVERSEAS_RANKING_VOLUME_TR_ID
-            configured_path = self._broker._settings.OVERSEAS_RANKING_VOLUME_PATH
-            default_tr_id = "HHDFS76200200"
-            default_path = "/uapi/overseas-price/v1/quotations/inquire-volume-rank"
+            tr_id = self._broker._settings.OVERSEAS_RANKING_VOLUME_TR_ID
+            path = self._broker._settings.OVERSEAS_RANKING_VOLUME_PATH
+            params: dict[str, str] = {
+                "AUTH": "",
+                "EXCD": ranking_excd,
+                "MIXN": "0",
+                "VOL_RANG": "0",
+            }
         else:
-            configured_tr_id = self._broker._settings.OVERSEAS_RANKING_FLUCT_TR_ID
-            configured_path = self._broker._settings.OVERSEAS_RANKING_FLUCT_PATH
-            default_tr_id = "HHDFS76200100"
-            default_path = "/uapi/overseas-price/v1/quotations/inquire-updown-rank"
+            tr_id = self._broker._settings.OVERSEAS_RANKING_FLUCT_TR_ID
+            path = self._broker._settings.OVERSEAS_RANKING_FLUCT_PATH
+            params = {
+                "AUTH": "",
+                "EXCD": ranking_excd,
+                "NDAY": "0",
+                "GUBN": "1",
+                "VOL_RANG": "0",
+            }
 
-        endpoint_specs: list[tuple[str, str]] = [(configured_tr_id, configured_path)]
-        if (configured_tr_id, configured_path) != (default_tr_id, default_path):
-            endpoint_specs.append((default_tr_id, default_path))
+        headers = await self._broker._auth_headers(tr_id)
+        url = f"{self._broker._base_url}{path}"
 
-        # Try common param variants used by KIS overseas quotation APIs.
-        param_variants = [
-            {"AUTH": "", "EXCD": exchange_code, "NREC": str(max(limit, 30))},
-            {"AUTH": "", "OVRS_EXCG_CD": exchange_code, "NREC": str(max(limit, 30))},
-            {"AUTH": "", "EXCD": exchange_code},
-            {"AUTH": "", "OVRS_EXCG_CD": exchange_code},
-        ]
+        try:
+            async with session.get(url, headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    if resp.status == 404:
+                        logger.warning(
+                            "Overseas ranking endpoint unavailable (404) for %s/%s; "
+                            "using symbol fallback scan",
+                            exchange_code,
+                            ranking_type,
+                        )
+                        return []
+                    raise ConnectionError(
+                        f"fetch_overseas_rankings failed ({resp.status}): {text}"
+                    )
 
-        last_error: str | None = None
-        saw_http_404 = False
-        for tr_id, path in endpoint_specs:
-            headers = await self._broker._auth_headers(tr_id)
-            url = f"{self._broker._base_url}{path}"
-            for params in param_variants:
-                try:
-                    async with session.get(url, headers=headers, params=params) as resp:
-                        text = await resp.text()
-                        if resp.status != 200:
-                            last_error = f"HTTP {resp.status}: {text}"
-                            if resp.status == 404:
-                                saw_http_404 = True
-                            continue
+                data = await resp.json()
+                rows = self._extract_ranking_rows(data)
+                if rows:
+                    return rows[:limit]
 
-                        data = await resp.json()
-                        rows = self._extract_ranking_rows(data)
-                        if rows:
-                            return rows[:limit]
-
-                        # keep trying another param variant if response has no usable rows
-                        last_error = f"empty output (keys={list(data.keys())})"
-                except (TimeoutError, aiohttp.ClientError) as exc:
-                    last_error = str(exc)
-                    continue
-
-        if saw_http_404:
-            logger.warning(
-                "Overseas ranking endpoint unavailable (404) for %s/%s; using symbol fallback scan",
-                exchange_code,
-                ranking_type,
-            )
-            return []
-
-        raise ConnectionError(
-            f"fetch_overseas_rankings failed for {exchange_code}/{ranking_type}: {last_error}"
-        )
+                logger.debug(
+                    "Overseas ranking returned empty for %s/%s (keys=%s)",
+                    exchange_code,
+                    ranking_type,
+                    list(data.keys()),
+                )
+                return []
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise ConnectionError(
+                f"Network error fetching overseas rankings: {exc}"
+            ) from exc
 
     async def get_overseas_balance(self, exchange_code: str) -> dict[str, Any]:
         """
