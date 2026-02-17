@@ -410,8 +410,10 @@ class GeminiClient:
                     cached=True,
                 )
 
-        # Build optimized prompt
-        if self._enable_optimization:
+        # Build prompt (prompt_override takes priority for callers like pre_market_planner)
+        if "prompt_override" in market_data:
+            prompt = market_data["prompt_override"]
+        elif self._enable_optimization:
             prompt = self._optimizer.build_compressed_prompt(market_data)
         else:
             prompt = await self.build_prompt(market_data, news_sentiment)

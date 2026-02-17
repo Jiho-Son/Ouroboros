@@ -184,3 +184,20 @@
 
 **효과:**
 - 해외 시장 랭킹 스캔이 정상 동작하여 Smart Scanner가 후보 종목 탐지 가능
+
+### Gemini prompt_override 미적용 버그 수정
+
+**배경:**
+- `run_overnight` 실행 시 모든 시장에서 Playbook 생성 실패 (`JSONDecodeError`)
+- defensive playbook으로 폴백되어 모든 종목이 HOLD 처리
+
+**근본 원인:**
+- `pre_market_planner.py`가 `market_data["prompt_override"]`에 Playbook 전용 프롬프트를 넣어 `gemini.decide()` 호출
+- `gemini_client.py`의 `decide()` 메서드가 `prompt_override` 키를 전혀 확인하지 않고 항상 일반 트레이드 결정 프롬프트 생성
+- Gemini가 Playbook JSON 대신 일반 트레이드 결정을 반환하여 파싱 실패
+
+**구현 결과:**
+- `src/brain/gemini_client.py`: `decide()` 메서드에서 `prompt_override` 우선 사용 로직 추가
+- `tests/test_brain.py`: 3개 테스트 추가 (override 전달, optimization 우회, 미지정 시 기존 동작 유지)
+
+**이슈/PR:** #143
