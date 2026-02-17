@@ -90,12 +90,12 @@ class TestTokenManagement:
         await broker.close()
 
     @pytest.mark.asyncio
-    async def test_token_refresh_cooldown_prevents_rapid_retries(self, settings):
-        """Token refresh should enforce cooldown after failure (issue #54)."""
+    async def test_token_refresh_cooldown_waits_then_retries(self, settings):
+        """Token refresh should wait out cooldown then retry (issue #54)."""
         broker = KISBroker(settings)
-        broker._refresh_cooldown = 2.0  # Short cooldown for testing
+        broker._refresh_cooldown = 0.1  # Short cooldown for testing
 
-        # First refresh attempt fails with 403 (EGW00133)
+        # All attempts fail with 403 (EGW00133)
         mock_resp_403 = AsyncMock()
         mock_resp_403.status = 403
         mock_resp_403.text = AsyncMock(
@@ -109,8 +109,8 @@ class TestTokenManagement:
             with pytest.raises(ConnectionError, match="Token refresh failed"):
                 await broker._ensure_token()
 
-            # Second attempt within cooldown should fail with cooldown error
-            with pytest.raises(ConnectionError, match="Token refresh on cooldown"):
+            # Second attempt within cooldown should wait then retry (and still get 403)
+            with pytest.raises(ConnectionError, match="Token refresh failed"):
                 await broker._ensure_token()
 
         await broker.close()
