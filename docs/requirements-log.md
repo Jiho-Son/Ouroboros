@@ -165,3 +165,22 @@
 **효과:**
 - 국내/해외 스캐너 기준이 변동성 중심으로 일관화
 - 고변동 구간에서 자동 익스포저 축소, 저변동 구간에서 과소진입 완화
+
+## 2026-02-18
+
+### KIS 해외 랭킹 API 404 에러 수정
+
+**배경:**
+- KIS 해외주식 랭킹 API(`fetch_overseas_rankings`)가 모든 거래소에서 HTTP 404를 반환
+- Smart Scanner가 해외 시장 후보 종목을 찾지 못해 거래가 전혀 실행되지 않음
+
+**근본 원인:**
+- TR_ID, API 경로, 거래소 코드가 모두 KIS 공식 문서와 불일치
+
+**구현 결과:**
+- `src/config.py`: TR_ID/Path 기본값을 KIS 공식 스펙으로 수정
+- `src/broker/overseas.py`: 랭킹 API 전용 거래소 코드 매핑 추가 (NASD→NAS, NYSE→NYS, AMEX→AMS), 올바른 API 파라미터 사용
+- `tests/test_overseas_broker.py`: 19개 단위 테스트 추가
+
+**효과:**
+- 해외 시장 랭킹 스캔이 정상 동작하여 Smart Scanner가 후보 종목 탐지 가능
