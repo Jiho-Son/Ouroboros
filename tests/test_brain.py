@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from src.brain.gemini_client import GeminiClient
 
 # ---------------------------------------------------------------------------
@@ -270,3 +274,97 @@ class TestBatchDecisionParsing:
 
         assert decisions["AAPL"].action == "HOLD"
         assert decisions["AAPL"].confidence == 0
+
+
+# ---------------------------------------------------------------------------
+# Prompt Override (used by pre_market_planner)
+# ---------------------------------------------------------------------------
+
+
+class TestPromptOverride:
+    """decide() must use prompt_override when present in market_data."""
+
+    @pytest.mark.asyncio
+    async def test_prompt_override_is_sent_to_gemini(self, settings):
+        """When prompt_override is in market_data, it should be used as the prompt."""
+        client = GeminiClient(settings)
+
+        custom_prompt = "You are a playbook generator. Return JSON with scenarios."
+
+        mock_response = MagicMock()
+        mock_response.text = '{"action": "HOLD", "confidence": 50, "rationale": "test"}'
+
+        with patch.object(
+            client._client.aio.models,
+            "generate_content",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_generate:
+            market_data = {
+                "stock_code": "PLANNER",
+                "current_price": 0,
+                "prompt_override": custom_prompt,
+            }
+            await client.decide(market_data)
+
+            # Verify the custom prompt was sent, not a built prompt
+            mock_generate.assert_called_once()
+            actual_prompt = mock_generate.call_args[1].get(
+                "contents", mock_generate.call_args[0][1] if len(mock_generate.call_args[0]) > 1 else None
+            )
+            assert actual_prompt == custom_prompt
+
+    @pytest.mark.asyncio
+    async def test_prompt_override_skips_optimization(self, settings):
+        """prompt_override should bypass prompt optimization."""
+        client = GeminiClient(settings)
+        client._enable_optimization = True
+
+        custom_prompt = "Custom playbook prompt"
+
+        mock_response = MagicMock()
+        mock_response.text = '{"action": "HOLD", "confidence": 50, "rationale": "ok"}'
+
+        with patch.object(
+            client._client.aio.models,
+            "generate_content",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_generate:
+            market_data = {
+                "stock_code": "PLANNER",
+                "current_price": 0,
+                "prompt_override": custom_prompt,
+            }
+            await client.decide(market_data)
+
+            actual_prompt = mock_generate.call_args[1].get(
+                "contents", mock_generate.call_args[0][1] if len(mock_generate.call_args[0]) > 1 else None
+            )
+            assert actual_prompt == custom_prompt
+
+    @pytest.mark.asyncio
+    async def test_without_prompt_override_uses_build_prompt(self, settings):
+        """Without prompt_override, decide() should use build_prompt as before."""
+        client = GeminiClient(settings)
+
+        mock_response = MagicMock()
+        mock_response.text = '{"action": "HOLD", "confidence": 50, "rationale": "ok"}'
+
+        with patch.object(
+            client._client.aio.models,
+            "generate_content",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_generate:
+            market_data = {
+                "stock_code": "005930",
+                "current_price": 72000,
+            }
+            await client.decide(market_data)
+
+            actual_prompt = mock_generate.call_args[1].get(
+                "contents", mock_generate.call_args[0][1] if len(mock_generate.call_args[0]) > 1 else None
+            )
+            # Should contain stock code from build_prompt, not be a custom override
+            assert "005930" in actual_prompt
