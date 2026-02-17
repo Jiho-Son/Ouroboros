@@ -315,6 +315,11 @@ class SmartVolatilityScanner:
             logger.info("Overseas scanner: no symbol universe for %s", market.name)
             return []
 
+        logger.info(
+            "Overseas scanner: scanning %d fallback symbols for %s",
+            len(symbols),
+            market.name,
+        )
         candidates: list[ScanCandidate] = []
         for stock_code in symbols:
             try:
@@ -350,6 +355,11 @@ class SmartVolatilityScanner:
                 logger.warning("Failed to analyze overseas %s: %s", stock_code, exc)
             except Exception as exc:
                 logger.error("Unexpected error analyzing overseas %s: %s", stock_code, exc)
+        logger.info(
+            "Overseas symbol fallback scan found %d candidates for %s",
+            len(candidates),
+            market.name,
+        )
         return candidates
 
     def get_stock_codes(self, candidates: list[ScanCandidate]) -> list[str]:
