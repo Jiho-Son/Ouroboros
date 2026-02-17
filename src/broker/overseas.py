@@ -82,14 +82,19 @@ class OverseasBroker:
         session = self._broker._get_session()
 
         if ranking_type == "volume":
-            tr_id = self._broker._settings.OVERSEAS_RANKING_VOLUME_TR_ID
-            path = self._broker._settings.OVERSEAS_RANKING_VOLUME_PATH
+            configured_tr_id = self._broker._settings.OVERSEAS_RANKING_VOLUME_TR_ID
+            configured_path = self._broker._settings.OVERSEAS_RANKING_VOLUME_PATH
+            default_tr_id = "HHDFS76200200"
+            default_path = "/uapi/overseas-price/v1/quotations/inquire-volume-rank"
         else:
-            tr_id = self._broker._settings.OVERSEAS_RANKING_FLUCT_TR_ID
-            path = self._broker._settings.OVERSEAS_RANKING_FLUCT_PATH
+            configured_tr_id = self._broker._settings.OVERSEAS_RANKING_FLUCT_TR_ID
+            configured_path = self._broker._settings.OVERSEAS_RANKING_FLUCT_PATH
+            default_tr_id = "HHDFS76200100"
+            default_path = "/uapi/overseas-price/v1/quotations/inquire-updown-rank"
 
-        headers = await self._broker._auth_headers(tr_id)
-        url = f"{self._broker._base_url}{path}"
+        endpoint_specs: list[tuple[str, str]] = [(configured_tr_id, configured_path)]
+        if (configured_tr_id, configured_path) != (default_tr_id, default_path):
+            endpoint_specs.append((default_tr_id, default_path))
 
         # Try common param variants used by KIS overseas quotation APIs.
         param_variants = [
@@ -100,24 +105,38 @@ class OverseasBroker:
         ]
 
         last_error: str | None = None
-        for params in param_variants:
-            try:
-                async with session.get(url, headers=headers, params=params) as resp:
-                    text = await resp.text()
-                    if resp.status != 200:
-                        last_error = f"HTTP {resp.status}: {text}"
-                        continue
+        saw_http_404 = False
+        for tr_id, path in endpoint_specs:
+            headers = await self._broker._auth_headers(tr_id)
+            url = f"{self._broker._base_url}{path}"
+            for params in param_variants:
+                try:
+                    async with session.get(url, headers=headers, params=params) as resp:
+                        text = await resp.text()
+                        if resp.status != 200:
+                            last_error = f"HTTP {resp.status}: {text}"
+                            if resp.status == 404:
+                                saw_http_404 = True
+                            continue
 
-                    data = await resp.json()
-                    rows = self._extract_ranking_rows(data)
-                    if rows:
-                        return rows[:limit]
+                        data = await resp.json()
+                        rows = self._extract_ranking_rows(data)
+                        if rows:
+                            return rows[:limit]
 
-                    # keep trying another param variant if response has no usable rows
-                    last_error = f"empty output (keys={list(data.keys())})"
-            except (TimeoutError, aiohttp.ClientError) as exc:
-                last_error = str(exc)
-                continue
+                        # keep trying another param variant if response has no usable rows
+                        last_error = f"empty output (keys={list(data.keys())})"
+                except (TimeoutError, aiohttp.ClientError) as exc:
+                    last_error = str(exc)
+                    continue
+
+        if saw_http_404:
+            logger.warning(
+                "Overseas ranking endpoint unavailable (404) for %s/%s; using symbol fallback scan",
+                exchange_code,
+                ranking_type,
+            )
+            return []
 
         raise ConnectionError(
             f"fetch_overseas_rankings failed for {exchange_code}/{ranking_type}: {last_error}"
