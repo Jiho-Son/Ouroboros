@@ -104,12 +104,14 @@ class KISBroker:
             time_since_last_attempt = now - self._last_refresh_attempt
             if time_since_last_attempt < self._refresh_cooldown:
                 remaining = self._refresh_cooldown - time_since_last_attempt
-                error_msg = (
-                    f"Token refresh on cooldown. "
-                    f"Retry in {remaining:.1f}s (KIS allows 1/minute)"
+                # Do not fail fast here. If token is unavailable, upstream calls
+                # will all fail for up to a minute and scanning returns no trades.
+                logger.warning(
+                    "Token refresh on cooldown. Waiting %.1fs before retry (KIS allows 1/minute)",
+                    remaining,
                 )
-                logger.warning(error_msg)
-                raise ConnectionError(error_msg)
+                await asyncio.sleep(remaining)
+                now = asyncio.get_event_loop().time()
 
             logger.info("Refreshing KIS access token")
             self._last_refresh_attempt = now
