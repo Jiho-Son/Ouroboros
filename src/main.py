@@ -239,17 +239,27 @@ async def trading_cycle(
         total_cash = safe_float(balance_info.get("frcr_dncl_amt_2", "0") or "0")
         purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
 
-        # VTS (paper trading) overseas balance API often returns 0 or errors.
-        # Fall back to configured paper cash so BUY orders can be sized.
+        # Paper mode fallback: VTS overseas balance API often fails for many accounts.
         if total_cash <= 0 and settings and settings.PAPER_OVERSEAS_CASH > 0:
             logger.debug(
-                "Overseas cash balance is 0 for %s; using paper fallback %.2f",
-                stock_code,
+                "Overseas cash balance is 0 for %s; using paper fallback %.2f USD",
+                market.exchange_code,
                 settings.PAPER_OVERSEAS_CASH,
             )
             total_cash = settings.PAPER_OVERSEAS_CASH
 
         current_price = safe_float(price_data.get("output", {}).get("last", "0"))
+        # Fallback: if price API returns 0, use scanner candidate price
+        if current_price <= 0:
+            market_candidates_lookup = scan_candidates.get(market.code, {})
+            cand_lookup = market_candidates_lookup.get(stock_code)
+            if cand_lookup and cand_lookup.price > 0:
+                logger.debug(
+                    "Price API returned 0 for %s; using scanner candidate price %.4f",
+                    stock_code,
+                    cand_lookup.price,
+                )
+                current_price = cand_lookup.price
         foreigner_net = 0.0  # Not available for overseas
         price_change_pct = safe_float(price_data.get("output", {}).get("rate", "0"))
 
@@ -497,6 +507,7 @@ async def trading_cycle(
             raise  # Re-raise to prevent trade
 
         # 5. Send order
+        order_succeeded = True
         if market.is_domestic:
             result = await broker.send_order(
                 stock_code=stock_code,
@@ -505,29 +516,48 @@ async def trading_cycle(
                 price=0,  # market order
             )
         else:
+            # For overseas orders:
+            # - KIS VTS only accepts limit orders (지정가만 가능)
+            # - BUY: use 0.5% premium over last price to improve fill probability
+            #   (ask price is typically slightly above last, and VTS won't fill below ask)
+            # - SELL: use last price as the limit
+            if decision.action == "BUY":
+                order_price = round(current_price * 1.005, 4)
+            else:
+                order_price = current_price
             result = await overseas_broker.send_overseas_order(
                 exchange_code=market.exchange_code,
                 stock_code=stock_code,
                 order_type=decision.action,
                 quantity=quantity,
-                price=current_price,  # limit order — KIS VTS rejects market orders
+                price=order_price,  # limit order — KIS VTS rejects market orders
             )
+            # Check if KIS rejected the order (rt_cd != "0")
+            if result.get("rt_cd", "") != "0":
+                order_succeeded = False
+                logger.warning(
+                    "Overseas order not accepted for %s: rt_cd=%s msg=%s",
+                    stock_code,
+                    result.get("rt_cd"),
+                    result.get("msg1"),
+                )
         logger.info("Order result: %s", result.get("msg1", "OK"))
 
-        # 5.5. Notify trade execution
-        try:
-            await telegram.notify_trade_execution(
-                stock_code=stock_code,
-                market=market.name,
-                action=decision.action,
-                quantity=quantity,
-                price=current_price,
-                confidence=decision.confidence,
-            )
-        except Exception as exc:
-            logger.warning("Telegram notification failed: %s", exc)
+        # 5.5. Notify trade execution (only on success)
+        if order_succeeded:
+            try:
+                await telegram.notify_trade_execution(
+                    stock_code=stock_code,
+                    market=market.name,
+                    action=decision.action,
+                    quantity=quantity,
+                    price=current_price,
+                    confidence=decision.confidence,
+                )
+            except Exception as exc:
+                logger.warning("Telegram notification failed: %s", exc)
 
-        if decision.action == "SELL":
+        if decision.action == "SELL" and order_succeeded:
             buy_trade = get_latest_buy_trade(db_conn, stock_code, market.code)
             if buy_trade and buy_trade.get("price") is not None:
                 buy_price = float(buy_trade["price"])
@@ -539,7 +569,9 @@ async def trading_cycle(
                     accuracy=1 if trade_pnl > 0 else 0,
                 )
 
-    # 6. Log trade with selection context
+    # 6. Log trade with selection context (skip if order was rejected)
+    if decision.action in ("BUY", "SELL") and not order_succeeded:
+        return
     selection_context = None
     if stock_code in market_candidates:
         candidate = market_candidates[stock_code]
@@ -711,6 +743,16 @@ async def run_daily_session(
                     current_price = safe_float(
                         price_data.get("output", {}).get("last", "0")
                     )
+                    # Fallback: if price API returns 0, use scanner candidate price
+                    if current_price <= 0:
+                        cand_lookup = candidate_map.get(stock_code)
+                        if cand_lookup and cand_lookup.price > 0:
+                            logger.debug(
+                                "Price API returned 0 for %s; using scanner candidate price %.4f",
+                                stock_code,
+                                cand_lookup.price,
+                            )
+                            current_price = cand_lookup.price
                     foreigner_net = 0.0
                     price_change_pct = safe_float(
                         price_data.get("output", {}).get("rate", "0")
@@ -775,6 +817,9 @@ async def run_daily_session(
             purchase_total = safe_float(
                 balance_info.get("frcr_buy_amt_smtl", "0") or "0"
             )
+            # Paper mode fallback: VTS overseas balance API often fails for many accounts.
+            if total_cash <= 0 and settings.PAPER_OVERSEAS_CASH > 0:
+                total_cash = settings.PAPER_OVERSEAS_CASH
 
             # VTS overseas balance API often returns 0; use paper fallback.
             if total_cash <= 0 and settings.PAPER_OVERSEAS_CASH > 0:
@@ -853,6 +898,7 @@ async def run_daily_session(
             quantity = 0
             trade_price = stock_data["current_price"]
             trade_pnl = 0.0
+            order_succeeded = True
             if decision.action in ("BUY", "SELL"):
                 quantity = _determine_order_quantity(
                     action=decision.action,
@@ -905,6 +951,7 @@ async def run_daily_session(
                     raise
 
                 # Send order
+                order_succeeded = True
                 try:
                     if market.is_domestic:
                         result = await broker.send_order(
@@ -914,34 +961,48 @@ async def run_daily_session(
                             price=0,  # market order
                         )
                     else:
+                        # KIS VTS only accepts limit orders; use 0.5% premium for BUY
+                        if decision.action == "BUY":
+                            order_price = round(stock_data["current_price"] * 1.005, 4)
+                        else:
+                            order_price = stock_data["current_price"]
                         result = await overseas_broker.send_overseas_order(
                             exchange_code=market.exchange_code,
                             stock_code=stock_code,
                             order_type=decision.action,
                             quantity=quantity,
-                            price=stock_data["current_price"],  # limit order — KIS VTS rejects market orders
+                            price=order_price,  # limit order
                         )
+                        if result.get("rt_cd", "") != "0":
+                            order_succeeded = False
+                            logger.warning(
+                                "Overseas order not accepted for %s: rt_cd=%s msg=%s",
+                                stock_code,
+                                result.get("rt_cd"),
+                                result.get("msg1"),
+                            )
                     logger.info("Order result: %s", result.get("msg1", "OK"))
 
-                    # Notify trade execution
-                    try:
-                        await telegram.notify_trade_execution(
-                            stock_code=stock_code,
-                            market=market.name,
-                            action=decision.action,
-                            quantity=quantity,
-                            price=stock_data["current_price"],
-                            confidence=decision.confidence,
-                        )
-                    except Exception as exc:
-                        logger.warning("Telegram notification failed: %s", exc)
+                    # Notify trade execution (only on success)
+                    if order_succeeded:
+                        try:
+                            await telegram.notify_trade_execution(
+                                stock_code=stock_code,
+                                market=market.name,
+                                action=decision.action,
+                                quantity=quantity,
+                                price=stock_data["current_price"],
+                                confidence=decision.confidence,
+                            )
+                        except Exception as exc:
+                            logger.warning("Telegram notification failed: %s", exc)
                 except Exception as exc:
                     logger.error(
                         "Order execution failed for %s: %s", stock_code, exc
                     )
                     continue
 
-                if decision.action == "SELL":
+                if decision.action == "SELL" and order_succeeded:
                     buy_trade = get_latest_buy_trade(db_conn, stock_code, market.code)
                     if buy_trade and buy_trade.get("price") is not None:
                         buy_price = float(buy_trade["price"])
@@ -953,7 +1014,9 @@ async def run_daily_session(
                             accuracy=1 if trade_pnl > 0 else 0,
                         )
 
-            # Log trade
+            # Log trade (skip if order was rejected by API)
+            if decision.action in ("BUY", "SELL") and not order_succeeded:
+                continue
             log_trade(
                 conn=db_conn,
                 stock_code=stock_code,
