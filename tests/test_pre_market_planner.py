@@ -164,18 +164,23 @@ class TestGeneratePlaybook:
         assert pb.market_outlook == MarketOutlook.NEUTRAL
 
     @pytest.mark.asyncio
-    async def test_gemini_failure_returns_defensive(self) -> None:
+    async def test_gemini_failure_returns_smart_fallback(self) -> None:
         planner = _make_planner()
         planner._gemini.decide = AsyncMock(side_effect=RuntimeError("API timeout"))
+        # oversold candidate (signal="oversold", rsi=28.5)
         candidates = [_candidate()]
 
         pb = await planner.generate_playbook("KR", candidates, today=date(2026, 2, 8))
 
         assert pb.default_action == ScenarioAction.HOLD
-        assert pb.market_outlook == MarketOutlook.NEUTRAL_TO_BEARISH
+        # Smart fallback uses NEUTRAL outlook (not NEUTRAL_TO_BEARISH)
+        assert pb.market_outlook == MarketOutlook.NEUTRAL
         assert pb.stock_count == 1
-        # Defensive playbook has stop-loss scenarios
-        assert pb.stock_playbooks[0].scenarios[0].action == ScenarioAction.SELL
+        # Oversold candidate → first scenario is BUY, second is SELL stop-loss
+        scenarios = pb.stock_playbooks[0].scenarios
+        assert scenarios[0].action == ScenarioAction.BUY
+        assert scenarios[0].condition.rsi_below == 30
+        assert scenarios[1].action == ScenarioAction.SELL
 
     @pytest.mark.asyncio
     async def test_gemini_failure_empty_when_defensive_disabled(self) -> None:
@@ -657,3 +662,171 @@ class TestDefensivePlaybook:
         assert pb.stock_count == 0
         assert pb.market == "US"
         assert pb.market_outlook == MarketOutlook.NEUTRAL
+
+
+# ---------------------------------------------------------------------------
+# Smart fallback playbook
+# ---------------------------------------------------------------------------
+
+
+class TestSmartFallbackPlaybook:
+    """Tests for _smart_fallback_playbook — rule-based BUY/SELL on Gemini failure."""
+
+    def _make_settings(self) -> Settings:
+        return Settings(
+            KIS_APP_KEY="test",
+            KIS_APP_SECRET="test",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="test",
+            RSI_OVERSOLD_THRESHOLD=30,
+            VOL_MULTIPLIER=2.0,
+        )
+
+    def test_momentum_candidate_gets_buy_on_volume(self) -> None:
+        candidates = [
+            _candidate(code="CHOW", signal="momentum", volume_ratio=13.64, rsi=100.0)
+        ]
+        settings = self._make_settings()
+
+        pb = PreMarketPlanner._smart_fallback_playbook(
+            date(2026, 2, 17), "US_AMEX", candidates, settings
+        )
+
+        assert pb.stock_count == 1
+        sp = pb.stock_playbooks[0]
+        assert sp.stock_code == "CHOW"
+        # First scenario: BUY with volume_ratio_above
+        buy_sc = sp.scenarios[0]
+        assert buy_sc.action == ScenarioAction.BUY
+        assert buy_sc.condition.volume_ratio_above == 2.0
+        assert buy_sc.condition.rsi_below is None
+        assert buy_sc.confidence == 80
+        # Second scenario: stop-loss SELL
+        sell_sc = sp.scenarios[1]
+        assert sell_sc.action == ScenarioAction.SELL
+        assert sell_sc.condition.price_change_pct_below == -3.0
+
+    def test_oversold_candidate_gets_buy_on_rsi(self) -> None:
+        candidates = [
+            _candidate(code="005930", signal="oversold", rsi=22.0, volume_ratio=3.5)
+        ]
+        settings = self._make_settings()
+
+        pb = PreMarketPlanner._smart_fallback_playbook(
+            date(2026, 2, 17), "KR", candidates, settings
+        )
+
+        sp = pb.stock_playbooks[0]
+        buy_sc = sp.scenarios[0]
+        assert buy_sc.action == ScenarioAction.BUY
+        assert buy_sc.condition.rsi_below == 30
+        assert buy_sc.condition.volume_ratio_above is None
+
+    def test_all_candidates_have_stop_loss_sell(self) -> None:
+        candidates = [
+            _candidate(code="AAA", signal="momentum", volume_ratio=5.0),
+            _candidate(code="BBB", signal="oversold", rsi=25.0),
+        ]
+        settings = self._make_settings()
+
+        pb = PreMarketPlanner._smart_fallback_playbook(
+            date(2026, 2, 17), "US_NASDAQ", candidates, settings
+        )
+
+        assert pb.stock_count == 2
+        for sp in pb.stock_playbooks:
+            sell_scenarios = [s for s in sp.scenarios if s.action == ScenarioAction.SELL]
+            assert len(sell_scenarios) == 1
+            assert sell_scenarios[0].condition.price_change_pct_below == -3.0
+            assert sell_scenarios[0].condition.price_change_pct_below == -3.0
+
+    def test_market_outlook_is_neutral(self) -> None:
+        candidates = [_candidate(signal="momentum", volume_ratio=5.0)]
+        settings = self._make_settings()
+
+        pb = PreMarketPlanner._smart_fallback_playbook(
+            date(2026, 2, 17), "US_AMEX", candidates, settings
+        )
+
+        assert pb.market_outlook == MarketOutlook.NEUTRAL
+
+    def test_default_action_is_hold(self) -> None:
+        candidates = [_candidate(signal="momentum", volume_ratio=5.0)]
+        settings = self._make_settings()
+
+        pb = PreMarketPlanner._smart_fallback_playbook(
+            date(2026, 2, 17), "US_AMEX", candidates, settings
+        )
+
+        assert pb.default_action == ScenarioAction.HOLD
+
+    def test_has_global_reduce_all_rule(self) -> None:
+        candidates = [_candidate(signal="momentum", volume_ratio=5.0)]
+        settings = self._make_settings()
+
+        pb = PreMarketPlanner._smart_fallback_playbook(
+            date(2026, 2, 17), "US_AMEX", candidates, settings
+        )
+
+        assert len(pb.global_rules) == 1
+        rule = pb.global_rules[0]
+        assert rule.action == ScenarioAction.REDUCE_ALL
+        assert "portfolio_pnl_pct" in rule.condition
+
+    def test_empty_candidates_returns_empty_playbook(self) -> None:
+        settings = self._make_settings()
+
+        pb = PreMarketPlanner._smart_fallback_playbook(
+            date(2026, 2, 17), "US_AMEX", [], settings
+        )
+
+        assert pb.stock_count == 0
+
+    def test_vol_multiplier_applied_from_settings(self) -> None:
+        """VOL_MULTIPLIER=3.0 should set volume_ratio_above=3.0 for momentum."""
+        candidates = [_candidate(signal="momentum", volume_ratio=5.0)]
+        settings = self._make_settings()
+        settings = settings.model_copy(update={"VOL_MULTIPLIER": 3.0})
+
+        pb = PreMarketPlanner._smart_fallback_playbook(
+            date(2026, 2, 17), "US_AMEX", candidates, settings
+        )
+
+        buy_sc = pb.stock_playbooks[0].scenarios[0]
+        assert buy_sc.condition.volume_ratio_above == 3.0
+
+    def test_rsi_oversold_threshold_applied_from_settings(self) -> None:
+        """RSI_OVERSOLD_THRESHOLD=25 should set rsi_below=25 for oversold."""
+        candidates = [_candidate(signal="oversold", rsi=22.0)]
+        settings = self._make_settings()
+        settings = settings.model_copy(update={"RSI_OVERSOLD_THRESHOLD": 25})
+
+        pb = PreMarketPlanner._smart_fallback_playbook(
+            date(2026, 2, 17), "KR", candidates, settings
+        )
+
+        buy_sc = pb.stock_playbooks[0].scenarios[0]
+        assert buy_sc.condition.rsi_below == 25
+
+    @pytest.mark.asyncio
+    async def test_generate_playbook_uses_smart_fallback_on_gemini_error(self) -> None:
+        """generate_playbook() should use smart fallback (not defensive) on API failure."""
+        planner = _make_planner()
+        planner._gemini.decide = AsyncMock(side_effect=ConnectionError("429 quota exceeded"))
+        # momentum candidate
+        candidates = [
+            _candidate(code="CHOW", signal="momentum", volume_ratio=13.64, rsi=100.0)
+        ]
+
+        pb = await planner.generate_playbook(
+            "US_AMEX", candidates, today=date(2026, 2, 18)
+        )
+
+        # Should NOT be all-SELL defensive; should have BUY for momentum
+        assert pb.stock_count == 1
+        buy_scenarios = [
+            s for s in pb.stock_playbooks[0].scenarios
+            if s.action == ScenarioAction.BUY
+        ]
+        assert len(buy_scenarios) == 1
+        assert buy_scenarios[0].condition.volume_ratio_above == 2.0  # VOL_MULTIPLIER default
