@@ -1,7 +1,8 @@
 """Pre-market planner — generates DayPlaybook via Gemini before market open.
 
 One Gemini API call per market per day. Candidates come from SmartVolatilityScanner.
-On failure, returns a defensive playbook (all HOLD, no trades).
+On failure, returns a smart rule-based fallback playbook that uses scanner signals
+(momentum/oversold) to generate BUY conditions, avoiding the all-HOLD problem.
 """
 
 from __future__ import annotations
@@ -134,7 +135,7 @@ class PreMarketPlanner:
         except Exception:
             logger.exception("Playbook generation failed for %s", market)
             if self._settings.DEFENSIVE_PLAYBOOK_ON_FAILURE:
-                return self._defensive_playbook(today, market, candidates)
+                return self._smart_fallback_playbook(today, market, candidates, self._settings)
             return self._empty_playbook(today, market)
 
     def build_cross_market_context(
@@ -460,6 +461,102 @@ class PreMarketPlanner:
             date=today,
             market=market,
             market_outlook=MarketOutlook.NEUTRAL_TO_BEARISH,
+            default_action=ScenarioAction.HOLD,
+            stock_playbooks=stock_playbooks,
+            global_rules=[
+                GlobalRule(
+                    condition="portfolio_pnl_pct < -2.0",
+                    action=ScenarioAction.REDUCE_ALL,
+                    rationale="Defensive: reduce on loss threshold",
+                ),
+            ],
+        )
+
+    @staticmethod
+    def _smart_fallback_playbook(
+        today: date,
+        market: str,
+        candidates: list[ScanCandidate],
+        settings: Settings,
+    ) -> DayPlaybook:
+        """Rule-based fallback playbook when Gemini is unavailable.
+
+        Uses scanner signals (RSI, volume_ratio) to generate meaningful BUY
+        conditions instead of the all-SELL defensive playbook.  Candidates are
+        already pre-qualified by SmartVolatilityScanner, so we trust their
+        signals and build actionable scenarios from them.
+
+        Scenario logic per candidate:
+        - momentum signal: BUY when volume_ratio exceeds scanner threshold
+        - oversold signal: BUY when RSI is below oversold threshold
+        - always: SELL stop-loss at -3.0% as guard
+        """
+        stock_playbooks = []
+        for c in candidates:
+            scenarios: list[StockScenario] = []
+
+            if c.signal == "momentum":
+                scenarios.append(
+                    StockScenario(
+                        condition=StockCondition(
+                            volume_ratio_above=settings.VOL_MULTIPLIER,
+                        ),
+                        action=ScenarioAction.BUY,
+                        confidence=80,
+                        allocation_pct=10.0,
+                        stop_loss_pct=-3.0,
+                        take_profit_pct=5.0,
+                        rationale=(
+                            f"Rule-based BUY: momentum signal, "
+                            f"volume={c.volume_ratio:.1f}x (fallback planner)"
+                        ),
+                    )
+                )
+            elif c.signal == "oversold":
+                scenarios.append(
+                    StockScenario(
+                        condition=StockCondition(
+                            rsi_below=settings.RSI_OVERSOLD_THRESHOLD,
+                        ),
+                        action=ScenarioAction.BUY,
+                        confidence=80,
+                        allocation_pct=10.0,
+                        stop_loss_pct=-3.0,
+                        take_profit_pct=5.0,
+                        rationale=(
+                            f"Rule-based BUY: oversold signal, "
+                            f"RSI={c.rsi:.0f} (fallback planner)"
+                        ),
+                    )
+                )
+
+            # Always add stop-loss guard
+            scenarios.append(
+                StockScenario(
+                    condition=StockCondition(price_change_pct_below=-3.0),
+                    action=ScenarioAction.SELL,
+                    confidence=90,
+                    stop_loss_pct=-3.0,
+                    rationale="Rule-based stop-loss (fallback planner)",
+                )
+            )
+
+            stock_playbooks.append(
+                StockPlaybook(
+                    stock_code=c.stock_code,
+                    scenarios=scenarios,
+                )
+            )
+
+        logger.info(
+            "Smart fallback playbook for %s: %d stocks with rule-based BUY/SELL conditions",
+            market,
+            len(stock_playbooks),
+        )
+        return DayPlaybook(
+            date=today,
+            market=market,
+            market_outlook=MarketOutlook.NEUTRAL,
             default_action=ScenarioAction.HOLD,
             stock_playbooks=stock_playbooks,
             global_rules=[

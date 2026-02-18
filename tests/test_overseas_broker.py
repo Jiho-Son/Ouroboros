@@ -8,7 +8,7 @@ import aiohttp
 import pytest
 
 from src.broker.kis_api import KISBroker
-from src.broker.overseas import OverseasBroker, _RANKING_EXCHANGE_MAP
+from src.broker.overseas import OverseasBroker, _PRICE_EXCHANGE_MAP, _RANKING_EXCHANGE_MAP
 from src.config import Settings
 
 
@@ -302,7 +302,8 @@ class TestGetOverseasPrice:
 
         call_args = mock_session.get.call_args
         params = call_args[1]["params"]
-        assert params["EXCD"] == "NASD"
+        # NASD is mapped to NAS for the price inquiry API (same as ranking API).
+        assert params["EXCD"] == "NAS"
         assert params["SYMB"] == "AAPL"
 
     @pytest.mark.asyncio
@@ -519,3 +520,98 @@ class TestExtractRankingRows:
     def test_filters_non_dict_rows(self, overseas_broker: OverseasBroker) -> None:
         data = {"output": [{"a": 1}, "invalid", {"b": 2}]}
         assert overseas_broker._extract_ranking_rows(data) == [{"a": 1}, {"b": 2}]
+
+
+# ---------------------------------------------------------------------------
+# Price exchange code mapping
+# ---------------------------------------------------------------------------
+
+
+class TestPriceExchangeMap:
+    """Test that get_overseas_price uses the short exchange codes."""
+
+    def test_price_map_equals_ranking_map(self) -> None:
+        assert _PRICE_EXCHANGE_MAP is _RANKING_EXCHANGE_MAP
+
+    def test_nasd_maps_to_nas(self) -> None:
+        assert _PRICE_EXCHANGE_MAP["NASD"] == "NAS"
+
+    def test_amex_maps_to_ams(self) -> None:
+        assert _PRICE_EXCHANGE_MAP["AMEX"] == "AMS"
+
+    def test_nyse_maps_to_nys(self) -> None:
+        assert _PRICE_EXCHANGE_MAP["NYSE"] == "NYS"
+
+    @pytest.mark.asyncio
+    async def test_get_overseas_price_uses_mapped_excd(
+        self, overseas_broker: OverseasBroker
+    ) -> None:
+        """AMEX should be sent as AMS to the price API."""
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"output": {"last": "44.30"}})
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
+        _setup_broker_mocks(overseas_broker, mock_session)
+        overseas_broker._broker._auth_headers = AsyncMock(return_value={})
+
+        await overseas_broker.get_overseas_price("AMEX", "EWUS")
+
+        params = mock_session.get.call_args[1]["params"]
+        assert params["EXCD"] == "AMS"  # mapped, not raw "AMEX"
+        assert params["SYMB"] == "EWUS"
+
+    @pytest.mark.asyncio
+    async def test_get_overseas_price_nasd_uses_nas(
+        self, overseas_broker: OverseasBroker
+    ) -> None:
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"output": {"last": "220.00"}})
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
+        _setup_broker_mocks(overseas_broker, mock_session)
+        overseas_broker._broker._auth_headers = AsyncMock(return_value={})
+
+        await overseas_broker.get_overseas_price("NASD", "AAPL")
+
+        params = mock_session.get.call_args[1]["params"]
+        assert params["EXCD"] == "NAS"
+
+
+# ---------------------------------------------------------------------------
+# PAPER_OVERSEAS_CASH config default
+# ---------------------------------------------------------------------------
+
+
+class TestPaperOverseasCash:
+    def test_default_value(self) -> None:
+        settings = Settings(
+            KIS_APP_KEY="x",
+            KIS_APP_SECRET="x",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="x",
+        )
+        assert settings.PAPER_OVERSEAS_CASH == 50000.0
+
+    def test_can_be_set_via_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PAPER_OVERSEAS_CASH", "100000.0")
+        settings = Settings(
+            KIS_APP_KEY="x",
+            KIS_APP_SECRET="x",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="x",
+        )
+        assert settings.PAPER_OVERSEAS_CASH == 100000.0
+
+    def test_zero_disables_fallback(self) -> None:
+        settings = Settings(
+            KIS_APP_KEY="x",
+            KIS_APP_SECRET="x",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="x",
+            PAPER_OVERSEAS_CASH=0.0,
+        )
+        assert settings.PAPER_OVERSEAS_CASH == 0.0
