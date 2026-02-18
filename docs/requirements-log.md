@@ -201,3 +201,68 @@
 - `tests/test_brain.py`: 3개 테스트 추가 (override 전달, optimization 우회, 미지정 시 기존 동작 유지)
 
 **이슈/PR:** #143
+
+### 미국장 거래 미실행 근본 원인 분석 및 수정 (자율 실행 세션)
+
+**배경:**
+- 사용자 요청: "미국장 열면 프로그램 돌려서 거래 한 번도 못 한 거 꼭 원인 찾아서 해결해줘"
+- 프로그램을 미국장 개장(9:30 AM EST) 전부터 실행하여 실시간 로그를 분석
+
+**발견된 근본 원인 #1: Defensive Playbook — BUY 조건 없음**
+
+- Gemini free tier (20 RPD) 소진 → `generate_playbook()` 실패 → `_defensive_playbook()` 폴백
+- Defensive playbook은 `price_change_pct_below: -3.0 → SELL` 조건만 존재, BUY 조건 없음
+- ScenarioEngine이 항상 HOLD 반환 → 거래 0건
+
+**수정 #1 (PR #146, Issue #145):**
+- `src/strategy/pre_market_planner.py`: `_smart_fallback_playbook()` 메서드 추가
+  - 스캐너 signal 기반 BUY 조건 생성: `momentum → volume_ratio_above`, `oversold → rsi_below`
+  - 기존 defensive stop-loss SELL 조건 유지
+- Gemini 실패 시 defensive → smart fallback으로 전환
+- 테스트 10개 추가
+
+**발견된 근본 원인 #2: 가격 API 거래소 코드 불일치 + VTS 잔고 API 오류**
+
+실제 로그:
+```
+Scenario matched for MRNX: BUY (confidence=80)  ✓
+Decision for EWUS (NYSE American): BUY (confidence=80)  ✓
+Skip BUY APLZ (NYSE American): no affordable quantity (cash=0.00, price=0.00)  ✗
+```
+
+- `get_overseas_price()`: `NASD`/`NYSE`/`AMEX` 전송 → API가 `NAS`/`NYS`/`AMS` 기대 → 빈 응답 → `price=0`
+- `VTTS3012R` 잔고 API: "ERROR : INPUT INVALID_CHECK_ACNO" → `total_cash=0`
+- 결과: `_determine_order_quantity()` 가 0 반환 → 주문 건너뜀
+
+**수정 #2 (PR #148, Issue #147):**
+- `src/broker/overseas.py`: `_PRICE_EXCHANGE_MAP = _RANKING_EXCHANGE_MAP` 추가, 가격 API에 매핑 적용
+- `src/config.py`: `PAPER_OVERSEAS_CASH: float = Field(default=50000.0)` — paper 모드 시뮬레이션 잔고
+- `src/main.py`: 잔고 0일 때 PAPER_OVERSEAS_CASH 폴백, 가격 0일 때 candidate.price 폴백
+- 테스트 8개 추가
+
+**효과:**
+- BUY 결정 → 실제 주문 전송까지의 파이프라인이 완전히 동작
+- Paper 모드에서 KIS VTS 해외 잔고 API 오류에 관계없이 시뮬레이션 거래 가능
+
+**이슈/PR:** #145, #146, #147, #148
+
+### 해외주식 시장가 주문 거부 수정 (Fix #3, 연속 발견)
+
+**배경:**
+- Fix #147 적용 후 주문 전송 시작 → KIS VTS가 거부: "지정가만 가능한 상품입니다"
+
+**근본 원인:**
+- `trading_cycle()`, `run_daily_session()` 양쪽에서 `send_overseas_order(price=0.0)` 하드코딩
+- `price=0` → `ORD_DVSN="01"` (시장가) 전송 → KIS VTS 거부
+- Fix #147에서 이미 `current_price`를 올바르게 계산했으나 주문 시 미사용
+
+**구현 결과:**
+- `src/main.py`: 두 곳에서 `price=0.0` → `price=current_price`/`price=stock_data["current_price"]`
+- `tests/test_main.py`: 회귀 테스트 `test_overseas_buy_order_uses_limit_price` 추가
+
+**최종 확인 로그:**
+```
+Order result: 모의투자 매수주문이 완료 되었습니다.  ✓
+```
+
+**이슈/PR:** #149, #150
