@@ -302,8 +302,7 @@ class TestGetOverseasPrice:
 
         call_args = mock_session.get.call_args
         params = call_args[1]["params"]
-        # NASD is mapped to NAS for the price inquiry API (same as ranking API).
-        assert params["EXCD"] == "NAS"
+        assert params["EXCD"] == "NAS"  # NASD → NAS via _PRICE_EXCHANGE_MAP
         assert params["SYMB"] == "AAPL"
 
     @pytest.mark.asyncio
@@ -522,58 +521,32 @@ class TestExtractRankingRows:
         assert overseas_broker._extract_ranking_rows(data) == [{"a": 1}, {"b": 2}]
 
 
-# ---------------------------------------------------------------------------
-# Price exchange code mapping
-# ---------------------------------------------------------------------------
-
-
 class TestPriceExchangeMap:
-    """Test that get_overseas_price uses the short exchange codes."""
+    """Test _PRICE_EXCHANGE_MAP is applied in get_overseas_price (issue #151)."""
 
     def test_price_map_equals_ranking_map(self) -> None:
         assert _PRICE_EXCHANGE_MAP is _RANKING_EXCHANGE_MAP
 
-    def test_nasd_maps_to_nas(self) -> None:
-        assert _PRICE_EXCHANGE_MAP["NASD"] == "NAS"
-
-    def test_amex_maps_to_ams(self) -> None:
-        assert _PRICE_EXCHANGE_MAP["AMEX"] == "AMS"
-
-    def test_nyse_maps_to_nys(self) -> None:
-        assert _PRICE_EXCHANGE_MAP["NYSE"] == "NYS"
+    @pytest.mark.parametrize("original,expected", [
+        ("NASD", "NAS"),
+        ("NYSE", "NYS"),
+        ("AMEX", "AMS"),
+    ])
+    def test_us_exchange_code_mapping(self, original: str, expected: str) -> None:
+        assert _PRICE_EXCHANGE_MAP[original] == expected
 
     @pytest.mark.asyncio
-    async def test_get_overseas_price_uses_mapped_excd(
+    async def test_get_overseas_price_sends_mapped_code(
         self, overseas_broker: OverseasBroker
     ) -> None:
-        """AMEX should be sent as AMS to the price API."""
+        """NASD → NAS must be sent to HHDFS00000300."""
         mock_resp = AsyncMock()
         mock_resp.status = 200
-        mock_resp.json = AsyncMock(return_value={"output": {"last": "44.30"}})
+        mock_resp.json = AsyncMock(return_value={"output": {"last": "200.00"}})
 
         mock_session = MagicMock()
         mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
         _setup_broker_mocks(overseas_broker, mock_session)
-        overseas_broker._broker._auth_headers = AsyncMock(return_value={})
-
-        await overseas_broker.get_overseas_price("AMEX", "EWUS")
-
-        params = mock_session.get.call_args[1]["params"]
-        assert params["EXCD"] == "AMS"  # mapped, not raw "AMEX"
-        assert params["SYMB"] == "EWUS"
-
-    @pytest.mark.asyncio
-    async def test_get_overseas_price_nasd_uses_nas(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
-        mock_resp = AsyncMock()
-        mock_resp.status = 200
-        mock_resp.json = AsyncMock(return_value={"output": {"last": "220.00"}})
-
-        mock_session = MagicMock()
-        mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
-        _setup_broker_mocks(overseas_broker, mock_session)
-        overseas_broker._broker._auth_headers = AsyncMock(return_value={})
 
         await overseas_broker.get_overseas_price("NASD", "AAPL")
 
@@ -581,37 +554,90 @@ class TestPriceExchangeMap:
         assert params["EXCD"] == "NAS"
 
 
-# ---------------------------------------------------------------------------
-# PAPER_OVERSEAS_CASH config default
-# ---------------------------------------------------------------------------
+class TestOrderRtCdCheck:
+    """Test that send_overseas_order checks rt_cd and logs accordingly (issue #151)."""
+
+    @pytest.fixture
+    def overseas_broker(self, mock_settings: Settings) -> OverseasBroker:
+        broker = MagicMock(spec=KISBroker)
+        broker._settings = mock_settings
+        broker._account_no = "12345678"
+        broker._product_cd = "01"
+        broker._base_url = "https://openapivts.koreainvestment.com:9443"
+        broker._rate_limiter = AsyncMock()
+        broker._rate_limiter.acquire = AsyncMock()
+        broker._auth_headers = AsyncMock(return_value={"authorization": "Bearer t"})
+        broker._get_hash_key = AsyncMock(return_value="hashval")
+        return OverseasBroker(broker)
+
+    @pytest.mark.asyncio
+    async def test_success_rt_cd_returns_data(
+        self, overseas_broker: OverseasBroker
+    ) -> None:
+        """rt_cd='0' → order accepted, data returned."""
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"rt_cd": "0", "msg1": "완료"})
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=_make_async_cm(mock_resp))
+        overseas_broker._broker._get_session = MagicMock(return_value=mock_session)
+
+        result = await overseas_broker.send_overseas_order("NASD", "AAPL", "BUY", 10, price=150.0)
+        assert result["rt_cd"] == "0"
+
+    @pytest.mark.asyncio
+    async def test_error_rt_cd_returns_data_with_msg(
+        self, overseas_broker: OverseasBroker
+    ) -> None:
+        """rt_cd != '0' → order rejected, data still returned (caller checks rt_cd)."""
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={"rt_cd": "1", "msg1": "주문가능금액이 부족합니다."}
+        )
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=_make_async_cm(mock_resp))
+        overseas_broker._broker._get_session = MagicMock(return_value=mock_session)
+
+        result = await overseas_broker.send_overseas_order("NASD", "AAPL", "BUY", 10, price=150.0)
+        assert result["rt_cd"] == "1"
+        assert "부족" in result["msg1"]
 
 
 class TestPaperOverseasCash:
+    """Test PAPER_OVERSEAS_CASH config setting (issue #151)."""
+
     def test_default_value(self) -> None:
         settings = Settings(
-            KIS_APP_KEY="x",
-            KIS_APP_SECRET="x",
+            KIS_APP_KEY="k",
+            KIS_APP_SECRET="s",
             KIS_ACCOUNT_NO="12345678-01",
-            GEMINI_API_KEY="x",
+            GEMINI_API_KEY="g",
         )
         assert settings.PAPER_OVERSEAS_CASH == 50000.0
 
-    def test_can_be_set_via_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("PAPER_OVERSEAS_CASH", "100000.0")
+    def test_env_override(self) -> None:
+        import os
+        os.environ["PAPER_OVERSEAS_CASH"] = "25000"
         settings = Settings(
-            KIS_APP_KEY="x",
-            KIS_APP_SECRET="x",
+            KIS_APP_KEY="k",
+            KIS_APP_SECRET="s",
             KIS_ACCOUNT_NO="12345678-01",
-            GEMINI_API_KEY="x",
+            GEMINI_API_KEY="g",
         )
-        assert settings.PAPER_OVERSEAS_CASH == 100000.0
+        assert settings.PAPER_OVERSEAS_CASH == 25000.0
+        del os.environ["PAPER_OVERSEAS_CASH"]
 
     def test_zero_disables_fallback(self) -> None:
+        import os
+        os.environ["PAPER_OVERSEAS_CASH"] = "0"
         settings = Settings(
-            KIS_APP_KEY="x",
-            KIS_APP_SECRET="x",
+            KIS_APP_KEY="k",
+            KIS_APP_SECRET="s",
             KIS_ACCOUNT_NO="12345678-01",
-            GEMINI_API_KEY="x",
-            PAPER_OVERSEAS_CASH=0.0,
+            GEMINI_API_KEY="g",
         )
         assert settings.PAPER_OVERSEAS_CASH == 0.0
+        del os.environ["PAPER_OVERSEAS_CASH"]

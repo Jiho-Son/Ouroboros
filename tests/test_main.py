@@ -805,13 +805,14 @@ class TestOverseasBalanceParsing:
                 scan_candidates={},
             )
 
-        # Verify limit order was sent with actual price, not 0.0
+        # Verify limit order was sent with actual price + 0.5% premium (issue #151), not 0.0
         mock_overseas_broker_with_buy_scenario.send_overseas_order.assert_called_once()
         call_kwargs = mock_overseas_broker_with_buy_scenario.send_overseas_order.call_args
         sent_price = call_kwargs[1].get("price") or call_kwargs[0][4]
-        assert sent_price == 182.5, (
-            f"Expected limit price 182.5 but got {sent_price}. "
-            "KIS VTS only accepts limit orders for overseas paper trading."
+        expected_price = round(182.5 * 1.005, 4)  # 0.5% premium for BUY limit orders
+        assert sent_price == expected_price, (
+            f"Expected limit price {expected_price} (182.5 * 1.005) but got {sent_price}. "
+            "KIS VTS only accepts limit orders; BUY uses 0.5% premium to improve fill rate."
         )
 
 

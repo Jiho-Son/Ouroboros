@@ -257,14 +257,27 @@ class OverseasBroker:
                         f"send_overseas_order failed ({resp.status}): {text}"
                     )
                 data = await resp.json()
-                logger.info(
-                    "Overseas order submitted",
-                    extra={
-                        "exchange": exchange_code,
-                        "stock_code": stock_code,
-                        "action": order_type,
-                    },
-                )
+                rt_cd = data.get("rt_cd", "")
+                msg1 = data.get("msg1", "")
+                if rt_cd == "0":
+                    logger.info(
+                        "Overseas order submitted",
+                        extra={
+                            "exchange": exchange_code,
+                            "stock_code": stock_code,
+                            "action": order_type,
+                        },
+                    )
+                else:
+                    logger.warning(
+                        "Overseas order rejected (rt_cd=%s): %s [%s %s %s qty=%d]",
+                        rt_cd,
+                        msg1,
+                        order_type,
+                        stock_code,
+                        exchange_code,
+                        quantity,
+                    )
                 return data
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(
