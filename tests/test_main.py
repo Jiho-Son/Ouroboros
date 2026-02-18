@@ -738,6 +738,82 @@ class TestOverseasBalanceParsing:
         # Verify price API was called
         mock_overseas_broker_with_empty_price.get_overseas_price.assert_called_once()
 
+    @pytest.fixture
+    def mock_overseas_broker_with_buy_scenario(self) -> MagicMock:
+        """Create mock overseas broker that returns a valid price for BUY orders."""
+        broker = MagicMock()
+        broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "182.50"}}
+        )
+        broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output2": [
+                    {
+                        "frcr_evlu_tota": "100000.00",
+                        "frcr_dncl_amt_2": "50000.00",
+                        "frcr_buy_amt_smtl": "50000.00",
+                    }
+                ]
+            }
+        )
+        broker.send_overseas_order = AsyncMock(return_value={"msg1": "주문접수"})
+        return broker
+
+    @pytest.fixture
+    def mock_scenario_engine_buy(self) -> MagicMock:
+        """Create mock scenario engine that returns BUY."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_buy_match("AAPL"))
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_overseas_buy_order_uses_limit_price(
+        self,
+        mock_domestic_broker: MagicMock,
+        mock_overseas_broker_with_buy_scenario: MagicMock,
+        mock_scenario_engine_buy: MagicMock,
+        mock_playbook: DayPlaybook,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """Overseas BUY order must use current_price (limit), not 0 (market).
+
+        KIS VTS rejects market orders for overseas paper trading.
+        Regression test for issue #149.
+        """
+        mock_telegram.notify_trade_execution = AsyncMock()
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_domestic_broker,
+                overseas_broker=mock_overseas_broker_with_buy_scenario,
+                scenario_engine=mock_scenario_engine_buy,
+                playbook=mock_playbook,
+                risk=mock_risk,
+                db_conn=mock_db,
+                decision_logger=mock_decision_logger,
+                context_store=mock_context_store,
+                criticality_assessor=mock_criticality_assessor,
+                telegram=mock_telegram,
+                market=mock_overseas_market,
+                stock_code="AAPL",
+                scan_candidates={},
+            )
+
+        # Verify limit order was sent with actual price, not 0.0
+        mock_overseas_broker_with_buy_scenario.send_overseas_order.assert_called_once()
+        call_kwargs = mock_overseas_broker_with_buy_scenario.send_overseas_order.call_args
+        sent_price = call_kwargs[1].get("price") or call_kwargs[0][4]
+        assert sent_price == 182.5, (
+            f"Expected limit price 182.5 but got {sent_price}. "
+            "KIS VTS only accepts limit orders for overseas paper trading."
+        )
+
 
 class TestScenarioEngineIntegration:
     """Test scenario engine integration in trading_cycle."""

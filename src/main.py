@@ -510,7 +510,7 @@ async def trading_cycle(
                 stock_code=stock_code,
                 order_type=decision.action,
                 quantity=quantity,
-                price=0.0,  # market order
+                price=current_price,  # limit order — KIS VTS rejects market orders
             )
         logger.info("Order result: %s", result.get("msg1", "OK"))
 
@@ -919,7 +919,7 @@ async def run_daily_session(
                             stock_code=stock_code,
                             order_type=decision.action,
                             quantity=quantity,
-                            price=0.0,  # market order
+                            price=stock_data["current_price"],  # limit order — KIS VTS rejects market orders
                         )
                     logger.info("Order result: %s", result.get("msg1", "OK"))
 
