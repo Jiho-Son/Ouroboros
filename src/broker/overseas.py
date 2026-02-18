@@ -25,6 +25,10 @@ _RANKING_EXCHANGE_MAP: dict[str, str] = {
     "TSE": "TSE",
 }
 
+# Price inquiry API (HHDFS00000300) uses the same short exchange codes as rankings.
+# NASD → NAS, NYSE → NYS, AMEX → AMS (confirmed: AMEX returns empty, AMS returns price).
+_PRICE_EXCHANGE_MAP: dict[str, str] = _RANKING_EXCHANGE_MAP
+
 
 class OverseasBroker:
     """KIS Overseas Stock API wrapper that reuses KISBroker infrastructure."""
@@ -58,9 +62,11 @@ class OverseasBroker:
         session = self._broker._get_session()
 
         headers = await self._broker._auth_headers("HHDFS00000300")
+        # Map internal exchange codes to the short form expected by the price API.
+        price_excd = _PRICE_EXCHANGE_MAP.get(exchange_code, exchange_code)
         params = {
             "AUTH": "",
-            "EXCD": exchange_code,
+            "EXCD": price_excd,
             "SYMB": stock_code,
         }
         url = f"{self._broker._base_url}/uapi/overseas-price/v1/quotations/price"

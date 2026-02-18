@@ -239,9 +239,32 @@ async def trading_cycle(
         total_cash = safe_float(balance_info.get("frcr_dncl_amt_2", "0") or "0")
         purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
 
+        # VTS (paper trading) overseas balance API often returns 0 or errors.
+        # Fall back to configured paper cash so BUY orders can be sized.
+        if total_cash <= 0 and settings and settings.PAPER_OVERSEAS_CASH > 0:
+            logger.debug(
+                "Overseas cash balance is 0 for %s; using paper fallback %.2f",
+                stock_code,
+                settings.PAPER_OVERSEAS_CASH,
+            )
+            total_cash = settings.PAPER_OVERSEAS_CASH
+
         current_price = safe_float(price_data.get("output", {}).get("last", "0"))
         foreigner_net = 0.0  # Not available for overseas
         price_change_pct = safe_float(price_data.get("output", {}).get("rate", "0"))
+
+        # Price API may return 0/empty for certain VTS exchange codes.
+        # Fall back to the scanner candidate's price so order sizing still works.
+        if current_price <= 0:
+            market_candidates_lookup = scan_candidates.get(market.code, {})
+            cand_lookup = market_candidates_lookup.get(stock_code)
+            if cand_lookup and cand_lookup.price > 0:
+                current_price = cand_lookup.price
+                logger.debug(
+                    "Price API returned 0 for %s; using scanner price %.4f",
+                    stock_code,
+                    current_price,
+                )
 
     # Calculate daily P&L %
     pnl_pct = (
@@ -692,6 +715,16 @@ async def run_daily_session(
                     price_change_pct = safe_float(
                         price_data.get("output", {}).get("rate", "0")
                     )
+                    # Fall back to scanner candidate price if API returns 0.
+                    if current_price <= 0:
+                        cand_lookup = candidate_map.get(stock_code)
+                        if cand_lookup and cand_lookup.price > 0:
+                            current_price = cand_lookup.price
+                            logger.debug(
+                                "Price API returned 0 for %s; using scanner price %.4f",
+                                stock_code,
+                                current_price,
+                            )
 
                 stock_data: dict[str, Any] = {
                     "stock_code": stock_code,
@@ -742,6 +775,10 @@ async def run_daily_session(
             purchase_total = safe_float(
                 balance_info.get("frcr_buy_amt_smtl", "0") or "0"
             )
+
+            # VTS overseas balance API often returns 0; use paper fallback.
+            if total_cash <= 0 and settings.PAPER_OVERSEAS_CASH > 0:
+                total_cash = settings.PAPER_OVERSEAS_CASH
 
         # Calculate daily P&L %
         pnl_pct = (
