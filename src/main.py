@@ -204,7 +204,9 @@ async def trading_cycle(
 
     # 1. Fetch market data
     if market.is_domestic:
-        orderbook = await broker.get_orderbook(stock_code)
+        current_price, price_change_pct, foreigner_net = await broker.get_current_price(
+            stock_code
+        )
         balance_data = await broker.get_balance()
 
         output2 = balance_data.get("output2", [{}])
@@ -215,10 +217,6 @@ async def trading_cycle(
             else "0"
         )
         purchase_total = safe_float(output2[0].get("pchs_amt_smtl_amt", "0")) if output2 else 0
-
-        current_price = safe_float(orderbook.get("output1", {}).get("stck_prpr", "0"))
-        foreigner_net = safe_float(orderbook.get("output1", {}).get("frgn_ntby_qty", "0"))
-        price_change_pct = safe_float(orderbook.get("output1", {}).get("prdy_ctrt", "0"))
     else:
         # Overseas market
         price_data = await overseas_broker.get_overseas_price(
@@ -726,15 +724,8 @@ async def run_daily_session(
         for stock_code in watchlist:
             try:
                 if market.is_domestic:
-                    orderbook = await broker.get_orderbook(stock_code)
-                    current_price = safe_float(
-                        orderbook.get("output1", {}).get("stck_prpr", "0")
-                    )
-                    foreigner_net = safe_float(
-                        orderbook.get("output1", {}).get("frgn_ntby_qty", "0")
-                    )
-                    price_change_pct = safe_float(
-                        orderbook.get("output1", {}).get("prdy_ctrt", "0")
+                    current_price, price_change_pct, foreigner_net = (
+                        await broker.get_current_price(stock_code)
                     )
                 else:
                     price_data = await overseas_broker.get_overseas_price(
