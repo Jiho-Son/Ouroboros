@@ -1,9 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>The Ouroboros Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
       :root {
         --bg: #0b1724;
@@ -11,51 +12,390 @@
         --fg: #e6eef7;
         --muted: #9fb3c8;
         --accent: #3cb371;
+        --red: #e05555;
+        --border: #28455f;
       }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
-        margin: 0;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
         background: radial-gradient(circle at top left, #173b58, var(--bg));
         color: var(--fg);
+        min-height: 100vh;
+        font-size: 13px;
       }
-      .wrap {
-        max-width: 900px;
-        margin: 48px auto;
-        padding: 0 16px;
+      .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px; }
+
+      /* Header */
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border);
       }
+      header h1 { font-size: 18px; color: var(--accent); letter-spacing: 0.5px; }
+      .header-right { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 12px; }
+      .refresh-btn {
+        background: none; border: 1px solid var(--border); color: var(--muted);
+        padding: 4px 10px; border-radius: 6px; cursor: pointer; font-family: inherit;
+        font-size: 12px; transition: border-color 0.2s;
+      }
+      .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+      /* Summary cards */
+      .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+      @media (max-width: 700px) { .cards { grid-template-columns: repeat(2, 1fr); } }
       .card {
-        background: color-mix(in oklab, var(--panel), black 12%);
-        border: 1px solid #28455f;
-        border-radius: 12px;
-        padding: 20px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px;
       }
-      h1 {
-        margin-top: 0;
+      .card-label { color: var(--muted); font-size: 11px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+      .card-value { font-size: 22px; font-weight: 700; }
+      .card-sub { color: var(--muted); font-size: 11px; margin-top: 4px; }
+      .positive { color: var(--accent); }
+      .negative { color: var(--red); }
+      .neutral { color: var(--fg); }
+
+      /* Chart panel */
+      .chart-panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 20px;
       }
-      code {
-        color: var(--accent);
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
       }
-      li {
-        margin: 6px 0;
-        color: var(--muted);
+      .panel-title { font-size: 13px; color: var(--muted); font-weight: 600; }
+      .chart-container { position: relative; height: 180px; }
+      .chart-error { color: var(--muted); text-align: center; padding: 40px 0; font-size: 12px; }
+
+      /* Days selector */
+      .days-selector { display: flex; gap: 4px; }
+      .day-btn {
+        background: none; border: 1px solid var(--border); color: var(--muted);
+        padding: 3px 8px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 11px;
       }
+      .day-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(60, 179, 113, 0.08); }
+
+      /* Decisions panel */
+      .decisions-panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px;
+      }
+      .market-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+      .tab-btn {
+        background: none; border: 1px solid var(--border); color: var(--muted);
+        padding: 4px 10px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 11px;
+      }
+      .tab-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(60, 179, 113, 0.08); }
+      .decisions-table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+      .decisions-table th {
+        text-align: left; color: var(--muted); font-size: 11px; font-weight: 600;
+        padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
+      }
+      .decisions-table td {
+        padding: 8px 8px; border-bottom: 1px solid rgba(40, 69, 95, 0.5);
+        vertical-align: middle; white-space: nowrap;
+      }
+      .decisions-table tr:last-child td { border-bottom: none; }
+      .decisions-table tr:hover td { background: rgba(255,255,255,0.02); }
+      .badge {
+        display: inline-block; padding: 2px 7px; border-radius: 4px;
+        font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+      }
+      .badge-buy { background: rgba(60, 179, 113, 0.15); color: var(--accent); }
+      .badge-sell { background: rgba(224, 85, 85, 0.15); color: var(--red); }
+      .badge-hold { background: rgba(159, 179, 200, 0.12); color: var(--muted); }
+      .conf-bar-wrap { display: flex; align-items: center; gap: 6px; min-width: 90px; }
+      .conf-bar { flex: 1; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
+      .conf-fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.3s; }
+      .conf-val { color: var(--muted); font-size: 11px; min-width: 26px; text-align: right; }
+      .rationale-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+      .empty-row td { text-align: center; color: var(--muted); padding: 24px; }
+
+      /* Spinner */
+      .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <div class="card">
-        <h1>The Ouroboros Dashboard API</h1>
-        <p>Use the following endpoints:</p>
-        <ul>
-          <li><code>/api/status</code></li>
-          <li><code>/api/playbook/{date}?market=KR</code></li>
-          <li><code>/api/scorecard/{date}?market=KR</code></li>
-          <li><code>/api/performance?market=all</code></li>
-          <li><code>/api/context/{layer}</code></li>
-          <li><code>/api/decisions?market=KR</code></li>
-          <li><code>/api/scenarios/active?market=US</code></li>
-        </ul>
+      <!-- Header -->
+      <header>
+        <h1>&#x1F40D; The Ouroboros</h1>
+        <div class="header-right">
+          <span id="last-updated">--</span>
+          <button class="refresh-btn" onclick="refreshAll()">&#x21BA; 새로고침</button>
+        </div>
+      </header>
+
+      <!-- Summary cards -->
+      <div class="cards">
+        <div class="card">
+          <div class="card-label">오늘 거래</div>
+          <div class="card-value neutral" id="card-trades">--</div>
+          <div class="card-sub" id="card-trades-sub">거래 건수</div>
+        </div>
+        <div class="card">
+          <div class="card-label">오늘 P&amp;L</div>
+          <div class="card-value" id="card-pnl">--</div>
+          <div class="card-sub" id="card-pnl-sub">실현 손익</div>
+        </div>
+        <div class="card">
+          <div class="card-label">승률</div>
+          <div class="card-value neutral" id="card-winrate">--</div>
+          <div class="card-sub">전체 누적</div>
+        </div>
+        <div class="card">
+          <div class="card-label">누적 거래</div>
+          <div class="card-value neutral" id="card-total">--</div>
+          <div class="card-sub">전체 기간</div>
+        </div>
+      </div>
+
+      <!-- P&L Chart -->
+      <div class="chart-panel">
+        <div class="panel-header">
+          <span class="panel-title">P&amp;L 추이</span>
+          <div class="days-selector">
+            <button class="day-btn active" data-days="7" onclick="selectDays(this)">7일</button>
+            <button class="day-btn" data-days="30" onclick="selectDays(this)">30일</button>
+            <button class="day-btn" data-days="90" onclick="selectDays(this)">90일</button>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="pnl-chart"></canvas>
+          <div class="chart-error" id="chart-error" style="display:none">데이터 없음</div>
+        </div>
+      </div>
+
+      <!-- Decisions log -->
+      <div class="decisions-panel">
+        <div class="panel-header">
+          <span class="panel-title">최근 결정 로그</span>
+          <div class="market-tabs" id="market-tabs">
+            <button class="tab-btn active" data-market="KR" onclick="selectMarket(this)">KR</button>
+            <button class="tab-btn" data-market="US_NASDAQ" onclick="selectMarket(this)">US_NASDAQ</button>
+            <button class="tab-btn" data-market="US_NYSE" onclick="selectMarket(this)">US_NYSE</button>
+            <button class="tab-btn" data-market="JP" onclick="selectMarket(this)">JP</button>
+            <button class="tab-btn" data-market="HK" onclick="selectMarket(this)">HK</button>
+          </div>
+        </div>
+        <table class="decisions-table">
+          <thead>
+            <tr>
+              <th>시각</th>
+              <th>종목</th>
+              <th>액션</th>
+              <th>신뢰도</th>
+              <th>사유</th>
+            </tr>
+          </thead>
+          <tbody id="decisions-body">
+            <tr class="empty-row"><td colspan="5"><span class="spinner"></span></td></tr>
+          </tbody>
+        </table>
       </div>
     </div>
+
+    <script>
+      let pnlChart = null;
+      let currentDays = 7;
+      let currentMarket = 'KR';
+
+      function fmt(dt) {
+        try {
+          const d = new Date(dt);
+          return d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+        } catch { return dt || '--'; }
+      }
+
+      function fmtPnl(v) {
+        if (v === null || v === undefined) return '--';
+        const n = parseFloat(v);
+        const cls = n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral';
+        const sign = n > 0 ? '+' : '';
+        return `<span class="${cls}">${sign}${n.toFixed(2)}</span>`;
+      }
+
+      function badge(action) {
+        const a = (action || '').toUpperCase();
+        const cls = a === 'BUY' ? 'badge-buy' : a === 'SELL' ? 'badge-sell' : 'badge-hold';
+        return `<span class="badge ${cls}">${a}</span>`;
+      }
+
+      function confBar(conf) {
+        const pct = Math.min(Math.max(conf || 0, 0), 100);
+        return `<div class="conf-bar-wrap">
+          <div class="conf-bar"><div class="conf-fill" style="width:${pct}%"></div></div>
+          <span class="conf-val">${pct}</span>
+        </div>`;
+      }
+
+      async function fetchStatus() {
+        try {
+          const r = await fetch('/api/status');
+          if (!r.ok) return;
+          const d = await r.json();
+          const t = d.totals || {};
+          document.getElementById('card-trades').textContent = t.trade_count ?? '--';
+          const pnlEl = document.getElementById('card-pnl');
+          const pnlV = t.total_pnl;
+          if (pnlV !== undefined) {
+            const n = parseFloat(pnlV);
+            const sign = n > 0 ? '+' : '';
+            pnlEl.textContent = `${sign}${n.toFixed(2)}`;
+            pnlEl.className = `card-value ${n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral'}`;
+          }
+          document.getElementById('card-pnl-sub').textContent = `결정 ${t.decision_count ?? 0}건`;
+        } catch {}
+      }
+
+      async function fetchPerformance() {
+        try {
+          const r = await fetch('/api/performance?market=all');
+          if (!r.ok) return;
+          const d = await r.json();
+          const c = d.combined || {};
+          document.getElementById('card-winrate').textContent = c.win_rate !== undefined ? `${c.win_rate}%` : '--';
+          document.getElementById('card-total').textContent = c.total_trades ?? '--';
+        } catch {}
+      }
+
+      async function fetchPnlHistory(days) {
+        try {
+          const r = await fetch(`/api/pnl/history?days=${days}`);
+          if (!r.ok) throw new Error('fetch failed');
+          const d = await r.json();
+          renderChart(d);
+        } catch {
+          document.getElementById('chart-error').style.display = 'block';
+        }
+      }
+
+      function renderChart(data) {
+        const errEl = document.getElementById('chart-error');
+        if (!data.labels || data.labels.length === 0) {
+          errEl.style.display = 'block';
+          return;
+        }
+        errEl.style.display = 'none';
+
+        const colors = data.pnl.map(v => v >= 0 ? 'rgba(60,179,113,0.75)' : 'rgba(224,85,85,0.75)');
+        const borderColors = data.pnl.map(v => v >= 0 ? '#3cb371' : '#e05555');
+
+        if (pnlChart) { pnlChart.destroy(); pnlChart = null; }
+        const ctx = document.getElementById('pnl-chart').getContext('2d');
+        pnlChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: data.labels,
+            datasets: [{
+              label: 'Daily P&L',
+              data: data.pnl,
+              backgroundColor: colors,
+              borderColor: borderColors,
+              borderWidth: 1,
+              borderRadius: 3,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                callbacks: {
+                  label: ctx => {
+                    const v = ctx.parsed.y;
+                    const sign = v >= 0 ? '+' : '';
+                    const trades = data.trades[ctx.dataIndex];
+                    return [`P&L: ${sign}${v.toFixed(2)}`, `거래: ${trades}건`];
+                  }
+                }
+              }
+            },
+            scales: {
+              x: {
+                ticks: { color: '#9fb3c8', font: { size: 10 }, maxRotation: 0 },
+                grid: { color: 'rgba(40,69,95,0.4)' }
+              },
+              y: {
+                ticks: { color: '#9fb3c8', font: { size: 10 } },
+                grid: { color: 'rgba(40,69,95,0.4)' }
+              }
+            }
+          }
+        });
+      }
+
+      async function fetchDecisions(market) {
+        const tbody = document.getElementById('decisions-body');
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5"><span class="spinner"></span></td></tr>';
+        try {
+          const r = await fetch(`/api/decisions?market=${market}&limit=50`);
+          if (!r.ok) throw new Error('fetch failed');
+          const d = await r.json();
+          if (!d.decisions || d.decisions.length === 0) {
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="5">결정 로그 없음</td></tr>';
+            return;
+          }
+          tbody.innerHTML = d.decisions.map(dec => `
+            <tr>
+              <td>${fmt(dec.timestamp)}</td>
+              <td>${dec.stock_code || '--'}</td>
+              <td>${badge(dec.action)}</td>
+              <td>${confBar(dec.confidence)}</td>
+              <td class="rationale-cell" title="${(dec.rationale || '').replace(/"/g, '&quot;')}">${dec.rationale || '--'}</td>
+            </tr>
+          `).join('');
+        } catch {
+          tbody.innerHTML = '<tr class="empty-row"><td colspan="5">데이터 로드 실패</td></tr>';
+        }
+      }
+
+      function selectDays(btn) {
+        document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentDays = parseInt(btn.dataset.days, 10);
+        fetchPnlHistory(currentDays);
+      }
+
+      function selectMarket(btn) {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentMarket = btn.dataset.market;
+        fetchDecisions(currentMarket);
+      }
+
+      async function refreshAll() {
+        document.getElementById('last-updated').textContent = '업데이트 중...';
+        await Promise.all([
+          fetchStatus(),
+          fetchPerformance(),
+          fetchPnlHistory(currentDays),
+          fetchDecisions(currentMarket),
+        ]);
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+        document.getElementById('last-updated').textContent = `마지막 업데이트: ${timeStr}`;
+      }
+
+      // Initial load
+      refreshAll();
+
+      // Auto-refresh every 30 seconds
+      setInterval(refreshAll, 30000);
+    </script>
   </body>
 </html>
