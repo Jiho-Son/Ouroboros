@@ -20,6 +20,39 @@ _KIS_VTS_HOST = "openapivts.koreainvestment.com"
 logger = logging.getLogger(__name__)
 
 
+def kr_tick_unit(price: float) -> int:
+    """Return KRX tick size for the given price level.
+
+    KRX price tick rules (domestic stocks):
+        price < 2,000        →   1원
+        2,000  ≤ price < 5,000     →   5원
+        5,000  ≤ price < 20,000    →  10원
+        20,000 ≤ price < 50,000    →  50원
+        50,000 ≤ price < 200,000   → 100원
+        200,000 ≤ price < 500,000  → 500원
+        500,000 ≤ price            → 1,000원
+    """
+    if price < 2_000:
+        return 1
+    if price < 5_000:
+        return 5
+    if price < 20_000:
+        return 10
+    if price < 50_000:
+        return 50
+    if price < 200_000:
+        return 100
+    if price < 500_000:
+        return 500
+    return 1_000
+
+
+def kr_round_down(price: float) -> int:
+    """Round *down* price to the nearest KRX tick unit."""
+    tick = kr_tick_unit(price)
+    return int(price // tick * tick)
+
+
 class LeakyBucket:
     """Simple leaky-bucket rate limiter for async code."""
 
@@ -198,6 +231,55 @@ class KISBroker:
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching orderbook: {exc}") from exc
 
+    async def get_current_price(
+        self, stock_code: str
+    ) -> tuple[float, float, float]:
+        """Fetch current price data for a domestic stock.
+
+        Uses the ``inquire-price`` API (FHKST01010100), which works in both
+        real and VTS environments and returns the actual last-traded price.
+
+        Returns:
+            (current_price, prdy_ctrt, frgn_ntby_qty)
+            - current_price: Last traded price in KRW.
+            - prdy_ctrt: Day change rate (%).
+            - frgn_ntby_qty: Foreigner net buy quantity.
+        """
+        await self._rate_limiter.acquire()
+        session = self._get_session()
+
+        headers = await self._auth_headers("FHKST01010100")
+        params = {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_INPUT_ISCD": stock_code,
+        }
+        url = f"{self._base_url}/uapi/domestic-stock/v1/quotations/inquire-price"
+
+        def _f(val: str | None) -> float:
+            try:
+                return float(val or "0")
+            except ValueError:
+                return 0.0
+
+        try:
+            async with session.get(url, headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise ConnectionError(
+                        f"get_current_price failed ({resp.status}): {text}"
+                    )
+                data = await resp.json()
+                out = data.get("output", {})
+                return (
+                    _f(out.get("stck_prpr")),
+                    _f(out.get("prdy_ctrt")),
+                    _f(out.get("frgn_ntby_qty")),
+                )
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise ConnectionError(
+                f"Network error fetching current price: {exc}"
+            ) from exc
+
     async def get_balance(self) -> dict[str, Any]:
         """Fetch current account balance and holdings."""
         await self._rate_limiter.acquire()
@@ -249,13 +331,23 @@ class KISBroker:
         session = self._get_session()
 
         tr_id = "VTTC0802U" if order_type == "BUY" else "VTTC0801U"
+
+        # KRX requires limit orders to be rounded down to the tick unit.
+        # ORD_DVSN: "00"=지정가, "01"=시장가
+        if price > 0:
+            ord_dvsn = "00"  # 지정가
+            ord_price = kr_round_down(price)
+        else:
+            ord_dvsn = "01"  # 시장가
+            ord_price = 0
+
         body = {
             "CANO": self._account_no,
             "ACNT_PRDT_CD": self._product_cd,
             "PDNO": stock_code,
-            "ORD_DVSN": "01" if price > 0 else "06",  # 01=지정가, 06=시장가
+            "ORD_DVSN": ord_dvsn,
             "ORD_QTY": str(quantity),
-            "ORD_UNPR": str(price),
+            "ORD_UNPR": str(ord_price),
         }
 
         hash_key = await self._get_hash_key(body)

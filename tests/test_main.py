@@ -111,15 +111,7 @@ class TestTradingCycleTelegramIntegration:
     def mock_broker(self) -> MagicMock:
         """Create mock broker."""
         broker = MagicMock()
-        broker.get_orderbook = AsyncMock(
-            return_value={
-                "output1": {
-                    "stck_prpr": "50000",
-                    "frgn_ntby_qty": "100",
-                    "prdy_ctrt": "1.23",
-                }
-            }
-        )
+        broker.get_current_price = AsyncMock(return_value=(50000.0, 1.23, 100.0))
         broker.get_balance = AsyncMock(
             return_value={
                 "output2": [
@@ -823,11 +815,7 @@ class TestScenarioEngineIntegration:
     def mock_broker(self) -> MagicMock:
         """Create mock broker with standard domestic data."""
         broker = MagicMock()
-        broker.get_orderbook = AsyncMock(
-            return_value={
-                "output1": {"stck_prpr": "50000", "frgn_ntby_qty": "100", "prdy_ctrt": "2.50"}
-            }
-        )
+        broker.get_current_price = AsyncMock(return_value=(50000.0, 2.50, 100.0))
         broker.get_balance = AsyncMock(
             return_value={
                 "output2": [
@@ -1249,9 +1237,7 @@ async def test_sell_updates_original_buy_decision_outcome() -> None:
     )
 
     broker = MagicMock()
-    broker.get_orderbook = AsyncMock(
-        return_value={"output1": {"stck_prpr": "120", "frgn_ntby_qty": "0"}}
-    )
+    broker.get_current_price = AsyncMock(return_value=(120.0, 0.0, 0.0))
     broker.get_balance = AsyncMock(
         return_value={
             "output2": [
@@ -1341,9 +1327,7 @@ async def test_hold_overridden_to_sell_when_stop_loss_triggered() -> None:
     )
 
     broker = MagicMock()
-    broker.get_orderbook = AsyncMock(
-        return_value={"output1": {"stck_prpr": "95", "frgn_ntby_qty": "0", "prdy_ctrt": "-5.0"}}
-    )
+    broker.get_current_price = AsyncMock(return_value=(95.0, -5.0, 0.0))
     broker.get_balance = AsyncMock(
         return_value={
             "output2": [

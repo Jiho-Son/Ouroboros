@@ -375,3 +375,201 @@ class TestFetchMarketRankings:
         assert result[0]["stock_code"] == "005930"
         assert result[0]["price"] == 75000.0
         assert result[0]["change_rate"] == 2.5
+
+
+# ---------------------------------------------------------------------------
+# KRX tick unit / round-down helpers (issue #157)
+# ---------------------------------------------------------------------------
+
+
+from src.broker.kis_api import kr_tick_unit, kr_round_down  # noqa: E402
+
+
+class TestKrTickUnit:
+    """kr_tick_unit and kr_round_down must implement KRX price tick rules."""
+
+    @pytest.mark.parametrize(
+        "price, expected_tick",
+        [
+            (1999, 1),
+            (2000, 5),
+            (4999, 5),
+            (5000, 10),
+            (19999, 10),
+            (20000, 50),
+            (49999, 50),
+            (50000, 100),
+            (199999, 100),
+            (200000, 500),
+            (499999, 500),
+            (500000, 1000),
+            (1000000, 1000),
+        ],
+    )
+    def test_tick_unit_boundaries(self, price: int, expected_tick: int) -> None:
+        assert kr_tick_unit(price) == expected_tick
+
+    @pytest.mark.parametrize(
+        "price, expected_rounded",
+        [
+            (188150, 188100),   # 100원 단위, 50원 잔여 → 내림
+            (188100, 188100),   # 이미 정렬됨
+            (75050, 75000),     # 100원 단위, 50원 잔여 → 내림
+            (49950, 49950),     # 50원 단위 정렬됨
+            (49960, 49950),     # 50원 단위, 10원 잔여 → 내림
+            (1999, 1999),       # 1원 단위 → 그대로
+            (5003, 5000),       # 10원 단위, 3원 잔여 → 내림
+        ],
+    )
+    def test_round_down_to_tick(self, price: int, expected_rounded: int) -> None:
+        assert kr_round_down(price) == expected_rounded
+
+
+# ---------------------------------------------------------------------------
+# get_current_price (issue #157)
+# ---------------------------------------------------------------------------
+
+
+class TestGetCurrentPrice:
+    """get_current_price must use inquire-price API and return (price, change, foreigner)."""
+
+    @pytest.fixture
+    def broker(self, settings) -> KISBroker:
+        b = KISBroker(settings)
+        b._access_token = "tok"
+        b._token_expires_at = float("inf")
+        b._rate_limiter.acquire = AsyncMock()
+        return b
+
+    @pytest.mark.asyncio
+    async def test_returns_correct_fields(self, broker: KISBroker) -> None:
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={
+                "rt_cd": "0",
+                "output": {
+                    "stck_prpr": "188600",
+                    "prdy_ctrt": "3.97",
+                    "frgn_ntby_qty": "12345",
+                },
+            }
+        )
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp) as mock_get:
+            price, change_pct, foreigner = await broker.get_current_price("005930")
+
+        assert price == 188600.0
+        assert change_pct == 3.97
+        assert foreigner == 12345.0
+
+        call_kwargs = mock_get.call_args
+        url = call_kwargs[0][0] if call_kwargs[0] else call_kwargs[1].get("url", "")
+        headers = call_kwargs[1].get("headers", {})
+        assert "inquire-price" in url
+        assert headers.get("tr_id") == "FHKST01010100"
+
+    @pytest.mark.asyncio
+    async def test_http_error_raises_connection_error(self, broker: KISBroker) -> None:
+        mock_resp = AsyncMock()
+        mock_resp.status = 500
+        mock_resp.text = AsyncMock(return_value="Internal Server Error")
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp):
+            with pytest.raises(ConnectionError, match="get_current_price failed"):
+                await broker.get_current_price("005930")
+
+
+# ---------------------------------------------------------------------------
+# send_order tick rounding and ORD_DVSN (issue #157)
+# ---------------------------------------------------------------------------
+
+
+class TestSendOrderTickRounding:
+    """send_order must apply KRX tick rounding and correct ORD_DVSN codes."""
+
+    @pytest.fixture
+    def broker(self, settings) -> KISBroker:
+        b = KISBroker(settings)
+        b._access_token = "tok"
+        b._token_expires_at = float("inf")
+        b._rate_limiter.acquire = AsyncMock()
+        return b
+
+    @pytest.mark.asyncio
+    async def test_limit_order_rounds_down_to_tick(self, broker: KISBroker) -> None:
+        """Price 188150 (not on 100-won tick) must be rounded to 188100."""
+        mock_hash = AsyncMock()
+        mock_hash.status = 200
+        mock_hash.json = AsyncMock(return_value={"HASH": "h"})
+        mock_hash.__aenter__ = AsyncMock(return_value=mock_hash)
+        mock_hash.__aexit__ = AsyncMock(return_value=False)
+
+        mock_order = AsyncMock()
+        mock_order.status = 200
+        mock_order.json = AsyncMock(return_value={"rt_cd": "0"})
+        mock_order.__aenter__ = AsyncMock(return_value=mock_order)
+        mock_order.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
+        ) as mock_post:
+            await broker.send_order("005930", "BUY", 1, price=188150)
+
+        order_call = mock_post.call_args_list[1]
+        body = order_call[1].get("json", {})
+        assert body["ORD_UNPR"] == "188100"  # rounded down
+        assert body["ORD_DVSN"] == "00"       # 지정가
+
+    @pytest.mark.asyncio
+    async def test_limit_order_ord_dvsn_is_00(self, broker: KISBroker) -> None:
+        """send_order with price>0 must use ORD_DVSN='00' (지정가)."""
+        mock_hash = AsyncMock()
+        mock_hash.status = 200
+        mock_hash.json = AsyncMock(return_value={"HASH": "h"})
+        mock_hash.__aenter__ = AsyncMock(return_value=mock_hash)
+        mock_hash.__aexit__ = AsyncMock(return_value=False)
+
+        mock_order = AsyncMock()
+        mock_order.status = 200
+        mock_order.json = AsyncMock(return_value={"rt_cd": "0"})
+        mock_order.__aenter__ = AsyncMock(return_value=mock_order)
+        mock_order.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
+        ) as mock_post:
+            await broker.send_order("005930", "BUY", 1, price=50000)
+
+        order_call = mock_post.call_args_list[1]
+        body = order_call[1].get("json", {})
+        assert body["ORD_DVSN"] == "00"
+
+    @pytest.mark.asyncio
+    async def test_market_order_ord_dvsn_is_01(self, broker: KISBroker) -> None:
+        """send_order with price=0 must use ORD_DVSN='01' (시장가)."""
+        mock_hash = AsyncMock()
+        mock_hash.status = 200
+        mock_hash.json = AsyncMock(return_value={"HASH": "h"})
+        mock_hash.__aenter__ = AsyncMock(return_value=mock_hash)
+        mock_hash.__aexit__ = AsyncMock(return_value=False)
+
+        mock_order = AsyncMock()
+        mock_order.status = 200
+        mock_order.json = AsyncMock(return_value={"rt_cd": "0"})
+        mock_order.__aenter__ = AsyncMock(return_value=mock_order)
+        mock_order.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
+        ) as mock_post:
+            await broker.send_order("005930", "SELL", 1, price=0)
+
+        order_call = mock_post.call_args_list[1]
+        body = order_call[1].get("json", {})
+        assert body["ORD_DVSN"] == "01"
+        assert body["ORD_UNPR"] == "0"
