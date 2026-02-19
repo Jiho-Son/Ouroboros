@@ -46,6 +46,18 @@ class StockCondition(BaseModel):
 
     The ScenarioEngine evaluates all non-None fields as AND conditions.
     A condition matches only if ALL specified fields are satisfied.
+
+    Technical indicator fields:
+        rsi_below / rsi_above — RSI threshold
+        volume_ratio_above / volume_ratio_below — volume vs previous day
+        price_above / price_below — absolute price level
+        price_change_pct_above / price_change_pct_below — intraday % change
+
+    Position-aware fields (require market_data enrichment from open position):
+        unrealized_pnl_pct_above — matches if unrealized P&L > threshold (e.g. 3.0 → +3%)
+        unrealized_pnl_pct_below — matches if unrealized P&L < threshold (e.g. -2.0 → -2%)
+        holding_days_above — matches if position held for more than N days
+        holding_days_below — matches if position held for fewer than N days
     """
 
     rsi_below: float | None = None
@@ -56,6 +68,10 @@ class StockCondition(BaseModel):
     price_below: float | None = None
     price_change_pct_above: float | None = None
     price_change_pct_below: float | None = None
+    unrealized_pnl_pct_above: float | None = None
+    unrealized_pnl_pct_below: float | None = None
+    holding_days_above: int | None = None
+    holding_days_below: int | None = None
 
     def has_any_condition(self) -> bool:
         """Check if at least one condition field is set."""
@@ -70,6 +86,10 @@ class StockCondition(BaseModel):
                 self.price_below,
                 self.price_change_pct_above,
                 self.price_change_pct_below,
+                self.unrealized_pnl_pct_above,
+                self.unrealized_pnl_pct_below,
+                self.holding_days_above,
+                self.holding_days_below,
             )
         )
 
