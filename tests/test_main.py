@@ -14,6 +14,9 @@ from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
 from src.main import (
     _apply_dashboard_flag,
+    _determine_order_quantity,
+    _extract_held_codes_from_balance,
+    _extract_held_qty_from_balance,
     _handle_market_close,
     _run_context_scheduler,
     _run_evolution_loop,
@@ -66,6 +69,141 @@ def _make_sell_match(stock_code: str = "005930") -> ScenarioMatch:
         confidence=90,
         rationale="Test sell",
     )
+
+
+class TestExtractHeldQtyFromBalance:
+    """Tests for _extract_held_qty_from_balance()."""
+
+    def _domestic_balance(self, stock_code: str, ord_psbl_qty: int) -> dict:
+        return {
+            "output1": [{"pdno": stock_code, "ord_psbl_qty": str(ord_psbl_qty)}],
+            "output2": [{"dnca_tot_amt": "1000000"}],
+        }
+
+    def test_domestic_returns_ord_psbl_qty(self) -> None:
+        balance = self._domestic_balance("005930", 7)
+        assert _extract_held_qty_from_balance(balance, "005930", is_domestic=True) == 7
+
+    def test_domestic_fallback_to_hldg_qty(self) -> None:
+        balance = {"output1": [{"pdno": "005930", "hldg_qty": "3"}]}
+        assert _extract_held_qty_from_balance(balance, "005930", is_domestic=True) == 3
+
+    def test_domestic_returns_zero_when_not_found(self) -> None:
+        balance = self._domestic_balance("005930", 5)
+        assert _extract_held_qty_from_balance(balance, "000660", is_domestic=True) == 0
+
+    def test_domestic_returns_zero_when_output1_empty(self) -> None:
+        balance = {"output1": [], "output2": [{}]}
+        assert _extract_held_qty_from_balance(balance, "005930", is_domestic=True) == 0
+
+    def test_overseas_returns_ovrs_cblc_qty(self) -> None:
+        balance = {"output1": [{"ovrs_pdno": "AAPL", "ovrs_cblc_qty": "10"}]}
+        assert _extract_held_qty_from_balance(balance, "AAPL", is_domestic=False) == 10
+
+    def test_overseas_fallback_to_hldg_qty(self) -> None:
+        balance = {"output1": [{"ovrs_pdno": "AAPL", "hldg_qty": "4"}]}
+        assert _extract_held_qty_from_balance(balance, "AAPL", is_domestic=False) == 4
+
+    def test_case_insensitive_match(self) -> None:
+        balance = {"output1": [{"pdno": "005930", "ord_psbl_qty": "2"}]}
+        assert _extract_held_qty_from_balance(balance, "005930", is_domestic=True) == 2
+
+
+class TestExtractHeldCodesFromBalance:
+    """Tests for _extract_held_codes_from_balance()."""
+
+    def test_returns_codes_with_positive_qty(self) -> None:
+        balance = {
+            "output1": [
+                {"pdno": "005930", "ord_psbl_qty": "5"},
+                {"pdno": "000660", "ord_psbl_qty": "3"},
+            ]
+        }
+        result = _extract_held_codes_from_balance(balance, is_domestic=True)
+        assert set(result) == {"005930", "000660"}
+
+    def test_excludes_zero_qty_holdings(self) -> None:
+        balance = {
+            "output1": [
+                {"pdno": "005930", "ord_psbl_qty": "0"},
+                {"pdno": "000660", "ord_psbl_qty": "2"},
+            ]
+        }
+        result = _extract_held_codes_from_balance(balance, is_domestic=True)
+        assert "005930" not in result
+        assert "000660" in result
+
+    def test_returns_empty_when_output1_missing(self) -> None:
+        balance: dict = {}
+        assert _extract_held_codes_from_balance(balance, is_domestic=True) == []
+
+    def test_overseas_uses_ovrs_pdno(self) -> None:
+        balance = {"output1": [{"ovrs_pdno": "AAPL", "ovrs_cblc_qty": "3"}]}
+        result = _extract_held_codes_from_balance(balance, is_domestic=False)
+        assert result == ["AAPL"]
+
+
+class TestDetermineOrderQuantity:
+    """Test _determine_order_quantity() — SELL uses broker_held_qty."""
+
+    def test_sell_returns_broker_held_qty(self) -> None:
+        result = _determine_order_quantity(
+            action="SELL",
+            current_price=105.0,
+            total_cash=50000.0,
+            candidate=None,
+            settings=None,
+            broker_held_qty=7,
+        )
+        assert result == 7
+
+    def test_sell_returns_zero_when_broker_qty_zero(self) -> None:
+        result = _determine_order_quantity(
+            action="SELL",
+            current_price=105.0,
+            total_cash=50000.0,
+            candidate=None,
+            settings=None,
+            broker_held_qty=0,
+        )
+        assert result == 0
+
+    def test_buy_without_position_sizing_returns_one(self) -> None:
+        result = _determine_order_quantity(
+            action="BUY",
+            current_price=50000.0,
+            total_cash=1000000.0,
+            candidate=None,
+            settings=None,
+        )
+        assert result == 1
+
+    def test_buy_with_zero_cash_returns_zero(self) -> None:
+        result = _determine_order_quantity(
+            action="BUY",
+            current_price=50000.0,
+            total_cash=0.0,
+            candidate=None,
+            settings=None,
+        )
+        assert result == 0
+
+    def test_buy_with_position_sizing_calculates_correctly(self) -> None:
+        settings = MagicMock(spec=Settings)
+        settings.POSITION_SIZING_ENABLED = True
+        settings.POSITION_VOLATILITY_TARGET_SCORE = 50.0
+        settings.POSITION_BASE_ALLOCATION_PCT = 10.0
+        settings.POSITION_MAX_ALLOCATION_PCT = 30.0
+        settings.POSITION_MIN_ALLOCATION_PCT = 1.0
+        # 1,000,000 * 10% = 100,000 budget // 50,000 price = 2 shares
+        result = _determine_order_quantity(
+            action="BUY",
+            current_price=50000.0,
+            total_cash=1000000.0,
+            candidate=None,
+            settings=settings,
+        )
+        assert result == 2
 
 
 class TestSafeFloat:
@@ -1240,13 +1378,14 @@ async def test_sell_updates_original_buy_decision_outcome() -> None:
     broker.get_current_price = AsyncMock(return_value=(120.0, 0.0, 0.0))
     broker.get_balance = AsyncMock(
         return_value={
+            "output1": [{"pdno": "005930", "ord_psbl_qty": "1"}],
             "output2": [
                 {
                     "tot_evlu_amt": "100000",
                     "dnca_tot_amt": "10000",
                     "pchs_amt_smtl_amt": "90000",
                 }
-            ]
+            ],
         }
     )
     broker.send_order = AsyncMock(return_value={"msg1": "OK"})
@@ -1330,13 +1469,14 @@ async def test_hold_overridden_to_sell_when_stop_loss_triggered() -> None:
     broker.get_current_price = AsyncMock(return_value=(95.0, -5.0, 0.0))
     broker.get_balance = AsyncMock(
         return_value={
+            "output1": [{"pdno": "005930", "ord_psbl_qty": "1"}],
             "output2": [
                 {
                     "tot_evlu_amt": "100000",
                     "dnca_tot_amt": "10000",
                     "pchs_amt_smtl_amt": "90000",
                 }
-            ]
+            ],
         }
     )
     broker.send_order = AsyncMock(return_value={"msg1": "OK"})
@@ -1430,13 +1570,14 @@ async def test_hold_overridden_to_sell_when_take_profit_triggered() -> None:
     broker.get_current_price = AsyncMock(return_value=(106.0, 6.0, 0.0))
     broker.get_balance = AsyncMock(
         return_value={
+            "output1": [{"pdno": "005930", "ord_psbl_qty": "1"}],
             "output2": [
                 {
                     "tot_evlu_amt": "100000",
                     "dnca_tot_amt": "10000",
                     "pchs_amt_smtl_amt": "90000",
                 }
-            ]
+            ],
         }
     )
     broker.send_order = AsyncMock(return_value={"msg1": "OK"})
@@ -1595,6 +1736,116 @@ async def test_hold_not_overridden_when_between_stop_loss_and_take_profit() -> N
     )
 
     broker.send_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sell_order_uses_broker_balance_qty_not_db() -> None:
+    """SELL quantity must come from broker balance output1, not DB.
+
+    The DB records order quantity which may differ from actual fill quantity.
+    This test verifies that we use the broker-confirmed orderable quantity.
+    """
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    buy_decision_id = decision_logger.log_decision(
+        stock_code="005930",
+        market="KR",
+        exchange_code="KRX",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        context_snapshot={},
+        input_data={},
+    )
+    # DB records 10 shares ordered — but only 5 actually filled (partial fill scenario)
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        quantity=10,  # ordered quantity (may differ from fill)
+        price=100.0,
+        market="KR",
+        exchange_code="KRX",
+        decision_id=buy_decision_id,
+    )
+
+    broker = MagicMock()
+    # Stop-loss triggers (price dropped below -2%)
+    broker.get_current_price = AsyncMock(return_value=(95.0, -5.0, 0.0))
+    broker.get_balance = AsyncMock(
+        return_value={
+            # Broker confirms only 5 shares are actually orderable (partial fill)
+            "output1": [{"pdno": "005930", "ord_psbl_qty": "5"}],
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "10000",
+                    "pchs_amt_smtl_amt": "90000",
+                }
+            ],
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    scenario = StockScenario(
+        condition=StockCondition(rsi_below=30),
+        action=ScenarioAction.BUY,
+        confidence=88,
+        stop_loss_pct=-2.0,
+        rationale="stop loss policy",
+    )
+    playbook = DayPlaybook(
+        date=date(2026, 2, 8),
+        market="KR",
+        stock_playbooks=[
+            {"stock_code": "005930", "stock_name": "Samsung", "scenarios": [scenario]}
+        ],
+    )
+    engine = MagicMock(spec=ScenarioEngine)
+    engine.evaluate = MagicMock(return_value=_make_hold_match())
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    await trading_cycle(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        scenario_engine=engine,
+        playbook=playbook,
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        context_store=MagicMock(
+            get_latest_timeframe=MagicMock(return_value=None),
+            set_context=MagicMock(),
+        ),
+        criticality_assessor=MagicMock(
+            assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+            get_timeout=MagicMock(return_value=5.0),
+        ),
+        telegram=telegram,
+        market=market,
+        stock_code="005930",
+        scan_candidates={},
+    )
+
+    broker.send_order.assert_called_once()
+    call_kwargs = broker.send_order.call_args.kwargs
+    assert call_kwargs["order_type"] == "SELL"
+    # Must use broker-confirmed qty (5), NOT DB-recorded ordered qty (10)
+    assert call_kwargs["quantity"] == 5
 
 
 @pytest.mark.asyncio

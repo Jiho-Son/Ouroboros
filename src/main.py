@@ -106,6 +106,82 @@ def _extract_symbol_from_holding(item: dict[str, Any]) -> str:
     return ""
 
 
+def _extract_held_codes_from_balance(
+    balance_data: dict[str, Any],
+    *,
+    is_domestic: bool,
+) -> list[str]:
+    """Return stock codes with a positive orderable quantity from a balance response.
+
+    Uses the broker's live output1 as the source of truth so that partial fills
+    and manual external trades are always reflected correctly.
+    """
+    output1 = balance_data.get("output1", [])
+    if isinstance(output1, dict):
+        output1 = [output1]
+    if not isinstance(output1, list):
+        return []
+
+    codes: list[str] = []
+    for holding in output1:
+        if not isinstance(holding, dict):
+            continue
+        code_key = "pdno" if is_domestic else "ovrs_pdno"
+        code = str(holding.get(code_key, "")).strip().upper()
+        if not code:
+            continue
+        if is_domestic:
+            qty = int(holding.get("ord_psbl_qty") or holding.get("hldg_qty") or 0)
+        else:
+            qty = int(holding.get("ovrs_cblc_qty") or holding.get("hldg_qty") or 0)
+        if qty > 0:
+            codes.append(code)
+    return codes
+
+
+def _extract_held_qty_from_balance(
+    balance_data: dict[str, Any],
+    stock_code: str,
+    *,
+    is_domestic: bool,
+) -> int:
+    """Extract the broker-confirmed orderable quantity for a stock.
+
+    Uses the broker's live balance response (output1) as the source of truth
+    rather than the local DB, because DB records reflect order quantity which
+    may differ from actual fill quantity due to partial fills.
+
+    Domestic fields (VTTC8434R output1):
+        pdno          — 종목코드
+        ord_psbl_qty  — 주문가능수량 (preferred: excludes unsettled)
+        hldg_qty      — 보유수량 (fallback)
+
+    Overseas fields (output1):
+        ovrs_pdno     — 종목코드
+        ovrs_cblc_qty — 해외잔고수량 (preferred)
+        hldg_qty      — 보유수량 (fallback)
+    """
+    output1 = balance_data.get("output1", [])
+    if isinstance(output1, dict):
+        output1 = [output1]
+    if not isinstance(output1, list):
+        return 0
+
+    for holding in output1:
+        if not isinstance(holding, dict):
+            continue
+        code_key = "pdno" if is_domestic else "ovrs_pdno"
+        held_code = str(holding.get(code_key, "")).strip().upper()
+        if held_code != stock_code.strip().upper():
+            continue
+        if is_domestic:
+            qty = int(holding.get("ord_psbl_qty") or holding.get("hldg_qty") or 0)
+        else:
+            qty = int(holding.get("ovrs_cblc_qty") or holding.get("hldg_qty") or 0)
+        return qty
+    return 0
+
+
 def _determine_order_quantity(
     *,
     action: str,
@@ -113,10 +189,11 @@ def _determine_order_quantity(
     total_cash: float,
     candidate: ScanCandidate | None,
     settings: Settings | None,
+    broker_held_qty: int = 0,
 ) -> int:
     """Determine order quantity using volatility-aware position sizing."""
-    if action != "BUY":
-        return 1
+    if action == "SELL":
+        return broker_held_qty
     if current_price <= 0 or total_cash <= 0:
         return 0
 
@@ -484,12 +561,20 @@ async def trading_cycle(
     trade_price = current_price
     trade_pnl = 0.0
     if decision.action in ("BUY", "SELL"):
+        broker_held_qty = (
+            _extract_held_qty_from_balance(
+                balance_data, stock_code, is_domestic=market.is_domestic
+            )
+            if decision.action == "SELL"
+            else 0
+        )
         quantity = _determine_order_quantity(
             action=decision.action,
             current_price=current_price,
             total_cash=total_cash,
             candidate=candidate,
             settings=settings,
+            broker_held_qty=broker_held_qty,
         )
         if quantity <= 0:
             logger.info(
@@ -909,12 +994,20 @@ async def run_daily_session(
             trade_pnl = 0.0
             order_succeeded = True
             if decision.action in ("BUY", "SELL"):
+                daily_broker_held_qty = (
+                    _extract_held_qty_from_balance(
+                        balance_data, stock_code, is_domestic=market.is_domestic
+                    )
+                    if decision.action == "SELL"
+                    else 0
+                )
                 quantity = _determine_order_quantity(
                     action=decision.action,
                     current_price=stock_data["current_price"],
                     total_cash=total_cash,
                     candidate=candidate_map.get(stock_code),
                     settings=settings,
+                    broker_held_qty=daily_broker_held_qty,
                 )
                 if quantity <= 0:
                     logger.info(
@@ -1881,8 +1974,38 @@ async def run(settings: Settings) -> None:
                         except Exception as exc:
                             logger.error("Smart Scanner failed for %s: %s", market.name, exc)
 
-                    # Get active stocks from scanner (dynamic, no static fallback)
-                    stock_codes = active_stocks.get(market.code, [])
+                    # Get active stocks from scanner (dynamic, no static fallback).
+                    # Also include currently-held positions so stop-loss /
+                    # take-profit can fire even when a holding drops off the
+                    # scanner.  Broker balance is the source of truth here —
+                    # unlike the local DB it reflects actual fills and any
+                    # manual trades done outside the bot.
+                    scanner_codes = active_stocks.get(market.code, [])
+                    try:
+                        if market.is_domestic:
+                            held_balance = await broker.get_balance()
+                        else:
+                            held_balance = await overseas_broker.get_overseas_balance(
+                                market.exchange_code
+                            )
+                        held_codes = _extract_held_codes_from_balance(
+                            held_balance, is_domestic=market.is_domestic
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Failed to fetch holdings for %s: %s — skipping holdings merge",
+                            market.name, exc,
+                        )
+                        held_codes = []
+
+                    stock_codes = list(dict.fromkeys(scanner_codes + held_codes))
+                    extra_held = [c for c in held_codes if c not in set(scanner_codes)]
+                    if extra_held:
+                        logger.info(
+                            "Holdings added to loop for %s (not in scanner): %s",
+                            market.name, extra_held,
+                        )
+
                     if not stock_codes:
                         logger.debug("No active stocks for market %s", market.code)
                         continue
