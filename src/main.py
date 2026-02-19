@@ -190,8 +190,15 @@ def _determine_order_quantity(
     candidate: ScanCandidate | None,
     settings: Settings | None,
     broker_held_qty: int = 0,
+    playbook_allocation_pct: float | None = None,
+    scenario_confidence: int = 80,
 ) -> int:
-    """Determine order quantity using volatility-aware position sizing."""
+    """Determine order quantity using volatility-aware position sizing.
+
+    Priority:
+    1. playbook_allocation_pct (AI-specified) scaled by scenario_confidence
+    2. Fallback: volatility-score-based allocation from scanner candidate
+    """
     if action == "SELL":
         return broker_held_qty
     if current_price <= 0 or total_cash <= 0:
@@ -200,6 +207,22 @@ def _determine_order_quantity(
     if settings is None or not settings.POSITION_SIZING_ENABLED:
         return 1
 
+    # Use AI-specified allocation_pct if available
+    if playbook_allocation_pct is not None:
+        # Confidence scaling: confidence 80 → 1.0x, confidence 95 → 1.19x
+        confidence_scale = scenario_confidence / 80.0
+        effective_pct = min(
+            settings.POSITION_MAX_ALLOCATION_PCT,
+            max(
+                settings.POSITION_MIN_ALLOCATION_PCT,
+                playbook_allocation_pct * confidence_scale,
+            ),
+        )
+        budget = total_cash * (effective_pct / 100.0)
+        quantity = int(budget // current_price)
+        return max(0, quantity)
+
+    # Fallback: volatility-score-based allocation
     target_score = max(1.0, settings.POSITION_VOLATILITY_TARGET_SCORE)
     observed_score = candidate.score if candidate else target_score
     observed_score = max(1.0, min(100.0, observed_score))
@@ -568,6 +591,7 @@ async def trading_cycle(
             if decision.action == "SELL"
             else 0
         )
+        matched_scenario = match.matched_scenario
         quantity = _determine_order_quantity(
             action=decision.action,
             current_price=current_price,
@@ -575,6 +599,8 @@ async def trading_cycle(
             candidate=candidate,
             settings=settings,
             broker_held_qty=broker_held_qty,
+            playbook_allocation_pct=matched_scenario.allocation_pct if matched_scenario else None,
+            scenario_confidence=match.confidence,
         )
         if quantity <= 0:
             logger.info(
