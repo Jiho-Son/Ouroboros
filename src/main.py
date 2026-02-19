@@ -387,8 +387,10 @@ async def trading_cycle(
             if entry_price > 0:
                 loss_pct = (current_price - entry_price) / entry_price * 100
                 stop_loss_threshold = -2.0
+                take_profit_threshold = 3.0
                 if stock_playbook and stock_playbook.scenarios:
                     stop_loss_threshold = stock_playbook.scenarios[0].stop_loss_pct
+                    take_profit_threshold = stock_playbook.scenarios[0].take_profit_pct
 
                 if loss_pct <= stop_loss_threshold:
                     decision = TradeDecision(
@@ -405,6 +407,22 @@ async def trading_cycle(
                         market.name,
                         loss_pct,
                         stop_loss_threshold,
+                    )
+                elif loss_pct >= take_profit_threshold:
+                    decision = TradeDecision(
+                        action="SELL",
+                        confidence=90,
+                        rationale=(
+                            f"Take-profit triggered ({loss_pct:.2f}% >= "
+                            f"{take_profit_threshold:.2f}%)"
+                        ),
+                    )
+                    logger.info(
+                        "Take-profit override for %s (%s): %.2f%% >= %.2f%%",
+                        stock_code,
+                        market.name,
+                        loss_pct,
+                        take_profit_threshold,
                     )
     logger.info(
         "Decision for %s (%s): %s (confidence=%d)",
