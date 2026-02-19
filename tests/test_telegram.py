@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import aiohttp
 import pytest
 
-from src.notifications.telegram_client import NotificationPriority, TelegramClient
+from src.notifications.telegram_client import NotificationFilter, NotificationPriority, TelegramClient
 
 
 class TestTelegramClientInit:
@@ -481,3 +481,187 @@ class TestClientCleanup:
 
         # Should not raise exception
         await client.close()
+
+
+class TestNotificationFilter:
+    """Test granular notification filter behavior."""
+
+    def test_default_filter_allows_all(self) -> None:
+        """Default NotificationFilter has all flags enabled."""
+        f = NotificationFilter()
+        assert f.trades is True
+        assert f.market_open_close is True
+        assert f.fat_finger is True
+        assert f.system_events is True
+        assert f.playbook is True
+        assert f.scenario_match is True
+        assert f.errors is True
+
+    def test_client_uses_default_filter_when_none_given(self) -> None:
+        """TelegramClient creates a default NotificationFilter when none provided."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        assert isinstance(client._filter, NotificationFilter)
+        assert client._filter.scenario_match is True
+
+    def test_client_stores_provided_filter(self) -> None:
+        """TelegramClient stores a custom NotificationFilter."""
+        nf = NotificationFilter(scenario_match=False, trades=False)
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True, notification_filter=nf
+        )
+        assert client._filter.scenario_match is False
+        assert client._filter.trades is False
+        assert client._filter.market_open_close is True  # default still True
+
+    @pytest.mark.asyncio
+    async def test_scenario_match_filtered_does_not_send(self) -> None:
+        """notify_scenario_matched skips send when scenario_match=False."""
+        nf = NotificationFilter(scenario_match=False)
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True, notification_filter=nf
+        )
+        with patch("aiohttp.ClientSession.post") as mock_post:
+            await client.notify_scenario_matched(
+                stock_code="005930", action="BUY", condition_summary="rsi<30", confidence=85.0
+            )
+            mock_post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_trades_filtered_does_not_send(self) -> None:
+        """notify_trade_execution skips send when trades=False."""
+        nf = NotificationFilter(trades=False)
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True, notification_filter=nf
+        )
+        with patch("aiohttp.ClientSession.post") as mock_post:
+            await client.notify_trade_execution(
+                stock_code="005930", market="KR", action="BUY",
+                quantity=10, price=70000.0, confidence=85.0
+            )
+            mock_post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_market_open_close_filtered_does_not_send(self) -> None:
+        """notify_market_open/close skip send when market_open_close=False."""
+        nf = NotificationFilter(market_open_close=False)
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True, notification_filter=nf
+        )
+        with patch("aiohttp.ClientSession.post") as mock_post:
+            await client.notify_market_open("Korea")
+            await client.notify_market_close("Korea", pnl_pct=1.5)
+            mock_post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_always_sends_regardless_of_filter(self) -> None:
+        """notify_circuit_breaker always sends (no filter flag)."""
+        nf = NotificationFilter(
+            trades=False, market_open_close=False, fat_finger=False,
+            system_events=False, playbook=False, scenario_match=False, errors=False,
+        )
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True, notification_filter=nf
+        )
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await client.notify_circuit_breaker(pnl_pct=-3.5, threshold=-3.0)
+            assert mock_post.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_errors_filtered_does_not_send(self) -> None:
+        """notify_error skips send when errors=False."""
+        nf = NotificationFilter(errors=False)
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True, notification_filter=nf
+        )
+        with patch("aiohttp.ClientSession.post") as mock_post:
+            await client.notify_error("TestError", "something went wrong", "KR")
+            mock_post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_playbook_filtered_does_not_send(self) -> None:
+        """notify_playbook_generated/failed skip send when playbook=False."""
+        nf = NotificationFilter(playbook=False)
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True, notification_filter=nf
+        )
+        with patch("aiohttp.ClientSession.post") as mock_post:
+            await client.notify_playbook_generated("KR", 3, 10, 1200)
+            await client.notify_playbook_failed("KR", "timeout")
+            mock_post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_system_events_filtered_does_not_send(self) -> None:
+        """notify_system_start/shutdown skip send when system_events=False."""
+        nf = NotificationFilter(system_events=False)
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True, notification_filter=nf
+        )
+        with patch("aiohttp.ClientSession.post") as mock_post:
+            await client.notify_system_start("paper", ["KR"])
+            await client.notify_system_shutdown("Normal shutdown")
+            mock_post.assert_not_called()
+
+    def test_set_flag_valid_key(self) -> None:
+        """set_flag returns True and updates field for a known key."""
+        nf = NotificationFilter()
+        assert nf.set_flag("scenario", False) is True
+        assert nf.scenario_match is False
+
+    def test_set_flag_invalid_key(self) -> None:
+        """set_flag returns False for an unknown key."""
+        nf = NotificationFilter()
+        assert nf.set_flag("unknown_key", False) is False
+
+    def test_as_dict_keys_match_KEYS(self) -> None:
+        """as_dict() returns every key defined in KEYS."""
+        nf = NotificationFilter()
+        d = nf.as_dict()
+        assert set(d.keys()) == set(NotificationFilter.KEYS.keys())
+
+    def test_set_notification_valid_key(self) -> None:
+        """TelegramClient.set_notification toggles filter at runtime."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        assert client._filter.scenario_match is True
+        assert client.set_notification("scenario", False) is True
+        assert client._filter.scenario_match is False
+
+    def test_set_notification_all_off(self) -> None:
+        """set_notification('all', False) disables every filter flag."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        assert client.set_notification("all", False) is True
+        for v in client.filter_status().values():
+            assert v is False
+
+    def test_set_notification_all_on(self) -> None:
+        """set_notification('all', True) enables every filter flag."""
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True,
+            notification_filter=NotificationFilter(
+                trades=False, market_open_close=False, scenario_match=False,
+                fat_finger=False, system_events=False, playbook=False, errors=False,
+            ),
+        )
+        assert client.set_notification("all", True) is True
+        for v in client.filter_status().values():
+            assert v is True
+
+    def test_set_notification_unknown_key(self) -> None:
+        """set_notification returns False for an unknown key."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        assert client.set_notification("unknown", False) is False
+
+    def test_filter_status_reflects_current_state(self) -> None:
+        """filter_status() matches the current NotificationFilter state."""
+        nf = NotificationFilter(trades=False, scenario_match=False)
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True, notification_filter=nf
+        )
+        status = client.filter_status()
+        assert status["trades"] is False
+        assert status["scenario"] is False
+        assert status["market"] is True
