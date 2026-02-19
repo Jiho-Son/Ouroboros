@@ -830,3 +830,171 @@ class TestSmartFallbackPlaybook:
         ]
         assert len(buy_scenarios) == 1
         assert buy_scenarios[0].condition.volume_ratio_above == 2.0  # VOL_MULTIPLIER default
+
+
+# ---------------------------------------------------------------------------
+# Holdings in prompt (#170)
+# ---------------------------------------------------------------------------
+
+
+class TestHoldingsInPrompt:
+    """Tests for current_holdings parameter in generate_playbook / _build_prompt."""
+
+    def _make_holdings(self) -> list[dict]:
+        return [
+            {
+                "stock_code": "005930",
+                "name": "Samsung",
+                "qty": 10,
+                "entry_price": 71000.0,
+                "unrealized_pnl_pct": 2.3,
+                "holding_days": 3,
+            }
+        ]
+
+    def test_build_prompt_includes_holdings_section(self) -> None:
+        """Prompt should contain a Current Holdings section when holdings are given."""
+        planner = _make_planner()
+        candidates = [_candidate()]
+        holdings = self._make_holdings()
+
+        prompt = planner._build_prompt(
+            "KR",
+            candidates,
+            context_data={},
+            self_market_scorecard=None,
+            cross_market=None,
+            current_holdings=holdings,
+        )
+
+        assert "## Current Holdings" in prompt
+        assert "005930" in prompt
+        assert "+2.30%" in prompt
+        assert "보유 3일" in prompt
+
+    def test_build_prompt_no_holdings_omits_section(self) -> None:
+        """Prompt should NOT contain a Current Holdings section when holdings=None."""
+        planner = _make_planner()
+        candidates = [_candidate()]
+
+        prompt = planner._build_prompt(
+            "KR",
+            candidates,
+            context_data={},
+            self_market_scorecard=None,
+            cross_market=None,
+            current_holdings=None,
+        )
+
+        assert "## Current Holdings" not in prompt
+
+    def test_build_prompt_empty_holdings_omits_section(self) -> None:
+        """Empty list should also omit the holdings section."""
+        planner = _make_planner()
+        candidates = [_candidate()]
+
+        prompt = planner._build_prompt(
+            "KR",
+            candidates,
+            context_data={},
+            self_market_scorecard=None,
+            cross_market=None,
+            current_holdings=[],
+        )
+
+        assert "## Current Holdings" not in prompt
+
+    def test_build_prompt_holdings_instruction_included(self) -> None:
+        """Prompt should include instruction to generate scenarios for held stocks."""
+        planner = _make_planner()
+        candidates = [_candidate()]
+        holdings = self._make_holdings()
+
+        prompt = planner._build_prompt(
+            "KR",
+            candidates,
+            context_data={},
+            self_market_scorecard=None,
+            cross_market=None,
+            current_holdings=holdings,
+        )
+
+        assert "005930" in prompt
+        assert "SELL/HOLD" in prompt
+
+    @pytest.mark.asyncio
+    async def test_generate_playbook_passes_holdings_to_prompt(self) -> None:
+        """generate_playbook should pass current_holdings through to the prompt."""
+        planner = _make_planner()
+        candidates = [_candidate()]
+        holdings = self._make_holdings()
+
+        # Capture the actual prompt sent to Gemini
+        captured_prompts: list[str] = []
+        original_decide = planner._gemini.decide
+
+        async def capture_and_call(data: dict) -> TradeDecision:
+            captured_prompts.append(data.get("prompt_override", ""))
+            return await original_decide(data)
+
+        planner._gemini.decide = capture_and_call  # type: ignore[method-assign]
+
+        await planner.generate_playbook(
+            "KR", candidates, today=date(2026, 2, 8), current_holdings=holdings
+        )
+
+        assert len(captured_prompts) == 1
+        assert "## Current Holdings" in captured_prompts[0]
+        assert "005930" in captured_prompts[0]
+
+    @pytest.mark.asyncio
+    async def test_holdings_stock_allowed_in_parse_response(self) -> None:
+        """Holdings stocks not in candidates list should be accepted in the response."""
+        holding_code = "000660"  # Not in candidates
+        stocks = [
+            {
+                "stock_code": "005930",  # candidate
+                "scenarios": [
+                    {
+                        "condition": {"rsi_below": 30},
+                        "action": "BUY",
+                        "confidence": 85,
+                        "rationale": "oversold",
+                    }
+                ],
+            },
+            {
+                "stock_code": holding_code,  # holding only
+                "scenarios": [
+                    {
+                        "condition": {"price_change_pct_below": -2.0},
+                        "action": "SELL",
+                        "confidence": 90,
+                        "rationale": "stop-loss",
+                    }
+                ],
+            },
+        ]
+        planner = _make_planner(gemini_response=_gemini_response_json(stocks=stocks))
+        candidates = [_candidate()]  # only 005930
+        holdings = [
+            {
+                "stock_code": holding_code,
+                "name": "SK Hynix",
+                "qty": 5,
+                "entry_price": 180000.0,
+                "unrealized_pnl_pct": -1.5,
+                "holding_days": 7,
+            }
+        ]
+
+        pb = await planner.generate_playbook(
+            "KR",
+            candidates,
+            today=date(2026, 2, 8),
+            current_holdings=holdings,
+        )
+
+        codes = [sp.stock_code for sp in pb.stock_playbooks]
+        assert "005930" in codes
+        assert holding_code in codes
