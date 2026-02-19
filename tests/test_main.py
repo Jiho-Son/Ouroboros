@@ -205,6 +205,84 @@ class TestDetermineOrderQuantity:
         )
         assert result == 2
 
+    def test_determine_order_quantity_uses_playbook_allocation_pct(self) -> None:
+        """playbook_allocation_pct should take priority over volatility-based sizing."""
+        settings = MagicMock(spec=Settings)
+        settings.POSITION_SIZING_ENABLED = True
+        settings.POSITION_MAX_ALLOCATION_PCT = 30.0
+        settings.POSITION_MIN_ALLOCATION_PCT = 1.0
+        # playbook says 20%, confidence 80 → scale=1.0 → 20%
+        # 1,000,000 * 20% = 200,000 // 50,000 price = 4 shares
+        result = _determine_order_quantity(
+            action="BUY",
+            current_price=50000.0,
+            total_cash=1000000.0,
+            candidate=None,
+            settings=settings,
+            playbook_allocation_pct=20.0,
+            scenario_confidence=80,
+        )
+        assert result == 4
+
+    def test_determine_order_quantity_confidence_scales_allocation(self) -> None:
+        """Higher confidence should produce a larger allocation (up to max)."""
+        settings = MagicMock(spec=Settings)
+        settings.POSITION_SIZING_ENABLED = True
+        settings.POSITION_MAX_ALLOCATION_PCT = 30.0
+        settings.POSITION_MIN_ALLOCATION_PCT = 1.0
+        # confidence 96 → scale=1.2 → 10% * 1.2 = 12%
+        # 1,000,000 * 12% = 120,000 // 50,000 price = 2 shares
+        result = _determine_order_quantity(
+            action="BUY",
+            current_price=50000.0,
+            total_cash=1000000.0,
+            candidate=None,
+            settings=settings,
+            playbook_allocation_pct=10.0,
+            scenario_confidence=96,
+        )
+        # scale = 96/80 = 1.2 → effective_pct = 12.0
+        # budget = 1_000_000 * 0.12 = 120_000 → qty = 120_000 // 50_000 = 2
+        assert result == 2
+
+    def test_determine_order_quantity_confidence_clamped_to_max(self) -> None:
+        """Confidence scaling should not exceed POSITION_MAX_ALLOCATION_PCT."""
+        settings = MagicMock(spec=Settings)
+        settings.POSITION_SIZING_ENABLED = True
+        settings.POSITION_MAX_ALLOCATION_PCT = 15.0
+        settings.POSITION_MIN_ALLOCATION_PCT = 1.0
+        # playbook 20% * scale 1.5 = 30% → clamped to 15%
+        # 1,000,000 * 15% = 150,000 // 50,000 price = 3 shares
+        result = _determine_order_quantity(
+            action="BUY",
+            current_price=50000.0,
+            total_cash=1000000.0,
+            candidate=None,
+            settings=settings,
+            playbook_allocation_pct=20.0,
+            scenario_confidence=120,  # extreme → scale = 1.5
+        )
+        assert result == 3
+
+    def test_determine_order_quantity_fallback_when_no_playbook(self) -> None:
+        """Without playbook_allocation_pct, falls back to volatility-based sizing."""
+        settings = MagicMock(spec=Settings)
+        settings.POSITION_SIZING_ENABLED = True
+        settings.POSITION_VOLATILITY_TARGET_SCORE = 50.0
+        settings.POSITION_BASE_ALLOCATION_PCT = 10.0
+        settings.POSITION_MAX_ALLOCATION_PCT = 30.0
+        settings.POSITION_MIN_ALLOCATION_PCT = 1.0
+        # Same as test_buy_with_position_sizing_calculates_correctly (no playbook)
+        result = _determine_order_quantity(
+            action="BUY",
+            current_price=50000.0,
+            total_cash=1000000.0,
+            candidate=None,
+            settings=settings,
+            playbook_allocation_pct=None,  # explicit None → fallback
+        )
+        assert result == 2
+
 
 class TestSafeFloat:
     """Test safe_float() helper function."""
