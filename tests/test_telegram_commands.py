@@ -875,3 +875,91 @@ class TestGetUpdates:
             updates = await handler._get_updates()
 
             assert updates == []
+
+
+class TestCommandWithArgs:
+    """Test register_command_with_args and argument dispatch."""
+
+    def test_register_command_with_args_stored(self) -> None:
+        """register_command_with_args stores handler in _commands_with_args."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        async def my_handler(args: list[str]) -> None:
+            pass
+
+        handler.register_command_with_args("notify", my_handler)
+        assert "notify" in handler._commands_with_args
+        assert handler._commands_with_args["notify"] is my_handler
+
+    @pytest.mark.asyncio
+    async def test_args_handler_receives_arguments(self) -> None:
+        """Args handler is called with the trailing tokens."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        received: list[list[str]] = []
+
+        async def capture(args: list[str]) -> None:
+            received.append(args)
+
+        handler.register_command_with_args("notify", capture)
+
+        update = {
+            "message": {
+                "chat": {"id": "456"},
+                "text": "/notify scenario off",
+            }
+        }
+        await handler._handle_update(update)
+        assert received == [["scenario", "off"]]
+
+    @pytest.mark.asyncio
+    async def test_args_handler_takes_priority_over_no_args_handler(self) -> None:
+        """When both handlers exist for same command, args handler wins."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        no_args_called = []
+        args_called = []
+
+        async def no_args_handler() -> None:
+            no_args_called.append(True)
+
+        async def args_handler(args: list[str]) -> None:
+            args_called.append(args)
+
+        handler.register_command("notify", no_args_handler)
+        handler.register_command_with_args("notify", args_handler)
+
+        update = {
+            "message": {
+                "chat": {"id": "456"},
+                "text": "/notify all off",
+            }
+        }
+        await handler._handle_update(update)
+        assert args_called == [["all", "off"]]
+        assert no_args_called == []
+
+    @pytest.mark.asyncio
+    async def test_args_handler_with_no_trailing_args(self) -> None:
+        """/notify with no args still dispatches to args handler with empty list."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        received: list[list[str]] = []
+
+        async def capture(args: list[str]) -> None:
+            received.append(args)
+
+        handler.register_command_with_args("notify", capture)
+
+        update = {
+            "message": {
+                "chat": {"id": "456"},
+                "text": "/notify",
+            }
+        }
+        await handler._handle_update(update)
+        assert received == [[]]

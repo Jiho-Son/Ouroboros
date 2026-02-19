@@ -605,3 +605,63 @@ class TestNotificationFilter:
             await client.notify_system_start("paper", ["KR"])
             await client.notify_system_shutdown("Normal shutdown")
             mock_post.assert_not_called()
+
+    def test_set_flag_valid_key(self) -> None:
+        """set_flag returns True and updates field for a known key."""
+        nf = NotificationFilter()
+        assert nf.set_flag("scenario", False) is True
+        assert nf.scenario_match is False
+
+    def test_set_flag_invalid_key(self) -> None:
+        """set_flag returns False for an unknown key."""
+        nf = NotificationFilter()
+        assert nf.set_flag("unknown_key", False) is False
+
+    def test_as_dict_keys_match_KEYS(self) -> None:
+        """as_dict() returns every key defined in KEYS."""
+        nf = NotificationFilter()
+        d = nf.as_dict()
+        assert set(d.keys()) == set(NotificationFilter.KEYS.keys())
+
+    def test_set_notification_valid_key(self) -> None:
+        """TelegramClient.set_notification toggles filter at runtime."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        assert client._filter.scenario_match is True
+        assert client.set_notification("scenario", False) is True
+        assert client._filter.scenario_match is False
+
+    def test_set_notification_all_off(self) -> None:
+        """set_notification('all', False) disables every filter flag."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        assert client.set_notification("all", False) is True
+        for v in client.filter_status().values():
+            assert v is False
+
+    def test_set_notification_all_on(self) -> None:
+        """set_notification('all', True) enables every filter flag."""
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True,
+            notification_filter=NotificationFilter(
+                trades=False, market_open_close=False, scenario_match=False,
+                fat_finger=False, system_events=False, playbook=False, errors=False,
+            ),
+        )
+        assert client.set_notification("all", True) is True
+        for v in client.filter_status().values():
+            assert v is True
+
+    def test_set_notification_unknown_key(self) -> None:
+        """set_notification returns False for an unknown key."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        assert client.set_notification("unknown", False) is False
+
+    def test_filter_status_reflects_current_state(self) -> None:
+        """filter_status() matches the current NotificationFilter state."""
+        nf = NotificationFilter(trades=False, scenario_match=False)
+        client = TelegramClient(
+            bot_token="123:abc", chat_id="456", enabled=True, notification_filter=nf
+        )
+        status = client.filter_status()
+        assert status["trades"] is False
+        assert status["scenario"] is False
+        assert status["market"] is True

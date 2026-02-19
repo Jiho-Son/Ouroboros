@@ -1235,7 +1235,11 @@ async def run(settings: Settings) -> None:
             "/review - Recent scorecards\n"
             "/dashboard - Dashboard URL/status\n"
             "/stop - Pause trading\n"
-            "/resume - Resume trading"
+            "/resume - Resume trading\n"
+            "/notify - Show notification filter status\n"
+            "/notify [key] [on|off] - Toggle notification type\n"
+            "  Keys: trades, market, scenario, playbook,\n"
+            "        system, fatfinger, errors, all"
         )
         await telegram.send_message(message)
 
@@ -1488,6 +1492,63 @@ async def run(settings: Settings) -> None:
                 "<b>⚠️ Error</b>\n\nFailed to retrieve reviews."
             )
 
+    async def handle_notify(args: list[str]) -> None:
+        """Handle /notify [key] [on|off] — query or change notification filters."""
+        status = telegram.filter_status()
+
+        # /notify — show current state
+        if not args:
+            lines = ["<b>🔔 알림 필터 현재 상태</b>\n"]
+            for key, enabled in status.items():
+                icon = "✅" if enabled else "❌"
+                lines.append(f"{icon} <code>{key}</code>")
+            lines.append("\n<i>예) /notify scenario off</i>")
+            lines.append("<i>예) /notify all off</i>")
+            await telegram.send_message("\n".join(lines))
+            return
+
+        # /notify [key] — missing on/off
+        if len(args) == 1:
+            key = args[0].lower()
+            if key == "all":
+                lines = ["<b>🔔 알림 필터 현재 상태</b>\n"]
+                for k, enabled in status.items():
+                    icon = "✅" if enabled else "❌"
+                    lines.append(f"{icon} <code>{k}</code>")
+                await telegram.send_message("\n".join(lines))
+            elif key in status:
+                icon = "✅" if status[key] else "❌"
+                await telegram.send_message(
+                    f"<b>🔔 {key}</b>: {icon} {'켜짐' if status[key] else '꺼짐'}\n"
+                    f"<i>/notify {key} on  또는  /notify {key} off</i>"
+                )
+            else:
+                valid = ", ".join(list(status.keys()) + ["all"])
+                await telegram.send_message(
+                    f"❌ 알 수 없는 키: <code>{key}</code>\n"
+                    f"유효한 키: {valid}"
+                )
+            return
+
+        # /notify [key] [on|off]
+        key, toggle = args[0].lower(), args[1].lower()
+        if toggle not in ("on", "off"):
+            await telegram.send_message("❌ on 또는 off 를 입력해 주세요.")
+            return
+        value = toggle == "on"
+        if telegram.set_notification(key, value):
+            icon = "✅" if value else "❌"
+            label = f"전체 알림" if key == "all" else f"<code>{key}</code> 알림"
+            state = "켜짐" if value else "꺼짐"
+            await telegram.send_message(f"{icon} {label} → {state}")
+            logger.info("Notification filter changed via Telegram: %s=%s", key, value)
+        else:
+            valid = ", ".join(list(telegram.filter_status().keys()) + ["all"])
+            await telegram.send_message(
+                f"❌ 알 수 없는 키: <code>{key}</code>\n"
+                f"유효한 키: {valid}"
+            )
+
     async def handle_dashboard() -> None:
         """Handle /dashboard command - show dashboard URL if enabled."""
         if not settings.DASHBOARD_ENABLED:
@@ -1511,6 +1572,7 @@ async def run(settings: Settings) -> None:
     command_handler.register_command("scenarios", handle_scenarios)
     command_handler.register_command("review", handle_review)
     command_handler.register_command("dashboard", handle_dashboard)
+    command_handler.register_command_with_args("notify", handle_notify)
 
     # Initialize volatility hunter
     volatility_analyzer = VolatilityAnalyzer(min_volume_surge=2.0, min_price_change=1.0)
