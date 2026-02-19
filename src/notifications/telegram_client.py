@@ -59,6 +59,22 @@ class LeakyBucket:
 
 
 @dataclass
+class NotificationFilter:
+    """Granular on/off flags for each notification type.
+
+    circuit_breaker is intentionally omitted — it is always sent regardless.
+    """
+
+    trades: bool = True
+    market_open_close: bool = True
+    fat_finger: bool = True
+    system_events: bool = True
+    playbook: bool = True
+    scenario_match: bool = True
+    errors: bool = True
+
+
+@dataclass
 class NotificationMessage:
     """Internal notification message structure."""
 
@@ -79,6 +95,7 @@ class TelegramClient:
         chat_id: str | None = None,
         enabled: bool = True,
         rate_limit: float = DEFAULT_RATE,
+        notification_filter: NotificationFilter | None = None,
     ) -> None:
         """
         Initialize Telegram client.
@@ -88,12 +105,14 @@ class TelegramClient:
             chat_id: Target chat ID (user or group)
             enabled: Enable/disable notifications globally
             rate_limit: Maximum messages per second
+            notification_filter: Granular per-type on/off flags
         """
         self._bot_token = bot_token
         self._chat_id = chat_id
         self._enabled = enabled
         self._rate_limiter = LeakyBucket(rate=rate_limit)
         self._session: aiohttp.ClientSession | None = None
+        self._filter = notification_filter if notification_filter is not None else NotificationFilter()
 
         if not enabled:
             logger.info("Telegram notifications disabled via configuration")
@@ -193,6 +212,8 @@ class TelegramClient:
             price: Execution price
             confidence: AI confidence level (0-100)
         """
+        if not self._filter.trades:
+            return
         emoji = "🟢" if action == "BUY" else "🔴"
         message = (
             f"<b>{emoji} {action}</b>\n"
@@ -212,6 +233,8 @@ class TelegramClient:
         Args:
             market_name: Name of the market (e.g., "Korea", "United States")
         """
+        if not self._filter.market_open_close:
+            return
         message = f"<b>Market Open</b>\n{market_name} trading session started"
         await self._send_notification(
             NotificationMessage(priority=NotificationPriority.LOW, message=message)
@@ -225,6 +248,8 @@ class TelegramClient:
             market_name: Name of the market
             pnl_pct: Final P&L percentage for the session
         """
+        if not self._filter.market_open_close:
+            return
         pnl_sign = "+" if pnl_pct >= 0 else ""
         pnl_emoji = "📈" if pnl_pct >= 0 else "📉"
         message = (
@@ -271,6 +296,8 @@ class TelegramClient:
             total_cash: Total available cash
             max_pct: Maximum allowed percentage
         """
+        if not self._filter.fat_finger:
+            return
         attempted_pct = (order_amount / total_cash) * 100 if total_cash > 0 else 0
         message = (
             f"<b>Fat-Finger Protection</b>\n"
@@ -293,6 +320,8 @@ class TelegramClient:
             mode: Trading mode ("paper" or "live")
             enabled_markets: List of enabled market codes
         """
+        if not self._filter.system_events:
+            return
         mode_emoji = "📝" if mode == "paper" else "💰"
         markets_str = ", ".join(enabled_markets)
         message = (
@@ -320,6 +349,8 @@ class TelegramClient:
             scenario_count: Total number of scenarios
             token_count: Gemini token usage for the playbook
         """
+        if not self._filter.playbook:
+            return
         message = (
             f"<b>Playbook Generated</b>\n"
             f"Market: {market}\n"
@@ -347,6 +378,8 @@ class TelegramClient:
             condition_summary: Short summary of the matched condition
             confidence: Scenario confidence (0-100)
         """
+        if not self._filter.scenario_match:
+            return
         message = (
             f"<b>Scenario Matched</b>\n"
             f"Symbol: <code>{stock_code}</code>\n"
@@ -366,6 +399,8 @@ class TelegramClient:
             market: Market code (e.g., "KR", "US")
             reason: Failure reason summary
         """
+        if not self._filter.playbook:
+            return
         message = (
             f"<b>Playbook Failed</b>\n"
             f"Market: {market}\n"
@@ -382,6 +417,8 @@ class TelegramClient:
         Args:
             reason: Reason for shutdown (e.g., "Normal shutdown", "Circuit breaker")
         """
+        if not self._filter.system_events:
+            return
         message = f"<b>System Shutdown</b>\n{reason}"
         priority = (
             NotificationPriority.CRITICAL
@@ -403,6 +440,8 @@ class TelegramClient:
             error_msg: Error message
             context: Error context (e.g., stock code, market)
         """
+        if not self._filter.errors:
+            return
         message = (
             f"<b>Error: {error_type}</b>\n"
             f"Context: {context}\n"

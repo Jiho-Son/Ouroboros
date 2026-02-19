@@ -41,7 +41,7 @@ from src.evolution.optimizer import EvolutionOptimizer
 from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
 from src.markets.schedule import MarketInfo, get_next_market_open, get_open_markets
-from src.notifications.telegram_client import TelegramClient, TelegramCommandHandler
+from src.notifications.telegram_client import NotificationFilter, TelegramClient, TelegramCommandHandler
 from src.strategy.models import DayPlaybook
 from src.strategy.playbook_store import PlaybookStore
 from src.strategy.pre_market_planner import PreMarketPlanner
@@ -1208,6 +1208,15 @@ async def run(settings: Settings) -> None:
         bot_token=settings.TELEGRAM_BOT_TOKEN,
         chat_id=settings.TELEGRAM_CHAT_ID,
         enabled=settings.TELEGRAM_ENABLED,
+        notification_filter=NotificationFilter(
+            trades=settings.TELEGRAM_NOTIFY_TRADES,
+            market_open_close=settings.TELEGRAM_NOTIFY_MARKET_OPEN_CLOSE,
+            fat_finger=settings.TELEGRAM_NOTIFY_FAT_FINGER,
+            system_events=settings.TELEGRAM_NOTIFY_SYSTEM_EVENTS,
+            playbook=settings.TELEGRAM_NOTIFY_PLAYBOOK,
+            scenario_match=settings.TELEGRAM_NOTIFY_SCENARIO_MATCH,
+            errors=settings.TELEGRAM_NOTIFY_ERRORS,
+        ),
     )
 
     # Initialize Telegram command handler
