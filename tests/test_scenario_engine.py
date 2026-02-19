@@ -440,3 +440,135 @@ class TestEvaluate:
         assert result.action == ScenarioAction.BUY
         assert result.match_details["rsi"] == 25.0
         assert isinstance(result.match_details["rsi"], float)
+
+
+# ---------------------------------------------------------------------------
+# Position-aware condition tests (#171)
+# ---------------------------------------------------------------------------
+
+
+class TestPositionAwareConditions:
+    """Tests for unrealized_pnl_pct and holding_days condition fields."""
+
+    def test_evaluate_condition_unrealized_pnl_above_matches(
+        self, engine: ScenarioEngine
+    ) -> None:
+        """unrealized_pnl_pct_above should match when P&L exceeds threshold."""
+        condition = StockCondition(unrealized_pnl_pct_above=3.0)
+        assert engine.evaluate_condition(condition, {"unrealized_pnl_pct": 5.0}) is True
+
+    def test_evaluate_condition_unrealized_pnl_above_no_match(
+        self, engine: ScenarioEngine
+    ) -> None:
+        """unrealized_pnl_pct_above should NOT match when P&L is below threshold."""
+        condition = StockCondition(unrealized_pnl_pct_above=3.0)
+        assert engine.evaluate_condition(condition, {"unrealized_pnl_pct": 2.0}) is False
+
+    def test_evaluate_condition_unrealized_pnl_below_matches(
+        self, engine: ScenarioEngine
+    ) -> None:
+        """unrealized_pnl_pct_below should match when P&L is under threshold."""
+        condition = StockCondition(unrealized_pnl_pct_below=-2.0)
+        assert engine.evaluate_condition(condition, {"unrealized_pnl_pct": -3.5}) is True
+
+    def test_evaluate_condition_unrealized_pnl_below_no_match(
+        self, engine: ScenarioEngine
+    ) -> None:
+        """unrealized_pnl_pct_below should NOT match when P&L is above threshold."""
+        condition = StockCondition(unrealized_pnl_pct_below=-2.0)
+        assert engine.evaluate_condition(condition, {"unrealized_pnl_pct": -1.0}) is False
+
+    def test_evaluate_condition_holding_days_above_matches(
+        self, engine: ScenarioEngine
+    ) -> None:
+        """holding_days_above should match when position held longer than threshold."""
+        condition = StockCondition(holding_days_above=5)
+        assert engine.evaluate_condition(condition, {"holding_days": 7}) is True
+
+    def test_evaluate_condition_holding_days_above_no_match(
+        self, engine: ScenarioEngine
+    ) -> None:
+        """holding_days_above should NOT match when position held shorter."""
+        condition = StockCondition(holding_days_above=5)
+        assert engine.evaluate_condition(condition, {"holding_days": 3}) is False
+
+    def test_evaluate_condition_holding_days_below_matches(
+        self, engine: ScenarioEngine
+    ) -> None:
+        """holding_days_below should match when position held fewer days."""
+        condition = StockCondition(holding_days_below=3)
+        assert engine.evaluate_condition(condition, {"holding_days": 1}) is True
+
+    def test_evaluate_condition_holding_days_below_no_match(
+        self, engine: ScenarioEngine
+    ) -> None:
+        """holding_days_below should NOT match when held more days."""
+        condition = StockCondition(holding_days_below=3)
+        assert engine.evaluate_condition(condition, {"holding_days": 5}) is False
+
+    def test_combined_pnl_and_holding_days(self, engine: ScenarioEngine) -> None:
+        """Combined position-aware conditions should AND-evaluate correctly."""
+        condition = StockCondition(
+            unrealized_pnl_pct_above=3.0,
+            holding_days_above=5,
+        )
+        # Both met → match
+        assert engine.evaluate_condition(
+            condition,
+            {"unrealized_pnl_pct": 4.5, "holding_days": 7},
+        ) is True
+        # Only pnl met → no match
+        assert engine.evaluate_condition(
+            condition,
+            {"unrealized_pnl_pct": 4.5, "holding_days": 3},
+        ) is False
+
+    def test_missing_unrealized_pnl_does_not_match(
+        self, engine: ScenarioEngine
+    ) -> None:
+        """Missing unrealized_pnl_pct key should not match the condition."""
+        condition = StockCondition(unrealized_pnl_pct_above=3.0)
+        assert engine.evaluate_condition(condition, {}) is False
+
+    def test_missing_holding_days_does_not_match(
+        self, engine: ScenarioEngine
+    ) -> None:
+        """Missing holding_days key should not match the condition."""
+        condition = StockCondition(holding_days_above=5)
+        assert engine.evaluate_condition(condition, {}) is False
+
+    def test_match_details_includes_position_fields(
+        self, engine: ScenarioEngine
+    ) -> None:
+        """match_details should include position fields when condition specifies them."""
+        pb = _playbook(
+            scenarios=[
+                StockScenario(
+                    condition=StockCondition(unrealized_pnl_pct_above=3.0),
+                    action=ScenarioAction.SELL,
+                    confidence=90,
+                    rationale="Take profit",
+                )
+            ]
+        )
+        result = engine.evaluate(
+            pb,
+            "005930",
+            {"unrealized_pnl_pct": 5.0},
+            {},
+        )
+        assert result.action == ScenarioAction.SELL
+        assert "unrealized_pnl_pct" in result.match_details
+        assert result.match_details["unrealized_pnl_pct"] == 5.0
+
+    def test_position_conditions_parse_from_planner(self) -> None:
+        """StockCondition should accept and store new fields from JSON parsing."""
+        condition = StockCondition(
+            unrealized_pnl_pct_above=3.0,
+            unrealized_pnl_pct_below=None,
+            holding_days_above=5,
+            holding_days_below=None,
+        )
+        assert condition.unrealized_pnl_pct_above == 3.0
+        assert condition.holding_days_above == 5
+        assert condition.has_any_condition() is True

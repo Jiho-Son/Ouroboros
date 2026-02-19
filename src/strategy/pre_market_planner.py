@@ -294,7 +294,8 @@ class PreMarketPlanner:
             f'      "stock_code": "...",\n'
             f'      "scenarios": [\n'
             f'        {{\n'
-            f'          "condition": {{"rsi_below": 30, "volume_ratio_above": 2.0}},\n'
+            f'          "condition": {{"rsi_below": 30, "volume_ratio_above": 2.0,'
+            f' "unrealized_pnl_pct_above": 3.0, "holding_days_above": 5}},\n'
             f'          "action": "BUY|SELL|HOLD",\n'
             f'          "confidence": 85,\n'
             f'          "allocation_pct": 10.0,\n'
@@ -390,6 +391,10 @@ class PreMarketPlanner:
                 price_below=cond_data.get("price_below"),
                 price_change_pct_above=cond_data.get("price_change_pct_above"),
                 price_change_pct_below=cond_data.get("price_change_pct_below"),
+                unrealized_pnl_pct_above=cond_data.get("unrealized_pnl_pct_above"),
+                unrealized_pnl_pct_below=cond_data.get("unrealized_pnl_pct_below"),
+                holding_days_above=cond_data.get("holding_days_above"),
+                holding_days_below=cond_data.get("holding_days_below"),
             )
 
             if not condition.has_any_condition():
