@@ -259,6 +259,50 @@ def create_dashboard_app(db_path: str) -> FastAPI:
                 )
             return {"market": market, "count": len(decisions), "decisions": decisions}
 
+    @app.get("/api/pnl/history")
+    def get_pnl_history(
+        days: int = Query(default=30, ge=1, le=365),
+        market: str = Query("all"),
+    ) -> dict[str, Any]:
+        """Return daily P&L history for charting."""
+        with _connect(db_path) as conn:
+            if market == "all":
+                rows = conn.execute(
+                    """
+                    SELECT DATE(timestamp) AS date,
+                           SUM(pnl) AS daily_pnl,
+                           COUNT(*) AS trade_count
+                    FROM trades
+                    WHERE pnl IS NOT NULL
+                      AND DATE(timestamp) >= DATE('now', ?)
+                    GROUP BY DATE(timestamp)
+                    ORDER BY DATE(timestamp)
+                    """,
+                    (f"-{days} days",),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT DATE(timestamp) AS date,
+                           SUM(pnl) AS daily_pnl,
+                           COUNT(*) AS trade_count
+                    FROM trades
+                    WHERE pnl IS NOT NULL
+                      AND market = ?
+                      AND DATE(timestamp) >= DATE('now', ?)
+                    GROUP BY DATE(timestamp)
+                    ORDER BY DATE(timestamp)
+                    """,
+                    (market, f"-{days} days"),
+                ).fetchall()
+            return {
+                "days": days,
+                "market": market,
+                "labels": [row["date"] for row in rows],
+                "pnl": [round(float(row["daily_pnl"]), 2) for row in rows],
+                "trades": [int(row["trade_count"]) for row in rows],
+            }
+
     @app.get("/api/scenarios/active")
     def get_active_scenarios(
         market: str = Query("US"),

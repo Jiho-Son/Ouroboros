@@ -296,3 +296,23 @@ def test_scenarios_active_empty_when_no_matches(tmp_path: Path) -> None:
     get_active_scenarios = _endpoint(app, "/api/scenarios/active")
     body = get_active_scenarios(market="US", date_str="2026-02-14", limit=50)
     assert body["count"] == 0
+
+
+def test_pnl_history_all_markets(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    get_pnl_history = _endpoint(app, "/api/pnl/history")
+    body = get_pnl_history(days=30, market="all")
+    assert body["market"] == "all"
+    assert isinstance(body["labels"], list)
+    assert isinstance(body["pnl"], list)
+    assert len(body["labels"]) == len(body["pnl"])
+
+
+def test_pnl_history_market_filter(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    get_pnl_history = _endpoint(app, "/api/pnl/history")
+    body = get_pnl_history(days=30, market="KR")
+    assert body["market"] == "KR"
+    # KR has 1 trade with pnl=2.0
+    assert len(body["labels"]) >= 1
+    assert body["pnl"][0] == 2.0
