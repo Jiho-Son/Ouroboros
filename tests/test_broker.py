@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -296,3 +296,82 @@ class TestHashKey:
                 mock_acquire.assert_called_once()
 
         await broker.close()
+
+
+# ---------------------------------------------------------------------------
+# fetch_market_rankings — TR_ID, path, params (issue #155)
+# ---------------------------------------------------------------------------
+
+
+def _make_ranking_mock(items: list[dict]) -> AsyncMock:
+    """Build a mock HTTP response returning ranking items."""
+    mock_resp = AsyncMock()
+    mock_resp.status = 200
+    mock_resp.json = AsyncMock(return_value={"output": items})
+    mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_resp.__aexit__ = AsyncMock(return_value=False)
+    return mock_resp
+
+
+class TestFetchMarketRankings:
+    """Verify correct TR_ID, API path, and params per ranking_type (issue #155)."""
+
+    @pytest.fixture
+    def broker(self, settings) -> KISBroker:
+        b = KISBroker(settings)
+        b._access_token = "tok"
+        b._token_expires_at = float("inf")
+        b._rate_limiter.acquire = AsyncMock()
+        return b
+
+    @pytest.mark.asyncio
+    async def test_volume_uses_correct_tr_id_and_path(self, broker: KISBroker) -> None:
+        mock_resp = _make_ranking_mock([])
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp) as mock_get:
+            await broker.fetch_market_rankings(ranking_type="volume")
+
+        call_kwargs = mock_get.call_args
+        url = call_kwargs[0][0] if call_kwargs[0] else call_kwargs[1].get("url", "")
+        headers = call_kwargs[1].get("headers", {})
+        params = call_kwargs[1].get("params", {})
+
+        assert "volume-rank" in url
+        assert headers.get("tr_id") == "FHPST01710000"
+        assert params.get("FID_COND_SCR_DIV_CODE") == "20171"
+        assert params.get("FID_TRGT_EXLS_CLS_CODE") == "0000000000"
+
+    @pytest.mark.asyncio
+    async def test_fluctuation_uses_correct_tr_id_and_path(self, broker: KISBroker) -> None:
+        mock_resp = _make_ranking_mock([])
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp) as mock_get:
+            await broker.fetch_market_rankings(ranking_type="fluctuation")
+
+        call_kwargs = mock_get.call_args
+        url = call_kwargs[0][0] if call_kwargs[0] else call_kwargs[1].get("url", "")
+        headers = call_kwargs[1].get("headers", {})
+        params = call_kwargs[1].get("params", {})
+
+        assert "ranking/fluctuation" in url
+        assert headers.get("tr_id") == "FHPST01700000"
+        assert params.get("fid_cond_scr_div_code") == "20170"
+
+    @pytest.mark.asyncio
+    async def test_volume_returns_parsed_rows(self, broker: KISBroker) -> None:
+        items = [
+            {
+                "mksc_shrn_iscd": "005930",
+                "hts_kor_isnm": "삼성전자",
+                "stck_prpr": "75000",
+                "acml_vol": "10000000",
+                "prdy_ctrt": "2.5",
+                "vol_inrt": "150",
+            }
+        ]
+        mock_resp = _make_ranking_mock(items)
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp):
+            result = await broker.fetch_market_rankings(ranking_type="volume")
+
+        assert len(result) == 1
+        assert result[0]["stock_code"] == "005930"
+        assert result[0]["price"] == 75000.0
+        assert result[0]["change_rate"] == 2.5

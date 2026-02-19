@@ -304,25 +304,45 @@ class KISBroker:
         await self._rate_limiter.acquire()
         session = self._get_session()
 
-        # TR_ID for volume ranking
-        tr_id = "FHPST01710000" if ranking_type == "volume" else "FHPST01710100"
+        if ranking_type == "volume":
+            # 거래량순위: FHPST01710000 / /quotations/volume-rank
+            tr_id = "FHPST01710000"
+            url = f"{self._base_url}/uapi/domestic-stock/v1/quotations/volume-rank"
+            params: dict[str, str] = {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_SCR_DIV_CODE": "20171",
+                "FID_INPUT_ISCD": "0000",
+                "FID_DIV_CLS_CODE": "0",
+                "FID_BLNG_CLS_CODE": "0",
+                "FID_TRGT_CLS_CODE": "111111111",
+                "FID_TRGT_EXLS_CLS_CODE": "0000000000",
+                "FID_INPUT_PRICE_1": "0",
+                "FID_INPUT_PRICE_2": "0",
+                "FID_VOL_CNT": "0",
+                "FID_INPUT_DATE_1": "",
+            }
+        else:
+            # 등락률순위: FHPST01700000 / /ranking/fluctuation (소문자 파라미터)
+            tr_id = "FHPST01700000"
+            url = f"{self._base_url}/uapi/domestic-stock/v1/ranking/fluctuation"
+            params = {
+                "fid_cond_mrkt_div_code": "J",
+                "fid_cond_scr_div_code": "20170",
+                "fid_input_iscd": "0000",
+                "fid_rank_sort_cls_code": "0000",
+                "fid_input_cnt_1": str(limit),
+                "fid_prc_cls_code": "0",
+                "fid_input_price_1": "0",
+                "fid_input_price_2": "0",
+                "fid_vol_cnt": "0",
+                "fid_trgt_cls_code": "0",
+                "fid_trgt_exls_cls_code": "0",
+                "fid_div_cls_code": "0",
+                "fid_rsfl_rate1": "0",
+                "fid_rsfl_rate2": "0",
+            }
+
         headers = await self._auth_headers(tr_id)
-
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "J",  # Stock/ETF/ETN
-            "FID_COND_SCR_DIV_CODE": "20001",  # Volume surge
-            "FID_INPUT_ISCD": "0000",  # All stocks
-            "FID_DIV_CLS_CODE": "0",  # All types
-            "FID_BLNG_CLS_CODE": "0",
-            "FID_TRGT_CLS_CODE": "111111111",
-            "FID_TRGT_EXLS_CLS_CODE": "000000",
-            "FID_INPUT_PRICE_1": "0",
-            "FID_INPUT_PRICE_2": "0",
-            "FID_VOL_CNT": "0",
-            "FID_INPUT_DATE_1": "",
-        }
-
-        url = f"{self._base_url}/uapi/domestic-stock/v1/quotations/volume-rank"
 
         try:
             async with session.get(url, headers=headers, params=params) as resp:
