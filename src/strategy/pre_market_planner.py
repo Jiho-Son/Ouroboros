@@ -75,6 +75,7 @@ class PreMarketPlanner:
         market: str,
         candidates: list[ScanCandidate],
         today: date | None = None,
+        current_holdings: list[dict] | None = None,
     ) -> DayPlaybook:
         """Generate a DayPlaybook for a market using Gemini.
 
@@ -82,6 +83,10 @@ class PreMarketPlanner:
             market: Market code ("KR" or "US")
             candidates: Stock candidates from SmartVolatilityScanner
             today: Override date (defaults to date.today()). Use market-local date.
+            current_holdings: Currently held positions with entry_price and unrealized_pnl_pct.
+                Each dict: {"stock_code": str, "name": str, "qty": int,
+                            "entry_price": float, "unrealized_pnl_pct": float,
+                            "holding_days": int}
 
         Returns:
             DayPlaybook with scenarios. Empty/defensive if no candidates or failure.
@@ -106,6 +111,7 @@ class PreMarketPlanner:
                 context_data,
                 self_market_scorecard,
                 cross_market,
+                current_holdings=current_holdings,
             )
 
             # 3. Call Gemini
@@ -118,7 +124,8 @@ class PreMarketPlanner:
 
             # 4. Parse response
             playbook = self._parse_response(
-                decision.rationale, today, market, candidates, cross_market
+                decision.rationale, today, market, candidates, cross_market,
+                current_holdings=current_holdings,
             )
             playbook_with_tokens = playbook.model_copy(
                 update={"token_count": decision.token_count}
@@ -230,6 +237,7 @@ class PreMarketPlanner:
         context_data: dict[str, Any],
         self_market_scorecard: dict[str, Any] | None,
         cross_market: CrossMarketContext | None,
+        current_holdings: list[dict] | None = None,
     ) -> str:
         """Build a structured prompt for Gemini to generate scenario JSON."""
         max_scenarios = self._settings.MAX_SCENARIOS_PER_STOCK
@@ -240,6 +248,26 @@ class PreMarketPlanner:
             f"signal={c.signal}, score={c.score:.1f}"
             for c in candidates
         )
+
+        holdings_text = ""
+        if current_holdings:
+            lines = []
+            for h in current_holdings:
+                code = h.get("stock_code", "")
+                name = h.get("name", "")
+                qty = h.get("qty", 0)
+                entry_price = h.get("entry_price", 0.0)
+                pnl_pct = h.get("unrealized_pnl_pct", 0.0)
+                holding_days = h.get("holding_days", 0)
+                lines.append(
+                    f"  - {code} ({name}): {qty}주 @ {entry_price:,.0f}, "
+                    f"미실현손익 {pnl_pct:+.2f}%, 보유 {holding_days}일"
+                )
+            holdings_text = (
+                "\n## Current Holdings (보유 중 — SELL/HOLD 전략 고려 필요)\n"
+                + "\n".join(lines)
+                + "\n"
+            )
 
         cross_market_text = ""
         if cross_market:
@@ -273,10 +301,20 @@ class PreMarketPlanner:
                     for key, value in list(layer_data.items())[:5]:
                         context_text += f"  - {key}: {value}\n"
 
+        holdings_instruction = ""
+        if current_holdings:
+            holding_codes = [h.get("stock_code", "") for h in current_holdings]
+            holdings_instruction = (
+                f"- Also include SELL/HOLD scenarios for held stocks: "
+                f"{', '.join(holding_codes)} "
+                f"(even if not in candidates list)\n"
+            )
+
         return (
             f"You are a pre-market trading strategist for the {market} market.\n"
             f"Generate structured trading scenarios for today.\n\n"
             f"## Candidates (from volatility scanner)\n{candidates_text}\n"
+            f"{holdings_text}"
             f"{self_market_text}"
             f"{cross_market_text}"
             f"{context_text}\n"
@@ -308,7 +346,8 @@ class PreMarketPlanner:
             f'}}\n\n'
             f"Rules:\n"
             f"- Max {max_scenarios} scenarios per stock\n"
-            f"- Only use stocks from the candidates list\n"
+            f"- Candidates list is the primary source for BUY candidates\n"
+            f"{holdings_instruction}"
             f"- Confidence 0-100 (80+ for actionable trades)\n"
             f"- stop_loss_pct must be <= 0, take_profit_pct must be >= 0\n"
             f"- Return ONLY the JSON, no markdown fences or explanation\n"
@@ -321,12 +360,19 @@ class PreMarketPlanner:
         market: str,
         candidates: list[ScanCandidate],
         cross_market: CrossMarketContext | None,
+        current_holdings: list[dict] | None = None,
     ) -> DayPlaybook:
         """Parse Gemini's JSON response into a validated DayPlaybook."""
         cleaned = self._extract_json(response_text)
         data = json.loads(cleaned)
 
         valid_codes = {c.stock_code for c in candidates}
+        # Holdings are also valid — AI may generate SELL/HOLD scenarios for them
+        if current_holdings:
+            for h in current_holdings:
+                code = h.get("stock_code", "")
+                if code:
+                    valid_codes.add(code)
 
         # Parse market outlook
         outlook_str = data.get("market_outlook", "neutral")
