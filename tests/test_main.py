@@ -2114,3 +2114,284 @@ def test_start_dashboard_server_enabled_starts_thread() -> None:
     assert thread == mock_thread
     mock_thread_cls.assert_called_once()
     mock_thread.start.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# market_outlook BUY confidence threshold tests (#173)
+# ---------------------------------------------------------------------------
+
+
+class TestMarketOutlookConfidenceThreshold:
+    """Tests for market_outlook-based BUY confidence suppression in trading_cycle."""
+
+    @pytest.fixture
+    def mock_broker(self) -> MagicMock:
+        broker = MagicMock()
+        broker.get_current_price = AsyncMock(return_value=(50000.0, 1.0, 0.0))
+        broker.get_balance = AsyncMock(
+            return_value={
+                "output2": [
+                    {
+                        "tot_evlu_amt": "10000000",
+                        "dnca_tot_amt": "5000000",
+                        "pchs_amt_smtl_amt": "9500000",
+                    }
+                ]
+            }
+        )
+        broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+        return broker
+
+    @pytest.fixture
+    def mock_market(self) -> MagicMock:
+        market = MagicMock()
+        market.name = "Korea"
+        market.code = "KR"
+        market.exchange_code = "KRX"
+        market.is_domestic = True
+        return market
+
+    @pytest.fixture
+    def mock_telegram(self) -> MagicMock:
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        return telegram
+
+    def _make_buy_match_with_confidence(
+        self, confidence: int, stock_code: str = "005930"
+    ) -> ScenarioMatch:
+        from src.strategy.models import StockScenario
+        scenario = StockScenario(
+            condition=StockCondition(rsi_below=30),
+            action=ScenarioAction.BUY,
+            confidence=confidence,
+            allocation_pct=10.0,
+        )
+        return ScenarioMatch(
+            stock_code=stock_code,
+            matched_scenario=scenario,
+            action=ScenarioAction.BUY,
+            confidence=confidence,
+            rationale="Test buy",
+        )
+
+    def _make_playbook_with_outlook(
+        self, outlook_str: str, market: str = "KR"
+    ) -> DayPlaybook:
+        from src.strategy.models import MarketOutlook
+        outlook_map = {
+            "bearish": MarketOutlook.BEARISH,
+            "bullish": MarketOutlook.BULLISH,
+            "neutral": MarketOutlook.NEUTRAL,
+            "neutral_to_bullish": MarketOutlook.NEUTRAL_TO_BULLISH,
+            "neutral_to_bearish": MarketOutlook.NEUTRAL_TO_BEARISH,
+        }
+        return DayPlaybook(
+            date=date(2026, 2, 20),
+            market=market,
+            market_outlook=outlook_map[outlook_str],
+        )
+
+    @pytest.mark.asyncio
+    async def test_bearish_outlook_raises_buy_confidence_threshold(
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
+    ) -> None:
+        """BUY with confidence 85 should be suppressed to HOLD in bearish market."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=self._make_buy_match_with_confidence(85))
+        playbook = self._make_playbook_with_outlook("bearish")
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=playbook,
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=decision_logger,
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        # HOLD should be logged (not BUY) — check decision_logger was called with HOLD
+        call_args = decision_logger.log_decision.call_args
+        assert call_args is not None
+        assert call_args.kwargs["action"] == "HOLD"
+
+    @pytest.mark.asyncio
+    async def test_bearish_outlook_allows_high_confidence_buy(
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
+    ) -> None:
+        """BUY with confidence 92 should proceed in bearish market (threshold=90)."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=self._make_buy_match_with_confidence(92))
+        playbook = self._make_playbook_with_outlook("bearish")
+        risk = MagicMock()
+        risk.validate_order = MagicMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=playbook,
+                risk=risk,
+                db_conn=MagicMock(),
+                decision_logger=decision_logger,
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        call_args = decision_logger.log_decision.call_args
+        assert call_args is not None
+        assert call_args.kwargs["action"] == "BUY"
+
+    @pytest.mark.asyncio
+    async def test_bullish_outlook_lowers_buy_confidence_threshold(
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
+    ) -> None:
+        """BUY with confidence 77 should proceed in bullish market (threshold=75)."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=self._make_buy_match_with_confidence(77))
+        playbook = self._make_playbook_with_outlook("bullish")
+        risk = MagicMock()
+        risk.validate_order = MagicMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=playbook,
+                risk=risk,
+                db_conn=MagicMock(),
+                decision_logger=decision_logger,
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        call_args = decision_logger.log_decision.call_args
+        assert call_args is not None
+        assert call_args.kwargs["action"] == "BUY"
+
+    @pytest.mark.asyncio
+    async def test_bullish_outlook_suppresses_very_low_confidence_buy(
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
+    ) -> None:
+        """BUY with confidence 70 should be suppressed even in bullish market (threshold=75)."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=self._make_buy_match_with_confidence(70))
+        playbook = self._make_playbook_with_outlook("bullish")
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=playbook,
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=decision_logger,
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        call_args = decision_logger.log_decision.call_args
+        assert call_args is not None
+        assert call_args.kwargs["action"] == "HOLD"
+
+    @pytest.mark.asyncio
+    async def test_neutral_outlook_uses_default_threshold(
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
+    ) -> None:
+        """BUY with confidence 82 should proceed in neutral market (default=80)."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=self._make_buy_match_with_confidence(82))
+        playbook = self._make_playbook_with_outlook("neutral")
+        risk = MagicMock()
+        risk.validate_order = MagicMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=playbook,
+                risk=risk,
+                db_conn=MagicMock(),
+                decision_logger=decision_logger,
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        call_args = decision_logger.log_decision.call_args
+        assert call_args is not None
+        assert call_args.kwargs["action"] == "BUY"

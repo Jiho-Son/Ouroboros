@@ -42,7 +42,7 @@ from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
 from src.markets.schedule import MarketInfo, get_next_market_open, get_open_markets
 from src.notifications.telegram_client import NotificationFilter, TelegramClient, TelegramCommandHandler
-from src.strategy.models import DayPlaybook
+from src.strategy.models import DayPlaybook, MarketOutlook
 from src.strategy.playbook_store import PlaybookStore
 from src.strategy.pre_market_planner import PreMarketPlanner
 from src.strategy.scenario_engine import ScenarioEngine
@@ -456,6 +456,34 @@ async def trading_cycle(
         rationale=match.rationale,
     )
     stock_playbook = playbook.get_stock_playbook(stock_code)
+
+    # 2.1. Apply market_outlook-based BUY confidence threshold
+    if decision.action == "BUY":
+        base_threshold = (settings.CONFIDENCE_THRESHOLD if settings else 80)
+        outlook = playbook.market_outlook
+        if outlook == MarketOutlook.BEARISH:
+            min_confidence = 90
+        elif outlook == MarketOutlook.BULLISH:
+            min_confidence = 75
+        else:
+            min_confidence = base_threshold
+        if match.confidence < min_confidence:
+            logger.info(
+                "BUY suppressed for %s (%s): confidence %d < %d (market_outlook=%s)",
+                stock_code,
+                market.name,
+                match.confidence,
+                min_confidence,
+                outlook.value,
+            )
+            decision = TradeDecision(
+                action="HOLD",
+                confidence=match.confidence,
+                rationale=(
+                    f"BUY confidence {match.confidence} < {min_confidence} "
+                    f"(market_outlook={outlook.value})"
+                ),
+            )
 
     if decision.action == "HOLD":
         open_position = get_open_position(db_conn, stock_code, market.code)
