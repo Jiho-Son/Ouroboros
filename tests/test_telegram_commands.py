@@ -877,10 +877,11 @@ class TestGetUpdates:
             assert updates == []
 
     @pytest.mark.asyncio
-    async def test_get_updates_409_sets_conflict_backoff(self) -> None:
-        """409 Conflict response sets conflict_backoff_until and returns empty list."""
+    async def test_get_updates_409_stops_polling(self) -> None:
+        """409 Conflict response stops the poller (_running = False) and returns empty list."""
         client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
         handler = TelegramCommandHandler(client)
+        handler._running = True  # simulate active poller
 
         mock_resp = AsyncMock()
         mock_resp.status = 409
@@ -894,40 +895,34 @@ class TestGetUpdates:
             updates = await handler._get_updates()
 
         assert updates == []
-        assert handler._conflict_backoff_until > 0  # backoff was set
+        assert handler._running is False  # poller stopped
 
     @pytest.mark.asyncio
-    async def test_poll_loop_skips_during_conflict_backoff(self) -> None:
-        """_poll_loop skips _get_updates while conflict backoff is active."""
+    async def test_poll_loop_exits_after_409(self) -> None:
+        """_poll_loop exits naturally after _running is set to False by a 409 response."""
         import asyncio as _asyncio
 
         client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
         handler = TelegramCommandHandler(client)
 
-        # Set an active backoff (far in the future)
-        handler._conflict_backoff_until = _asyncio.get_event_loop().time() + 600
+        call_count = 0
 
-        get_updates_called = []
-
-        async def mock_get_updates() -> list[dict]:
-            get_updates_called.append(True)
+        async def mock_get_updates_409() -> list[dict]:
+            nonlocal call_count
+            call_count += 1
+            # Simulate 409 stopping the poller
+            handler._running = False
             return []
 
-        handler._get_updates = mock_get_updates  # type: ignore[method-assign]
+        handler._get_updates = mock_get_updates_409  # type: ignore[method-assign]
 
-        # Run one iteration of the poll loop then stop
         handler._running = True
         task = _asyncio.create_task(handler._poll_loop())
-        await _asyncio.sleep(0.05)
-        handler._running = False
-        task.cancel()
-        try:
-            await task
-        except _asyncio.CancelledError:
-            pass
+        await _asyncio.wait_for(task, timeout=2.0)
 
-        # _get_updates should NOT have been called while backoff is active
-        assert get_updates_called == []
+        # _get_updates called exactly once, then loop exited
+        assert call_count == 1
+        assert handler._running is False
 
 
 class TestCommandWithArgs:
