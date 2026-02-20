@@ -631,6 +631,119 @@ class TestTradingCycleTelegramIntegration:
         # Verify no trade notification sent
         mock_telegram.notify_trade_execution.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_sell_skips_fat_finger_check(
+        self,
+        mock_broker: MagicMock,
+        mock_overseas_broker: MagicMock,
+        mock_scenario_engine: MagicMock,
+        mock_playbook: DayPlaybook,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_market: MagicMock,
+    ) -> None:
+        """SELL orders must not be blocked by fat-finger check.
+
+        Even if position value > 30% of cash (e.g. stop-loss on a large holding
+        with low remaining cash), the SELL should proceed — only circuit breaker
+        applies to SELLs.
+        """
+        # SELL decision with held qty=100 shares @ 50,000 = 5,000,000
+        # cash = 5,000,000 → ratio = 100% which would normally trigger fat finger
+        mock_scenario_engine.evaluate = MagicMock(return_value=_make_sell_match())
+        mock_broker.get_balance = AsyncMock(
+            return_value={
+                "output1": [{"pdno": "005930", "ord_psbl_qty": "100"}],
+                "output2": [
+                    {
+                        "tot_evlu_amt": "10000000",
+                        "dnca_tot_amt": "5000000",
+                        "pchs_amt_smtl_amt": "5000000",
+                    }
+                ],
+            }
+        )
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=mock_overseas_broker,
+                scenario_engine=mock_scenario_engine,
+                playbook=mock_playbook,
+                risk=mock_risk,
+                db_conn=mock_db,
+                decision_logger=mock_decision_logger,
+                context_store=mock_context_store,
+                criticality_assessor=mock_criticality_assessor,
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        # validate_order (which includes fat finger) must NOT be called for SELL
+        mock_risk.validate_order.assert_not_called()
+        # check_circuit_breaker MUST be called for SELL
+        mock_risk.check_circuit_breaker.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_sell_circuit_breaker_still_applies(
+        self,
+        mock_broker: MagicMock,
+        mock_overseas_broker: MagicMock,
+        mock_scenario_engine: MagicMock,
+        mock_playbook: DayPlaybook,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_market: MagicMock,
+    ) -> None:
+        """SELL orders must still respect the circuit breaker."""
+        mock_scenario_engine.evaluate = MagicMock(return_value=_make_sell_match())
+        mock_broker.get_balance = AsyncMock(
+            return_value={
+                "output1": [{"pdno": "005930", "ord_psbl_qty": "100"}],
+                "output2": [
+                    {
+                        "tot_evlu_amt": "10000000",
+                        "dnca_tot_amt": "5000000",
+                        "pchs_amt_smtl_amt": "5000000",
+                    }
+                ],
+            }
+        )
+        mock_risk.check_circuit_breaker.side_effect = CircuitBreakerTripped(
+            pnl_pct=-4.0, threshold=-3.0
+        )
+
+        with patch("src.main.log_trade"):
+            with pytest.raises(CircuitBreakerTripped):
+                await trading_cycle(
+                    broker=mock_broker,
+                    overseas_broker=mock_overseas_broker,
+                    scenario_engine=mock_scenario_engine,
+                    playbook=mock_playbook,
+                    risk=mock_risk,
+                    db_conn=mock_db,
+                    decision_logger=mock_decision_logger,
+                    context_store=mock_context_store,
+                    criticality_assessor=mock_criticality_assessor,
+                    telegram=mock_telegram,
+                    market=mock_market,
+                    stock_code="005930",
+                    scan_candidates={},
+                )
+
+        mock_risk.check_circuit_breaker.assert_called_once()
+        mock_risk.validate_order.assert_not_called()
+
 
 class TestRunFunctionTelegramIntegration:
     """Test telegram notifications in run function."""

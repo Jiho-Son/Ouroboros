@@ -660,12 +660,17 @@ async def trading_cycle(
                 return
 
         # 5a. Risk check BEFORE order
+        # SELL orders do not consume cash (they receive it), so fat-finger check
+        # is skipped for SELLs — only circuit breaker applies.
         try:
-            risk.validate_order(
-                current_pnl_pct=pnl_pct,
-                order_amount=order_amount,
-                total_cash=total_cash,
-            )
+            if decision.action == "SELL":
+                risk.check_circuit_breaker(pnl_pct)
+            else:
+                risk.validate_order(
+                    current_pnl_pct=pnl_pct,
+                    order_amount=order_amount,
+                    total_cash=total_cash,
+                )
         except FatFingerRejected as exc:
             try:
                 await telegram.notify_fat_finger(
@@ -1123,12 +1128,17 @@ async def run_daily_session(
                         continue
 
                 # Risk check
+                # SELL orders do not consume cash (they receive it), so fat-finger
+                # check is skipped for SELLs — only circuit breaker applies.
                 try:
-                    risk.validate_order(
-                        current_pnl_pct=pnl_pct,
-                        order_amount=order_amount,
-                        total_cash=total_cash,
-                    )
+                    if decision.action == "SELL":
+                        risk.check_circuit_breaker(pnl_pct)
+                    else:
+                        risk.validate_order(
+                            current_pnl_pct=pnl_pct,
+                            order_amount=order_amount,
+                            total_cash=total_cash,
+                        )
                 except FatFingerRejected as exc:
                     try:
                         await telegram.notify_fat_finger(
