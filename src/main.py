@@ -1300,10 +1300,18 @@ def _start_dashboard_server(settings: Settings) -> threading.Thread | None:
     if not settings.DASHBOARD_ENABLED:
         return None
 
+    # Validate dependencies before spawning the thread so startup failures are
+    # reported synchronously (avoids the misleading "started" → "failed" log pair).
+    try:
+        import uvicorn  # noqa: F401
+        from src.dashboard import create_dashboard_app  # noqa: F401
+    except ImportError as exc:
+        logger.warning("Dashboard server unavailable (missing dependency): %s", exc)
+        return None
+
     def _serve() -> None:
         try:
             import uvicorn
-
             from src.dashboard import create_dashboard_app
 
             app = create_dashboard_app(settings.DB_PATH)
@@ -1314,7 +1322,7 @@ def _start_dashboard_server(settings: Settings) -> threading.Thread | None:
                 log_level="info",
             )
         except Exception as exc:
-            logger.warning("Dashboard server failed to start: %s", exc)
+            logger.warning("Dashboard server stopped unexpectedly: %s", exc)
 
     thread = threading.Thread(
         target=_serve,

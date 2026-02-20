@@ -2194,6 +2194,29 @@ def test_start_dashboard_server_enabled_starts_thread() -> None:
     mock_thread.start.assert_called_once()
 
 
+def test_start_dashboard_server_returns_none_when_uvicorn_missing() -> None:
+    """Returns None (no thread) and logs a warning when uvicorn is not installed."""
+    settings = Settings(
+        KIS_APP_KEY="test_key",
+        KIS_APP_SECRET="test_secret",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="test_gemini_key",
+        DASHBOARD_ENABLED=True,
+    )
+    import builtins
+    real_import = builtins.__import__
+
+    def mock_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "uvicorn":
+            raise ImportError("No module named 'uvicorn'")
+        return real_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=mock_import):
+        thread = _start_dashboard_server(settings)
+
+    assert thread is None
+
+
 # ---------------------------------------------------------------------------
 # market_outlook BUY confidence threshold tests (#173)
 # ---------------------------------------------------------------------------
