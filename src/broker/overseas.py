@@ -230,7 +230,9 @@ class OverseasBroker:
         session = self._broker._get_session()
 
         # Virtual trading TR_IDs for overseas orders
-        tr_id = "VTTT1002U" if order_type == "BUY" else "VTTT1006U"
+        # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 주문' 시트
+        # VTTT1002U: 모의투자 미국 매수, VTTT1001U: 모의투자 미국 매도
+        tr_id = "VTTT1002U" if order_type == "BUY" else "VTTT1001U"
 
         body = {
             "CANO": self._broker._account_no,

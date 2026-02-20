@@ -192,6 +192,27 @@ When `TELEGRAM_COMMANDS_ENABLED=true` (default), the bot accepts these interacti
 
 Commands are only processed from the authorized `TELEGRAM_CHAT_ID`.
 
+## KIS API TR_ID 참조 문서
+
+**TR_ID를 추가하거나 수정할 때 반드시 공식 문서를 먼저 확인할 것.**
+
+공식 문서: `docs/한국투자증권_오픈API_전체문서_20260221_030000.xlsx`
+
+> ⚠️ 커뮤니티 블로그, GitHub 예제 등 비공식 자료의 TR_ID는 오래되거나 틀릴 수 있음.
+> 실제로 `VTTT1006U`(미국 매도 — 잘못됨)가 오랫동안 코드에 남아있던 사례가 있음 (Issue #189).
+
+### 주요 TR_ID 목록
+
+| 구분 | 모의투자 TR_ID | 실전투자 TR_ID | 시트명 |
+|------|---------------|---------------|--------|
+| 해외주식 매수 (미국) | `VTTT1002U` | `TTTT1002U` | 해외주식 주문 |
+| 해외주식 매도 (미국) | `VTTT1001U` | `TTTT1006U` | 해외주식 주문 |
+
+새로운 TR_ID가 필요할 때:
+1. 위 xlsx 파일에서 해당 거래 유형의 시트를 찾는다.
+2. 모의투자(`VTTT`) / 실전투자(`TTTT`) 컬럼을 구분하여 정확한 값을 사용한다.
+3. 코드에 출처 주석을 남긴다: `# Source: 한국투자증권_오픈API_전체문서 — '<시트명>' 시트`
+
 ## Environment Setup
 
 ```bash
