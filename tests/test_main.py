@@ -2218,6 +2218,245 @@ def test_start_dashboard_server_returns_none_when_uvicorn_missing() -> None:
 
 
 # ---------------------------------------------------------------------------
+# BUY cooldown tests (#179)
+# ---------------------------------------------------------------------------
+
+
+class TestBuyCooldown:
+    """Tests for BUY cooldown after insufficient-balance rejection."""
+
+    @pytest.fixture
+    def mock_broker(self) -> MagicMock:
+        broker = MagicMock()
+        broker.get_current_price = AsyncMock(return_value=(100.0, 1.0, 0.0))
+        broker.get_balance = AsyncMock(
+            return_value={
+                "output2": [{"tot_evlu_amt": "1000000", "dnca_tot_amt": "500000",
+                             "pchs_amt_smtl_amt": "500000"}]
+            }
+        )
+        broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+        return broker
+
+    @pytest.fixture
+    def mock_market(self) -> MagicMock:
+        market = MagicMock()
+        market.name = "Korea"
+        market.code = "KR"
+        market.exchange_code = "KRX"
+        market.is_domestic = True
+        return market
+
+    @pytest.fixture
+    def mock_overseas_market(self) -> MagicMock:
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NAS"
+        market.is_domestic = False
+        return market
+
+    @pytest.fixture
+    def mock_overseas_broker(self) -> MagicMock:
+        broker = MagicMock()
+        broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "1.0", "rate": "0.0",
+                                     "high": "1.05", "low": "0.95", "tvol": "1000000"}}
+        )
+        broker.get_overseas_balance = AsyncMock(return_value={
+            "output1": [],
+            "output2": [{"frcr_dncl_amt_2": "50000", "frcr_evlu_tota": "50000",
+                         "frcr_buy_amt_smtl": "0"}],
+        })
+        broker.send_overseas_order = AsyncMock(
+            return_value={"rt_cd": "1", "msg1": "모의투자 주문가능금액이 부족합니다."}
+        )
+        return broker
+
+    def _make_buy_match_overseas(self, stock_code: str = "MLECW") -> ScenarioMatch:
+        return ScenarioMatch(
+            stock_code=stock_code,
+            matched_scenario=None,
+            action=ScenarioAction.BUY,
+            confidence=85,
+            rationale="Test buy",
+        )
+
+    @pytest.mark.asyncio
+    async def test_cooldown_set_on_insufficient_balance(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """BUY cooldown entry is created after 주문가능금액 rejection."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=self._make_buy_match_overseas("MLECW"))
+        buy_cooldown: dict[str, float] = {}
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=mock_overseas_broker,
+                scenario_engine=engine,
+                playbook=_make_playbook("US_NASDAQ"),
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=MagicMock(
+                    notify_trade_execution=AsyncMock(),
+                    notify_fat_finger=AsyncMock(),
+                    notify_circuit_breaker=AsyncMock(),
+                    notify_scenario_matched=AsyncMock(),
+                ),
+                market=mock_overseas_market,
+                stock_code="MLECW",
+                scan_candidates={},
+                buy_cooldown=buy_cooldown,
+            )
+
+        assert "US_NASDAQ:MLECW" in buy_cooldown
+        assert buy_cooldown["US_NASDAQ:MLECW"] > 0
+
+    @pytest.mark.asyncio
+    async def test_cooldown_skips_buy(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """BUY is skipped when cooldown is active for the stock."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=self._make_buy_match_overseas("MLECW"))
+
+        import asyncio
+        # Set an active cooldown (expires far in the future)
+        buy_cooldown: dict[str, float] = {
+            "US_NASDAQ:MLECW": asyncio.get_event_loop().time() + 600
+        }
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=mock_overseas_broker,
+                scenario_engine=engine,
+                playbook=_make_playbook("US_NASDAQ"),
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=MagicMock(
+                    notify_trade_execution=AsyncMock(),
+                    notify_fat_finger=AsyncMock(),
+                    notify_circuit_breaker=AsyncMock(),
+                    notify_scenario_matched=AsyncMock(),
+                ),
+                market=mock_overseas_market,
+                stock_code="MLECW",
+                scan_candidates={},
+                buy_cooldown=buy_cooldown,
+            )
+
+        # Order should NOT have been sent
+        mock_overseas_broker.send_overseas_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cooldown_not_set_on_other_errors(
+        self, mock_broker: MagicMock, mock_overseas_market: MagicMock,
+    ) -> None:
+        """Cooldown is NOT set for non-balance-related rejections."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=self._make_buy_match_overseas("MLECW"))
+        # Different rejection reason
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "1.0", "rate": "0.0",
+                                     "high": "1.05", "low": "0.95", "tvol": "1000000"}}
+        )
+        overseas_broker.get_overseas_balance = AsyncMock(return_value={
+            "output1": [],
+            "output2": [{"frcr_dncl_amt_2": "50000", "frcr_evlu_tota": "50000",
+                         "frcr_buy_amt_smtl": "0"}],
+        })
+        overseas_broker.send_overseas_order = AsyncMock(
+            return_value={"rt_cd": "1", "msg1": "기타 오류 메시지"}
+        )
+        buy_cooldown: dict[str, float] = {}
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=overseas_broker,
+                scenario_engine=engine,
+                playbook=_make_playbook("US_NASDAQ"),
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=MagicMock(
+                    notify_trade_execution=AsyncMock(),
+                    notify_fat_finger=AsyncMock(),
+                    notify_circuit_breaker=AsyncMock(),
+                    notify_scenario_matched=AsyncMock(),
+                ),
+                market=mock_overseas_market,
+                stock_code="MLECW",
+                scan_candidates={},
+                buy_cooldown=buy_cooldown,
+            )
+
+        # Cooldown should NOT be set for non-balance errors
+        assert "US_NASDAQ:MLECW" not in buy_cooldown
+
+    @pytest.mark.asyncio
+    async def test_no_cooldown_param_still_works(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """trading_cycle works normally when buy_cooldown is None (default)."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=self._make_buy_match_overseas("MLECW"))
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=mock_overseas_broker,
+                scenario_engine=engine,
+                playbook=_make_playbook("US_NASDAQ"),
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=MagicMock(
+                    notify_trade_execution=AsyncMock(),
+                    notify_fat_finger=AsyncMock(),
+                    notify_circuit_breaker=AsyncMock(),
+                    notify_scenario_matched=AsyncMock(),
+                ),
+                market=mock_overseas_market,
+                stock_code="MLECW",
+                scan_candidates={},
+                # buy_cooldown not passed → defaults to None
+            )
+
+        # Should attempt the order (and fail), but not crash
+        mock_overseas_broker.send_overseas_order.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # market_outlook BUY confidence threshold tests (#173)
 # ---------------------------------------------------------------------------
 

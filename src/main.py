@@ -81,6 +81,7 @@ def safe_float(value: str | float | None, default: float = 0.0) -> float:
 TRADE_INTERVAL_SECONDS = 60
 SCAN_INTERVAL_SECONDS = 60  # Scan markets every 60 seconds
 MAX_CONNECTION_RETRIES = 3
+_BUY_COOLDOWN_SECONDS = 600  # 10-minute cooldown after insufficient-balance rejection
 
 # Daily trading mode constants (for Free tier API efficiency)
 DAILY_TRADE_SESSIONS = 4  # Number of trading sessions per day
@@ -298,6 +299,7 @@ async def trading_cycle(
     stock_code: str,
     scan_candidates: dict[str, dict[str, ScanCandidate]],
     settings: Settings | None = None,
+    buy_cooldown: dict[str, float] | None = None,
 ) -> None:
     """Execute one trading cycle for a single stock."""
     cycle_start_time = asyncio.get_event_loop().time()
@@ -642,7 +644,22 @@ async def trading_cycle(
             return
         order_amount = current_price * quantity
 
-        # 4. Risk check BEFORE order
+        # 4. Check BUY cooldown (set when a prior BUY failed due to insufficient balance)
+        if decision.action == "BUY" and buy_cooldown is not None:
+            cooldown_key = f"{market.code}:{stock_code}"
+            cooldown_until = buy_cooldown.get(cooldown_key, 0.0)
+            now = asyncio.get_event_loop().time()
+            if now < cooldown_until:
+                remaining = int(cooldown_until - now)
+                logger.info(
+                    "Skip BUY %s (%s): insufficient-balance cooldown active (%ds remaining)",
+                    stock_code,
+                    market.name,
+                    remaining,
+                )
+                return
+
+        # 5a. Risk check BEFORE order
         try:
             risk.validate_order(
                 current_pnl_pct=pnl_pct,
@@ -690,12 +707,24 @@ async def trading_cycle(
             # Check if KIS rejected the order (rt_cd != "0")
             if result.get("rt_cd", "") != "0":
                 order_succeeded = False
+                msg1 = result.get("msg1") or ""
                 logger.warning(
                     "Overseas order not accepted for %s: rt_cd=%s msg=%s",
                     stock_code,
                     result.get("rt_cd"),
-                    result.get("msg1"),
+                    msg1,
                 )
+                # Set BUY cooldown when the rejection is due to insufficient balance
+                if decision.action == "BUY" and buy_cooldown is not None and "주문가능금액" in msg1:
+                    cooldown_key = f"{market.code}:{stock_code}"
+                    buy_cooldown[cooldown_key] = (
+                        asyncio.get_event_loop().time() + _BUY_COOLDOWN_SECONDS
+                    )
+                    logger.info(
+                        "BUY cooldown set for %s: %.0fs (insufficient balance)",
+                        stock_code,
+                        _BUY_COOLDOWN_SECONDS,
+                    )
         logger.info("Order result: %s", result.get("msg1", "OK"))
 
         # 5.5. Notify trade execution (only on success)
@@ -802,6 +831,9 @@ async def run_daily_session(
         return
 
     logger.info("Starting daily trading session for %d markets", len(open_markets))
+
+    # BUY cooldown: prevents retrying stocks rejected for insufficient balance
+    daily_buy_cooldown: dict[str, float] = {}  # "{market_code}:{stock_code}" -> expiry timestamp
 
     # Process each open market
     for market in open_markets:
@@ -1075,6 +1107,21 @@ async def run_daily_session(
                     continue
                 order_amount = stock_data["current_price"] * quantity
 
+                # Check BUY cooldown (insufficient balance)
+                if decision.action == "BUY":
+                    daily_cooldown_key = f"{market.code}:{stock_code}"
+                    daily_cooldown_until = daily_buy_cooldown.get(daily_cooldown_key, 0.0)
+                    now = asyncio.get_event_loop().time()
+                    if now < daily_cooldown_until:
+                        remaining = int(daily_cooldown_until - now)
+                        logger.info(
+                            "Skip BUY %s (%s): insufficient-balance cooldown active (%ds remaining)",
+                            stock_code,
+                            market.name,
+                            remaining,
+                        )
+                        continue
+
                 # Risk check
                 try:
                     risk.validate_order(
@@ -1131,12 +1178,23 @@ async def run_daily_session(
                         )
                         if result.get("rt_cd", "") != "0":
                             order_succeeded = False
+                            daily_msg1 = result.get("msg1") or ""
                             logger.warning(
                                 "Overseas order not accepted for %s: rt_cd=%s msg=%s",
                                 stock_code,
                                 result.get("rt_cd"),
-                                result.get("msg1"),
+                                daily_msg1,
                             )
+                            if decision.action == "BUY" and "주문가능금액" in daily_msg1:
+                                daily_cooldown_key = f"{market.code}:{stock_code}"
+                                daily_buy_cooldown[daily_cooldown_key] = (
+                                    asyncio.get_event_loop().time() + _BUY_COOLDOWN_SECONDS
+                                )
+                                logger.info(
+                                    "BUY cooldown set for %s: %.0fs (insufficient balance)",
+                                    stock_code,
+                                    _BUY_COOLDOWN_SECONDS,
+                                )
                     logger.info("Order result: %s", result.get("msg1", "OK"))
 
                     # Notify trade execution (only on success)
@@ -1763,6 +1821,9 @@ async def run(settings: Settings) -> None:
     # Active stocks per market (dynamically discovered by scanner)
     active_stocks: dict[str, list[str]] = {}  # market_code -> [stock_codes]
 
+    # BUY cooldown: prevents retrying a stock rejected for insufficient balance
+    buy_cooldown: dict[str, float] = {}  # "{market_code}:{stock_code}" -> expiry timestamp
+
     # Initialize latency control system
     criticality_assessor = CriticalityAssessor(
         critical_pnl_threshold=-2.5,  # Near circuit breaker at -3.0%
@@ -2105,6 +2166,7 @@ async def run(settings: Settings) -> None:
                                     stock_code,
                                     scan_candidates,
                                     settings,
+                                    buy_cooldown,
                                 )
                                 break  # Success — exit retry loop
                             except CircuitBreakerTripped as exc:
