@@ -604,9 +604,19 @@ class TelegramCommandHandler:
             async with session.post(url, json=payload) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    logger.error(
-                        "getUpdates API error (status=%d): %s", resp.status, error_text
-                    )
+                    if resp.status == 409:
+                        # Another bot instance is already polling — stop this poller entirely.
+                        # Retrying would keep conflicting with the other instance.
+                        self._running = False
+                        logger.warning(
+                            "Telegram conflict (409): another instance is already polling. "
+                            "Disabling Telegram commands for this process. "
+                            "Ensure only one instance of The Ouroboros is running at a time.",
+                        )
+                    else:
+                        logger.error(
+                            "getUpdates API error (status=%d): %s", resp.status, error_text
+                        )
                     return []
 
                 data = await resp.json()

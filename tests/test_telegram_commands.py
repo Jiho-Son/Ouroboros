@@ -876,6 +876,54 @@ class TestGetUpdates:
 
             assert updates == []
 
+    @pytest.mark.asyncio
+    async def test_get_updates_409_stops_polling(self) -> None:
+        """409 Conflict response stops the poller (_running = False) and returns empty list."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+        handler._running = True  # simulate active poller
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 409
+        mock_resp.text = AsyncMock(
+            return_value='{"ok":false,"error_code":409,"description":"Conflict"}'
+        )
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp):
+            updates = await handler._get_updates()
+
+        assert updates == []
+        assert handler._running is False  # poller stopped
+
+    @pytest.mark.asyncio
+    async def test_poll_loop_exits_after_409(self) -> None:
+        """_poll_loop exits naturally after _running is set to False by a 409 response."""
+        import asyncio as _asyncio
+
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        call_count = 0
+
+        async def mock_get_updates_409() -> list[dict]:
+            nonlocal call_count
+            call_count += 1
+            # Simulate 409 stopping the poller
+            handler._running = False
+            return []
+
+        handler._get_updates = mock_get_updates_409  # type: ignore[method-assign]
+
+        handler._running = True
+        task = _asyncio.create_task(handler._poll_loop())
+        await _asyncio.wait_for(task, timeout=2.0)
+
+        # _get_updates called exactly once, then loop exited
+        assert call_count == 1
+        assert handler._running is False
+
 
 class TestCommandWithArgs:
     """Test register_command_with_args and argument dispatch."""
