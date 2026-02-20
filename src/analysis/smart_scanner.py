@@ -175,7 +175,7 @@ class SmartVolatilityScanner:
                 liquidity_score = volume_rank_bonus.get(stock_code, 0.0)
                 score = min(100.0, volatility_score + liquidity_score)
                 signal = "momentum" if change_rate >= 0 else "oversold"
-                implied_rsi = max(0.0, min(100.0, 50.0 + (change_rate * 4.0)))
+                implied_rsi = max(0.0, min(100.0, 50.0 + (change_rate * 2.0)))
 
                 candidates.append(
                     ScanCandidate(
@@ -282,7 +282,7 @@ class SmartVolatilityScanner:
             liquidity_score = volume_rank_bonus.get(stock_code, 0.0)
             score = min(100.0, volatility_score + liquidity_score)
             signal = "momentum" if change_rate >= 0 else "oversold"
-            implied_rsi = max(0.0, min(100.0, 50.0 + (change_rate * 4.0)))
+            implied_rsi = max(0.0, min(100.0, 50.0 + (change_rate * 2.0)))
             candidates.append(
                 ScanCandidate(
                     stock_code=stock_code,
@@ -338,7 +338,7 @@ class SmartVolatilityScanner:
 
                 score = min(volatility_pct / 10.0, 1.0) * 100.0
                 signal = "momentum" if change_rate >= 0 else "oversold"
-                implied_rsi = max(0.0, min(100.0, 50.0 + (change_rate * 4.0)))
+                implied_rsi = max(0.0, min(100.0, 50.0 + (change_rate * 2.0)))
                 candidates.append(
                     ScanCandidate(
                         stock_code=stock_code,
