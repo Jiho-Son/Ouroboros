@@ -350,6 +350,42 @@ class TestSmartVolatilityScanner:
         assert [c.stock_code for c in candidates] == ["ABCD"]
 
 
+class TestImpliedRSIFormula:
+    """Test the implied_rsi formula in SmartVolatilityScanner (issue #181)."""
+
+    def test_neutral_change_gives_neutral_rsi(self) -> None:
+        """0% change → implied_rsi = 50 (neutral)."""
+        # formula: 50 + (change_rate * 2.0)
+        rsi = max(0.0, min(100.0, 50.0 + (0.0 * 2.0)))
+        assert rsi == 50.0
+
+    def test_10pct_change_gives_rsi_70(self) -> None:
+        """10% upward change → implied_rsi = 70 (momentum signal)."""
+        rsi = max(0.0, min(100.0, 50.0 + (10.0 * 2.0)))
+        assert rsi == 70.0
+
+    def test_minus_10pct_gives_rsi_30(self) -> None:
+        """-10% change → implied_rsi = 30 (oversold signal)."""
+        rsi = max(0.0, min(100.0, 50.0 + (-10.0 * 2.0)))
+        assert rsi == 30.0
+
+    def test_saturation_at_25pct(self) -> None:
+        """Saturation occurs at >=25% change (not 12.5% as with old coefficient 4.0)."""
+        rsi_12pct = max(0.0, min(100.0, 50.0 + (12.5 * 2.0)))
+        rsi_25pct = max(0.0, min(100.0, 50.0 + (25.0 * 2.0)))
+        rsi_30pct = max(0.0, min(100.0, 50.0 + (30.0 * 2.0)))
+        # At 12.5% change: RSI = 75 (not 100, unlike old formula)
+        assert rsi_12pct == 75.0
+        # At 25%+ saturation
+        assert rsi_25pct == 100.0
+        assert rsi_30pct == 100.0  # Capped
+
+    def test_negative_saturation(self) -> None:
+        """Saturation at -25% gives RSI = 0."""
+        rsi = max(0.0, min(100.0, 50.0 + (-25.0 * 2.0)))
+        assert rsi == 0.0
+
+
 class TestRSICalculation:
     """Test RSI calculation in VolatilityAnalyzer."""
 
