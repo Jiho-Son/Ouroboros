@@ -414,7 +414,7 @@ class TestSendOverseasOrder:
 
     @pytest.mark.asyncio
     async def test_sell_limit_order(self, overseas_broker: OverseasBroker) -> None:
-        """Limit sell order should use VTTT1006U and ORD_DVSN=00."""
+        """Limit sell order should use VTTT1001U and ORD_DVSN=00."""
         mock_resp = AsyncMock()
         mock_resp.status = 200
         mock_resp.json = AsyncMock(return_value={"rt_cd": "0"})
@@ -428,7 +428,7 @@ class TestSendOverseasOrder:
         result = await overseas_broker.send_overseas_order("NYSE", "MSFT", "SELL", 5, price=350.0)
         assert result["rt_cd"] == "0"
 
-        overseas_broker._broker._auth_headers.assert_called_with("VTTT1006U")
+        overseas_broker._broker._auth_headers.assert_called_with("VTTT1001U")
 
         call_args = mock_session.post.call_args
         body = call_args[1]["json"]
