@@ -7,6 +7,32 @@
 
 ---
 
+## 2026-02-21
+
+### 거래 상태 확인 중 발견된 버그 (#187)
+
+- 거래 상태 점검 요청 → SELL 주문(손절/익절)이 Fat Finger에 막혀 전혀 실행 안 됨 발견
+- **#187 (Critical)**: SELL 주문에서 Fat Finger 오탐 — `order_amount/total_cash > 30%`가 SELL에도 적용되어 대형 포지션 매도 불가
+  - JELD stop-loss -6.20% → 차단, RXT take-profit +46.13% → 차단
+  - 수정: SELL은 `check_circuit_breaker`만 호출, `validate_order`(Fat Finger 포함) 미호출
+
+---
+
+## 2026-02-20
+
+### 지속적 모니터링 및 개선점 도출 (이슈 #178~#182)
+
+- Dashboard 포함해서 실행하며 간헐적 문제 모니터링 및 개선점 자동 도출 요청
+- 모니터링 결과 발견된 이슈 목록:
+  - **#178**: uvicorn 미설치 → dashboard 미작동 + 오해의 소지 있는 시작 로그 → uvicorn 설치 완료
+  - **#179 (Critical)**: 잔액 부족 주문 실패 후 매 사이클마다 무한 재시도 (MLECW 20분 이상 반복)
+  - **#180**: 다중 인스턴스 실행 시 Telegram 409 충돌
+  - **#181**: implied_rsi 공식 포화 문제 (change_rate≥12.5% → RSI=100)
+  - **#182 (Critical)**: 보유 종목이 SmartScanner 변동성 필터에 걸려 SELL 신호 미생성 → SELL 체결 0건, 잔고 소진
+- 요구사항: 모니터링 자동화 및 주기적 개선점 리포트 도출
+
+---
+
 ## 2026-02-05
 
 ### API 효율화
