@@ -876,6 +876,59 @@ class TestGetUpdates:
 
             assert updates == []
 
+    @pytest.mark.asyncio
+    async def test_get_updates_409_sets_conflict_backoff(self) -> None:
+        """409 Conflict response sets conflict_backoff_until and returns empty list."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 409
+        mock_resp.text = AsyncMock(
+            return_value='{"ok":false,"error_code":409,"description":"Conflict"}'
+        )
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp):
+            updates = await handler._get_updates()
+
+        assert updates == []
+        assert handler._conflict_backoff_until > 0  # backoff was set
+
+    @pytest.mark.asyncio
+    async def test_poll_loop_skips_during_conflict_backoff(self) -> None:
+        """_poll_loop skips _get_updates while conflict backoff is active."""
+        import asyncio as _asyncio
+
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        # Set an active backoff (far in the future)
+        handler._conflict_backoff_until = _asyncio.get_event_loop().time() + 600
+
+        get_updates_called = []
+
+        async def mock_get_updates() -> list[dict]:
+            get_updates_called.append(True)
+            return []
+
+        handler._get_updates = mock_get_updates  # type: ignore[method-assign]
+
+        # Run one iteration of the poll loop then stop
+        handler._running = True
+        task = _asyncio.create_task(handler._poll_loop())
+        await _asyncio.sleep(0.05)
+        handler._running = False
+        task.cancel()
+        try:
+            await task
+        except _asyncio.CancelledError:
+            pass
+
+        # _get_updates should NOT have been called while backoff is active
+        assert get_updates_called == []
+
 
 class TestCommandWithArgs:
     """Test register_command_with_args and argument dispatch."""

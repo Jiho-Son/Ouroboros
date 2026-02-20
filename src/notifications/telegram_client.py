@@ -516,6 +516,7 @@ class TelegramCommandHandler:
         self._last_update_id = 0
         self._polling_task: asyncio.Task[None] | None = None
         self._running = False
+        self._conflict_backoff_until: float = 0.0  # epoch time; skip polling until then
 
     def register_command(
         self, command: str, handler: Callable[[], Awaitable[None]]
@@ -574,6 +575,12 @@ class TelegramCommandHandler:
     async def _poll_loop(self) -> None:
         """Main polling loop that fetches updates."""
         while self._running:
+            # Skip this iteration while a conflict backoff is active
+            now = asyncio.get_event_loop().time()
+            if now < self._conflict_backoff_until:
+                await asyncio.sleep(self._polling_interval)
+                continue
+
             try:
                 updates = await self._get_updates()
                 for update in updates:
@@ -604,9 +611,21 @@ class TelegramCommandHandler:
             async with session.post(url, json=payload) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    logger.error(
-                        "getUpdates API error (status=%d): %s", resp.status, error_text
-                    )
+                    if resp.status == 409:
+                        # Another bot instance is already polling — back off to reduce conflict.
+                        _conflict_backoff_secs = 30.0
+                        self._conflict_backoff_until = (
+                            asyncio.get_event_loop().time() + _conflict_backoff_secs
+                        )
+                        logger.warning(
+                            "Telegram conflict (409): another instance is polling. "
+                            "Backing off %.0fs. Ensure only one bot instance runs at a time.",
+                            _conflict_backoff_secs,
+                        )
+                    else:
+                        logger.error(
+                            "getUpdates API error (status=%d): %s", resp.status, error_text
+                        )
                     return []
 
                 data = await resp.json()
