@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from datetime import UTC, datetime, timezone
 from pathlib import Path
@@ -79,6 +80,36 @@ def create_dashboard_app(db_path: str) -> FastAPI:
                 total_pnl += market_status[market]["total_pnl"]
                 total_decisions += market_status[market]["decision_count"]
 
+            cb_threshold = float(os.getenv("CIRCUIT_BREAKER_PCT", "-3.0"))
+            pnl_pct_rows = conn.execute(
+                """
+                SELECT key, value
+                FROM contexts
+                WHERE layer = 'L7_REALTIME'
+                  AND key LIKE 'portfolio_pnl_pct_%'
+                ORDER BY updated_at DESC
+                LIMIT 20
+                """
+            ).fetchall()
+            current_pnl_pct: float | None = None
+            if pnl_pct_rows:
+                values = [
+                    json.loads(row["value"]).get("pnl_pct")
+                    for row in pnl_pct_rows
+                    if json.loads(row["value"]).get("pnl_pct") is not None
+                ]
+                if values:
+                    current_pnl_pct = round(min(values), 4)
+
+            if current_pnl_pct is None:
+                cb_status = "unknown"
+            elif current_pnl_pct <= cb_threshold:
+                cb_status = "tripped"
+            elif current_pnl_pct <= cb_threshold + 1.0:
+                cb_status = "warning"
+            else:
+                cb_status = "ok"
+
             return {
                 "date": today,
                 "markets": market_status,
@@ -86,6 +117,11 @@ def create_dashboard_app(db_path: str) -> FastAPI:
                     "trade_count": total_trades,
                     "total_pnl": round(total_pnl, 2),
                     "decision_count": total_decisions,
+                },
+                "circuit_breaker": {
+                    "threshold_pct": cb_threshold,
+                    "current_pnl_pct": current_pnl_pct,
+                    "status": cb_status,
                 },
             }
 
