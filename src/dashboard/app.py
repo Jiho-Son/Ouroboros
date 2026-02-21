@@ -85,11 +85,13 @@ def create_dashboard_app(db_path: str) -> FastAPI:
                 """
                 SELECT key, value
                 FROM contexts
-                WHERE layer = 'L7_REALTIME'
+                WHERE layer = 'L6_DAILY'
+                  AND timeframe = ?
                   AND key LIKE 'portfolio_pnl_pct_%'
                 ORDER BY updated_at DESC
                 LIMIT 20
-                """
+                """,
+                (today,),
             ).fetchall()
             current_pnl_pct: float | None = None
             if pnl_pct_rows:

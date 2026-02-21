@@ -355,18 +355,20 @@ def test_positions_empty_when_no_trades(tmp_path: Path) -> None:
 
 def _seed_cb_context(conn: sqlite3.Connection, pnl_pct: float, market: str = "KR") -> None:
     import json as _json
+    from datetime import UTC, datetime
+    today = datetime.now(UTC).date().isoformat()
     conn.execute(
         """
         INSERT OR REPLACE INTO contexts (layer, timeframe, key, value, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
         (
-            "L7_REALTIME",
-            "2026-02-21T10:00:00+00:00",
+            "L6_DAILY",
+            today,
             f"portfolio_pnl_pct_{market}",
             _json.dumps({"pnl_pct": pnl_pct}),
-            "2026-02-21T10:00:00+00:00",
-            "2026-02-21T10:00:00+00:00",
+            f"{today}T10:00:00+00:00",
+            f"{today}T10:00:00+00:00",
         ),
     )
     conn.commit()

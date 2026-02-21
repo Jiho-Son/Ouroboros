@@ -430,10 +430,10 @@ async def trading_cycle(
             {"volume_ratio": candidate.volume_ratio},
         )
 
-    # Store latest pnl_pct in L7 so the dashboard can display the CB gauge
+    # Store latest pnl_pct in L6 (daily P&L layer) so the dashboard can display the CB gauge
     context_store.set_context(
-        ContextLayer.L7_REALTIME,
-        timeframe,
+        ContextLayer.L6_DAILY,
+        datetime.now(UTC).date().isoformat(),
         f"portfolio_pnl_pct_{market.code}",
         {"pnl_pct": round(pnl_pct, 4)},
     )
