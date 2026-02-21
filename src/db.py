@@ -131,6 +131,13 @@ def init_db(db_path: str) -> sqlite3.Connection:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_decision_logs_confidence ON decision_logs(confidence)"
     )
+
+    # Index for open-position queries (partition by stock_code, market, ordered by timestamp)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_trades_stock_market_ts"
+        " ON trades (stock_code, market, timestamp DESC)"
+    )
+
     conn.commit()
     return conn
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -341,12 +341,68 @@ def create_dashboard_app(db_path: str) -> FastAPI:
                 )
             return {"market": market, "date": date_str, "count": len(matches), "matches": matches}
 
+    @app.get("/api/positions")
+    def get_positions() -> dict[str, Any]:
+        """Return all currently open positions (last trade per symbol is BUY)."""
+        with _connect(db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT stock_code, market, exchange_code,
+                       price AS entry_price, quantity, timestamp AS entry_time,
+                       decision_id
+                FROM (
+                    SELECT stock_code, market, exchange_code, price, quantity,
+                           timestamp, decision_id, action,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY stock_code, market
+                               ORDER BY timestamp DESC
+                           ) AS rn
+                    FROM trades
+                )
+                WHERE rn = 1 AND action = 'BUY'
+                ORDER BY entry_time DESC
+                """
+            ).fetchall()
+
+            now = datetime.now(timezone.utc)
+            positions = []
+            for row in rows:
+                entry_time_str = row["entry_time"]
+                try:
+                    entry_dt = datetime.fromisoformat(entry_time_str.replace("Z", "+00:00"))
+                    held_seconds = int((now - entry_dt).total_seconds())
+                    held_hours = held_seconds // 3600
+                    held_minutes = (held_seconds % 3600) // 60
+                    if held_hours >= 1:
+                        held_display = f"{held_hours}h {held_minutes}m"
+                    else:
+                        held_display = f"{held_minutes}m"
+                except (ValueError, TypeError):
+                    held_display = "--"
+
+                positions.append(
+                    {
+                        "stock_code": row["stock_code"],
+                        "market": row["market"],
+                        "exchange_code": row["exchange_code"],
+                        "entry_price": row["entry_price"],
+                        "quantity": row["quantity"],
+                        "entry_time": entry_time_str,
+                        "held": held_display,
+                        "decision_id": row["decision_id"],
+                    }
+                )
+
+            return {"count": len(positions), "positions": positions}
+
     return app
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=8000")
     return conn
 
 

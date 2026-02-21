@@ -316,3 +316,38 @@ def test_pnl_history_market_filter(tmp_path: Path) -> None:
     # KR has 1 trade with pnl=2.0
     assert len(body["labels"]) >= 1
     assert body["pnl"][0] == 2.0
+
+
+def test_positions_returns_open_buy(tmp_path: Path) -> None:
+    """BUY가 마지막 거래인 종목은 포지션으로 반환되어야 한다."""
+    app = _app(tmp_path)
+    get_positions = _endpoint(app, "/api/positions")
+    body = get_positions()
+    # seed_db: 005930은 BUY (오픈), AAPL은 SELL (마지막)
+    assert body["count"] == 1
+    pos = body["positions"][0]
+    assert pos["stock_code"] == "005930"
+    assert pos["market"] == "KR"
+    assert pos["quantity"] == 1
+    assert pos["entry_price"] == 70000
+
+
+def test_positions_excludes_closed_sell(tmp_path: Path) -> None:
+    """마지막 거래가 SELL인 종목은 포지션에 나타나지 않아야 한다."""
+    app = _app(tmp_path)
+    get_positions = _endpoint(app, "/api/positions")
+    body = get_positions()
+    codes = [p["stock_code"] for p in body["positions"]]
+    assert "AAPL" not in codes
+
+
+def test_positions_empty_when_no_trades(tmp_path: Path) -> None:
+    """거래 내역이 없으면 빈 포지션 목록을 반환해야 한다."""
+    db_path = tmp_path / "empty.db"
+    conn = init_db(str(db_path))
+    conn.close()
+    app = create_dashboard_app(str(db_path))
+    get_positions = _endpoint(app, "/api/positions")
+    body = get_positions()
+    assert body["count"] == 0
+    assert body["positions"] == []

@@ -123,6 +123,32 @@
       .rationale-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
       .empty-row td { text-align: center; color: var(--muted); padding: 24px; }
 
+      /* Positions panel */
+      .positions-panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px;
+        margin-bottom: 20px;
+      }
+      .positions-table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+      .positions-table th {
+        text-align: left; color: var(--muted); font-size: 11px; font-weight: 600;
+        padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
+      }
+      .positions-table td {
+        padding: 8px 8px; border-bottom: 1px solid rgba(40, 69, 95, 0.5);
+        vertical-align: middle; white-space: nowrap;
+      }
+      .positions-table tr:last-child td { border-bottom: none; }
+      .positions-table tr:hover td { background: rgba(255,255,255,0.02); }
+      .pos-empty { color: var(--muted); text-align: center; padding: 20px 0; font-size: 12px; }
+      .pos-count {
+        display: inline-block; background: rgba(60, 179, 113, 0.12);
+        color: var(--accent); font-size: 11px; font-weight: 700;
+        padding: 2px 8px; border-radius: 10px; margin-left: 8px;
+      }
+
       /* Spinner */
       .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
@@ -161,6 +187,30 @@
           <div class="card-value neutral" id="card-total">--</div>
           <div class="card-sub">전체 기간</div>
         </div>
+      </div>
+
+      <!-- Open Positions -->
+      <div class="positions-panel">
+        <div class="panel-header">
+          <span class="panel-title">
+            현재 보유 포지션
+            <span class="pos-count" id="positions-count">0</span>
+          </span>
+        </div>
+        <table class="positions-table">
+          <thead>
+            <tr>
+              <th>종목</th>
+              <th>시장</th>
+              <th>수량</th>
+              <th>진입가</th>
+              <th>보유 시간</th>
+            </tr>
+          </thead>
+          <tbody id="positions-body">
+            <tr><td colspan="5" class="pos-empty"><span class="spinner"></span></td></tr>
+          </tbody>
+        </table>
       </div>
 
       <!-- P&L Chart -->
@@ -240,6 +290,39 @@
           <div class="conf-bar"><div class="conf-fill" style="width:${pct}%"></div></div>
           <span class="conf-val">${pct}</span>
         </div>`;
+      }
+
+      function fmtPrice(v, market) {
+        if (v === null || v === undefined) return '--';
+        const n = parseFloat(v);
+        const sym = market === 'KR' ? '₩' : market === 'JP' ? '¥' : market === 'HK' ? 'HK$' : '$';
+        return sym + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+      }
+
+      async function fetchPositions() {
+        const tbody = document.getElementById('positions-body');
+        const countEl = document.getElementById('positions-count');
+        try {
+          const r = await fetch('/api/positions');
+          if (!r.ok) throw new Error('fetch failed');
+          const d = await r.json();
+          countEl.textContent = d.count ?? 0;
+          if (!d.positions || d.positions.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="pos-empty">현재 보유 중인 포지션 없음</td></tr>';
+            return;
+          }
+          tbody.innerHTML = d.positions.map(p => `
+            <tr>
+              <td><strong>${p.stock_code || '--'}</strong></td>
+              <td><span style="color:var(--muted);font-size:11px">${p.market || '--'}</span></td>
+              <td>${p.quantity ?? '--'}</td>
+              <td>${fmtPrice(p.entry_price, p.market)}</td>
+              <td style="color:var(--muted);font-size:11px">${p.held || '--'}</td>
+            </tr>
+          `).join('');
+        } catch {
+          tbody.innerHTML = '<tr><td colspan="5" class="pos-empty">데이터 로드 실패</td></tr>';
+        }
       }
 
       async function fetchStatus() {
@@ -383,6 +466,7 @@
         await Promise.all([
           fetchStatus(),
           fetchPerformance(),
+          fetchPositions(),
           fetchPnlHistory(currentDays),
           fetchDecisions(currentMarket),
         ]);
