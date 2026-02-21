@@ -2848,3 +2848,156 @@ class TestMarketOutlookConfidenceThreshold:
         call_args = decision_logger.log_decision.call_args
         assert call_args is not None
         assert call_args.kwargs["action"] == "BUY"
+
+
+@pytest.mark.asyncio
+async def test_buy_suppressed_when_open_position_exists() -> None:
+    """BUY should be suppressed when an open position already exists for the stock."""
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    # 기존 BUY 포지션 DB에 기록 (중복 매수 상황)
+    buy_decision_id = decision_logger.log_decision(
+        stock_code="NP",
+        market="US",
+        exchange_code="AMS",
+        action="BUY",
+        confidence=90,
+        rationale="initial entry",
+        context_snapshot={},
+        input_data={},
+    )
+    log_trade(
+        conn=db_conn,
+        stock_code="NP",
+        action="BUY",
+        confidence=90,
+        rationale="initial entry",
+        quantity=10,
+        price=50.0,
+        market="US",
+        exchange_code="AMS",
+        decision_id=buy_decision_id,
+    )
+
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_price = AsyncMock(
+        return_value={"output": {"last": "51.0", "rate": "2.0", "high": "52.0", "low": "50.0", "tvol": "1000000"}}
+    )
+    overseas_broker.get_overseas_balance = AsyncMock(
+        return_value={
+            "output1": [],
+            "output2": [{"frcr_dncl_amt_2": "10000", "frcr_evlu_tota": "10000", "frcr_buy_amt_smtl": "0"}],
+        }
+    )
+    overseas_broker.send_overseas_order = AsyncMock(return_value={"msg1": "OK"})
+
+    engine = MagicMock(spec=ScenarioEngine)
+    engine.evaluate = MagicMock(return_value=_make_buy_match(stock_code="NP"))
+
+    market = MagicMock()
+    market.name = "United States"
+    market.code = "US"
+    market.exchange_code = "AMS"
+    market.is_domestic = False
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    await trading_cycle(
+        broker=broker,
+        overseas_broker=overseas_broker,
+        scenario_engine=engine,
+        playbook=_make_playbook(market="US"),
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        context_store=MagicMock(
+            get_latest_timeframe=MagicMock(return_value=None),
+            set_context=MagicMock(),
+        ),
+        criticality_assessor=MagicMock(
+            assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+            get_timeout=MagicMock(return_value=5.0),
+        ),
+        telegram=telegram,
+        market=market,
+        stock_code="NP",
+        scan_candidates={},
+    )
+
+    # 이미 보유 중이므로 주문이 실행되지 않아야 함
+    broker.send_order.assert_not_called()
+    overseas_broker.send_overseas_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_buy_proceeds_when_no_open_position() -> None:
+    """BUY should proceed normally when no open position exists for the stock."""
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+    # DB가 비어있는 상태 — 기존 포지션 없음
+
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_price = AsyncMock(
+        return_value={"output": {"last": "100.0", "rate": "1.0", "high": "101.0", "low": "99.0", "tvol": "500000"}}
+    )
+    overseas_broker.get_overseas_balance = AsyncMock(
+        return_value={
+            "output1": [],
+            "output2": [{"frcr_dncl_amt_2": "50000", "frcr_evlu_tota": "50000", "frcr_buy_amt_smtl": "0"}],
+        }
+    )
+    overseas_broker.send_overseas_order = AsyncMock(return_value={"msg1": "OK"})
+
+    engine = MagicMock(spec=ScenarioEngine)
+    engine.evaluate = MagicMock(return_value=_make_buy_match(stock_code="KNRX"))
+
+    market = MagicMock()
+    market.name = "United States"
+    market.code = "US"
+    market.exchange_code = "NAS"
+    market.is_domestic = False
+
+    risk = MagicMock()
+    risk.validate_order = MagicMock()
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    await trading_cycle(
+        broker=broker,
+        overseas_broker=overseas_broker,
+        scenario_engine=engine,
+        playbook=_make_playbook(market="US"),
+        risk=risk,
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        context_store=MagicMock(
+            get_latest_timeframe=MagicMock(return_value=None),
+            set_context=MagicMock(),
+        ),
+        criticality_assessor=MagicMock(
+            assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+            get_timeout=MagicMock(return_value=5.0),
+        ),
+        telegram=telegram,
+        market=market,
+        stock_code="KNRX",
+        scan_candidates={},
+    )
+
+    # 포지션이 없으므로 해외 주문이 실행되어야 함
+    overseas_broker.send_overseas_order.assert_called_once()

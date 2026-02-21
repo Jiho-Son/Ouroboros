@@ -510,6 +510,25 @@ async def trading_cycle(
                 ),
             )
 
+    # BUY 결정 전 기존 포지션 체크 (중복 매수 방지)
+    if decision.action == "BUY":
+        existing_position = get_open_position(db_conn, stock_code, market.code)
+        if existing_position:
+            decision = TradeDecision(
+                action="HOLD",
+                confidence=decision.confidence,
+                rationale=(
+                    f"Already holding {stock_code} "
+                    f"(entry={existing_position['price']:.4f}, "
+                    f"qty={existing_position['quantity']})"
+                ),
+            )
+            logger.info(
+                "BUY suppressed for %s (%s): already holding open position",
+                stock_code,
+                market.name,
+            )
+
     if decision.action == "HOLD":
         open_position = get_open_position(db_conn, stock_code, market.code)
         if open_position:
