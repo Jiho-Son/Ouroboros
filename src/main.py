@@ -430,13 +430,16 @@ async def trading_cycle(
             {"volume_ratio": candidate.volume_ratio},
         )
 
-    # Store latest pnl_pct in L6 (daily P&L layer) so the dashboard can display the CB gauge
-    context_store.set_context(
-        ContextLayer.L6_DAILY,
-        datetime.now(UTC).date().isoformat(),
-        f"portfolio_pnl_pct_{market.code}",
-        {"pnl_pct": round(pnl_pct, 4)},
+    # Write pnl_pct to system_metrics (dashboard-only table, separate from AI context tree)
+    db_conn.execute(
+        "INSERT OR REPLACE INTO system_metrics (key, value, updated_at) VALUES (?, ?, ?)",
+        (
+            f"portfolio_pnl_pct_{market.code}",
+            json.dumps({"pnl_pct": round(pnl_pct, 4)}),
+            datetime.now(UTC).isoformat(),
+        ),
     )
+    db_conn.commit()
 
     # Build portfolio data for global rule evaluation
     portfolio_data = {
