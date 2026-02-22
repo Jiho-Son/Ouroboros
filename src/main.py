@@ -524,6 +524,14 @@ async def trading_cycle(
     # BUY 결정 전 기존 포지션 체크 (중복 매수 방지)
     if decision.action == "BUY":
         existing_position = get_open_position(db_conn, stock_code, market.code)
+        if not existing_position and not market.is_domestic:
+            # SELL 지정가 접수 후 미체결 시 DB는 종료로 기록되나 브로커는 여전히 보유 중.
+            # 이중 매수 방지를 위해 라이브 브로커 잔고를 authoritative source로 사용.
+            broker_qty = _extract_held_qty_from_balance(
+                balance_data, stock_code, is_domestic=False
+            )
+            if broker_qty > 0:
+                existing_position = {"price": 0.0, "quantity": broker_qty}
         if existing_position:
             decision = TradeDecision(
                 action="HOLD",
@@ -1075,6 +1083,33 @@ async def run_daily_session(
                 decision.action,
                 decision.confidence,
             )
+
+            # BUY 중복 방지: 브로커 잔고 기반 (미체결 SELL 리밋 주문 보호)
+            if decision.action == "BUY":
+                daily_existing = get_open_position(db_conn, stock_code, market.code)
+                if not daily_existing and not market.is_domestic:
+                    # SELL 지정가 접수 후 미체결 시 DB는 종료로 기록되나 브로커는 여전히 보유 중.
+                    # 이중 매수 방지를 위해 라이브 브로커 잔고를 authoritative source로 사용.
+                    broker_qty = _extract_held_qty_from_balance(
+                        balance_data, stock_code, is_domestic=False
+                    )
+                    if broker_qty > 0:
+                        daily_existing = {"price": 0.0, "quantity": broker_qty}
+                if daily_existing:
+                    decision = TradeDecision(
+                        action="HOLD",
+                        confidence=decision.confidence,
+                        rationale=(
+                            f"Already holding {stock_code} "
+                            f"(entry={daily_existing['price']:.4f}, "
+                            f"qty={daily_existing['quantity']})"
+                        ),
+                    )
+                    logger.info(
+                        "BUY suppressed for %s (%s): already holding open position",
+                        stock_code,
+                        market.name,
+                    )
 
             # Log decision
             context_snapshot = {
