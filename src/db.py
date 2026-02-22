@@ -138,6 +138,18 @@ def init_db(db_path: str) -> sqlite3.Connection:
         " ON trades (stock_code, market, timestamp DESC)"
     )
 
+    # Lightweight key-value store for trading system runtime metrics (dashboard use only)
+    # Intentionally separate from the AI context tree to preserve separation of concerns.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS system_metrics (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
     conn.commit()
     return conn
 

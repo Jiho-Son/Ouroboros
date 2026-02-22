@@ -351,3 +351,65 @@ def test_positions_empty_when_no_trades(tmp_path: Path) -> None:
     body = get_positions()
     assert body["count"] == 0
     assert body["positions"] == []
+
+
+def _seed_cb_context(conn: sqlite3.Connection, pnl_pct: float, market: str = "KR") -> None:
+    import json as _json
+    conn.execute(
+        "INSERT OR REPLACE INTO system_metrics (key, value, updated_at) VALUES (?, ?, ?)",
+        (
+            f"portfolio_pnl_pct_{market}",
+            _json.dumps({"pnl_pct": pnl_pct}),
+            "2026-02-22T10:00:00+00:00",
+        ),
+    )
+    conn.commit()
+
+
+def test_status_circuit_breaker_ok(tmp_path: Path) -> None:
+    """pnl_pct가 -2.0%보다 높으면 status=ok를 반환해야 한다."""
+    db_path = tmp_path / "cb_ok.db"
+    conn = init_db(str(db_path))
+    _seed_cb_context(conn, -1.0)
+    conn.close()
+    app = create_dashboard_app(str(db_path))
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+    cb = body["circuit_breaker"]
+    assert cb["status"] == "ok"
+    assert cb["current_pnl_pct"] == -1.0
+    assert cb["threshold_pct"] == -3.0
+
+
+def test_status_circuit_breaker_warning(tmp_path: Path) -> None:
+    """pnl_pct가 -2.0% 이하이면 status=warning을 반환해야 한다."""
+    db_path = tmp_path / "cb_warn.db"
+    conn = init_db(str(db_path))
+    _seed_cb_context(conn, -2.5)
+    conn.close()
+    app = create_dashboard_app(str(db_path))
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+    assert body["circuit_breaker"]["status"] == "warning"
+
+
+def test_status_circuit_breaker_tripped(tmp_path: Path) -> None:
+    """pnl_pct가 임계값(-3.0%) 이하이면 status=tripped를 반환해야 한다."""
+    db_path = tmp_path / "cb_tripped.db"
+    conn = init_db(str(db_path))
+    _seed_cb_context(conn, -3.5)
+    conn.close()
+    app = create_dashboard_app(str(db_path))
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+    assert body["circuit_breaker"]["status"] == "tripped"
+
+
+def test_status_circuit_breaker_unknown_when_no_data(tmp_path: Path) -> None:
+    """L7 context에 pnl_pct 데이터가 없으면 status=unknown을 반환해야 한다."""
+    app = _app(tmp_path)  # seed_db에는 portfolio_pnl_pct 없음
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+    cb = body["circuit_breaker"]
+    assert cb["status"] == "unknown"
+    assert cb["current_pnl_pct"] is None

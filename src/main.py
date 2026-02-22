@@ -430,6 +430,17 @@ async def trading_cycle(
             {"volume_ratio": candidate.volume_ratio},
         )
 
+    # Write pnl_pct to system_metrics (dashboard-only table, separate from AI context tree)
+    db_conn.execute(
+        "INSERT OR REPLACE INTO system_metrics (key, value, updated_at) VALUES (?, ?, ?)",
+        (
+            f"portfolio_pnl_pct_{market.code}",
+            json.dumps({"pnl_pct": round(pnl_pct, 4)}),
+            datetime.now(UTC).isoformat(),
+        ),
+    )
+    db_conn.commit()
+
     # Build portfolio data for global rule evaluation
     portfolio_data = {
         "portfolio_pnl_pct": pnl_pct,

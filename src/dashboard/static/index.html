@@ -13,6 +13,7 @@
         --muted: #9fb3c8;
         --accent: #3cb371;
         --red: #e05555;
+        --warn: #e8a040;
         --border: #28455f;
       }
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -42,6 +43,25 @@
         font-size: 12px; transition: border-color 0.2s;
       }
       .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+      /* CB Gauge */
+      .cb-gauge-wrap {
+        display: flex; align-items: center; gap: 8px;
+        font-size: 11px; color: var(--muted);
+      }
+      .cb-dot {
+        width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+      }
+      .cb-dot.ok      { background: var(--accent); }
+      .cb-dot.warning { background: var(--warn); animation: pulse-warn 1.2s ease-in-out infinite; }
+      .cb-dot.tripped { background: var(--red);  animation: pulse-warn 0.6s ease-in-out infinite; }
+      .cb-dot.unknown { background: var(--border); }
+      @keyframes pulse-warn {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.35; }
+      }
+      .cb-bar-wrap { width: 64px; height: 5px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
+      .cb-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s, background 0.4s; }
 
       /* Summary cards */
       .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
@@ -160,6 +180,13 @@
       <header>
         <h1>&#x1F40D; The Ouroboros</h1>
         <div class="header-right">
+          <div class="cb-gauge-wrap" id="cb-gauge" title="Circuit Breaker">
+            <span class="cb-dot unknown" id="cb-dot"></span>
+            <span id="cb-label">CB --</span>
+            <div class="cb-bar-wrap">
+              <div class="cb-bar-fill" id="cb-bar" style="width:0%;background:var(--accent)"></div>
+            </div>
+          </div>
           <span id="last-updated">--</span>
           <button class="refresh-btn" onclick="refreshAll()">&#x21BA; 새로고침</button>
         </div>
@@ -325,6 +352,38 @@
         }
       }
 
+      function renderCbGauge(cb) {
+        if (!cb) return;
+        const dot = document.getElementById('cb-dot');
+        const label = document.getElementById('cb-label');
+        const bar = document.getElementById('cb-bar');
+
+        const status = cb.status || 'unknown';
+        const threshold = cb.threshold_pct ?? -3.0;
+        const current = cb.current_pnl_pct;
+
+        // dot color
+        dot.className = `cb-dot ${status}`;
+
+        // label
+        if (current !== null && current !== undefined) {
+          const sign = current > 0 ? '+' : '';
+          label.textContent = `CB ${sign}${current.toFixed(2)}%`;
+        } else {
+          label.textContent = 'CB --';
+        }
+
+        // bar: fill = how much of the threshold has been consumed (0%=safe, 100%=tripped)
+        const colorMap = { ok: 'var(--accent)', warning: 'var(--warn)', tripped: 'var(--red)', unknown: 'var(--border)' };
+        bar.style.background = colorMap[status] || 'var(--border)';
+        if (current !== null && current !== undefined && threshold < 0) {
+          const fillPct = Math.min(Math.max((current / threshold) * 100, 0), 100);
+          bar.style.width = `${fillPct}%`;
+        } else {
+          bar.style.width = '0%';
+        }
+      }
+
       async function fetchStatus() {
         try {
           const r = await fetch('/api/status');
@@ -341,6 +400,7 @@
             pnlEl.className = `card-value ${n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral'}`;
           }
           document.getElementById('card-pnl-sub').textContent = `결정 ${t.decision_count ?? 0}건`;
+          renderCbGauge(d.circuit_breaker);
         } catch {}
       }
 
