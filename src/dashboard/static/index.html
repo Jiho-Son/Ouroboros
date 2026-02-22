@@ -172,6 +172,51 @@
       /* Spinner */
       .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* Generic panel */
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px;
+        margin-top: 20px;
+      }
+
+      /* Playbook panel - details/summary accordion */
+      .playbook-panel details { border: 1px solid var(--border); border-radius: 4px; margin-bottom: 6px; }
+      .playbook-panel summary { padding: 8px 12px; cursor: pointer; font-weight: 600; background: var(--bg); color: var(--fg); }
+      .playbook-panel summary:hover { color: var(--accent); }
+      .playbook-panel pre { margin: 0; padding: 12px; background: var(--bg); overflow-x: auto;
+                            font-size: 11px; color: #a0c4ff; white-space: pre-wrap; }
+
+      /* Scorecard KPI card grid */
+      .scorecard-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+      .kpi-card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; text-align: center; }
+      .kpi-card .kpi-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+      .kpi-card .kpi-value { font-size: 20px; font-weight: 700; color: var(--fg); }
+
+      /* Scenarios table */
+      .scenarios-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      .scenarios-table th { background: var(--bg); padding: 8px; text-align: left; border-bottom: 1px solid var(--border);
+                            color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+      .scenarios-table td { padding: 7px 8px; border-bottom: 1px solid rgba(40,69,95,0.5); }
+      .scenarios-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+      /* Context table */
+      .context-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      .context-table th { background: var(--bg); padding: 8px; text-align: left; border-bottom: 1px solid var(--border);
+                          color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+      .context-table td { padding: 6px 8px; border-bottom: 1px solid rgba(40,69,95,0.5); vertical-align: top; }
+      .context-value { max-height: 60px; overflow-y: auto; color: #a0c4ff; word-break: break-all; }
+
+      /* Common panel select controls */
+      .panel-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .panel-controls select, .panel-controls input[type="number"] {
+        background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+        border-radius: 4px; padding: 4px 8px; font-size: 13px; font-family: inherit;
+      }
+      .panel-date { color: var(--muted); font-size: 12px; }
+      .empty-msg { color: var(--muted); text-align: center; padding: 20px 0; font-size: 12px; }
     </style>
   </head>
   <body>
@@ -282,6 +327,72 @@
             <tr class="empty-row"><td colspan="5"><span class="spinner"></span></td></tr>
           </tbody>
         </table>
+      </div>
+
+      <!-- playbook panel -->
+      <div class="panel playbook-panel">
+        <div class="panel-header">
+          <span class="panel-title">&#x1F4CB; 프리마켓 플레이북</span>
+          <div class="panel-controls">
+            <select id="pb-market-select" onchange="fetchPlaybook()">
+              <option value="KR">KR</option>
+              <option value="US_NASDAQ">US_NASDAQ</option>
+              <option value="US_NYSE">US_NYSE</option>
+            </select>
+            <span id="pb-date" class="panel-date"></span>
+          </div>
+        </div>
+        <div id="playbook-content"><p class="empty-msg">데이터 없음</p></div>
+      </div>
+
+      <!-- scorecard panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">&#x1F4CA; 일간 스코어카드</span>
+          <div class="panel-controls">
+            <select id="sc-market-select" onchange="fetchScorecard()">
+              <option value="KR">KR</option>
+              <option value="US_NASDAQ">US_NASDAQ</option>
+            </select>
+            <span id="sc-date" class="panel-date"></span>
+          </div>
+        </div>
+        <div id="scorecard-grid" class="scorecard-grid"><p class="empty-msg">데이터 없음</p></div>
+      </div>
+
+      <!-- scenarios panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">&#x1F3AF; 활성 시나리오 매칭</span>
+          <div class="panel-controls">
+            <select id="scen-market-select" onchange="fetchScenarios()">
+              <option value="KR">KR</option>
+              <option value="US_NASDAQ">US_NASDAQ</option>
+            </select>
+          </div>
+        </div>
+        <div id="scenarios-content"><p class="empty-msg">데이터 없음</p></div>
+      </div>
+
+      <!-- context layer panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">&#x1F9E0; 컨텍스트 트리</span>
+          <div class="panel-controls">
+            <select id="ctx-layer-select" onchange="fetchContext()">
+              <option value="L7_REALTIME">L7_REALTIME</option>
+              <option value="L6_DAILY">L6_DAILY</option>
+              <option value="L5_WEEKLY">L5_WEEKLY</option>
+              <option value="L4_MONTHLY">L4_MONTHLY</option>
+              <option value="L3_QUARTERLY">L3_QUARTERLY</option>
+              <option value="L2_YEARLY">L2_YEARLY</option>
+              <option value="L1_LIFETIME">L1_LIFETIME</option>
+            </select>
+            <input id="ctx-limit" type="number" value="20" min="1" max="200"
+                   style="width:60px;" onchange="fetchContext()">
+          </div>
+        </div>
+        <div id="context-content"><p class="empty-msg">데이터 없음</p></div>
       </div>
     </div>
 
@@ -521,6 +632,117 @@
         fetchDecisions(currentMarket);
       }
 
+      function todayStr() {
+        return new Date().toISOString().slice(0, 10);
+      }
+
+      function esc(s) {
+        return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+
+      async function fetchJSON(url) {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      }
+
+      async function fetchPlaybook() {
+        const market = document.getElementById('pb-market-select').value;
+        const date = todayStr();
+        document.getElementById('pb-date').textContent = date;
+        const el = document.getElementById('playbook-content');
+        try {
+          const data = await fetchJSON(`/api/playbook/${date}?market=${market}`);
+          const stocks = data.stock_playbooks ?? [];
+          if (stocks.length === 0) {
+            el.innerHTML = '<p class="empty-msg">오늘 플레이북 없음</p>';
+            return;
+          }
+          el.innerHTML = stocks.map(sp =>
+            `<details><summary>${esc(sp.stock_code ?? '?')} — ${esc(sp.signal ?? '')}</summary>` +
+            `<pre>${esc(JSON.stringify(sp, null, 2))}</pre></details>`
+          ).join('');
+        } catch {
+          el.innerHTML = '<p class="empty-msg">플레이북 없음 (오늘 미생성 또는 API 오류)</p>';
+        }
+      }
+
+      async function fetchScorecard() {
+        const market = document.getElementById('sc-market-select').value;
+        const date = todayStr();
+        document.getElementById('sc-date').textContent = date;
+        const el = document.getElementById('scorecard-grid');
+        try {
+          const data = await fetchJSON(`/api/scorecard/${date}?market=${market}`);
+          const sc = data.scorecard ?? {};
+          const entries = Object.entries(sc);
+          if (entries.length === 0) {
+            el.innerHTML = '<p class="empty-msg">스코어카드 없음</p>';
+            return;
+          }
+          el.className = 'scorecard-grid';
+          el.innerHTML = entries.map(([k, v]) => `
+            <div class="kpi-card">
+              <div class="kpi-label">${esc(k)}</div>
+              <div class="kpi-value">${typeof v === 'number' ? v.toFixed(2) : esc(String(v))}</div>
+            </div>`).join('');
+        } catch {
+          el.innerHTML = '<p class="empty-msg">스코어카드 없음 (오늘 미생성 또는 API 오류)</p>';
+        }
+      }
+
+      async function fetchScenarios() {
+        const market = document.getElementById('scen-market-select').value;
+        const date = todayStr();
+        const el = document.getElementById('scenarios-content');
+        try {
+          const data = await fetchJSON(`/api/scenarios/active?market=${market}&date_str=${date}&limit=50`);
+          const matches = data.matches ?? [];
+          if (matches.length === 0) {
+            el.innerHTML = '<p class="empty-msg">활성 시나리오 없음</p>';
+            return;
+          }
+          el.innerHTML = `<table class="scenarios-table">
+            <thead><tr><th>종목</th><th>신호</th><th>신뢰도</th><th>매칭 조건</th></tr></thead>
+            <tbody>${matches.map(m => `
+              <tr>
+                <td>${esc(m.stock_code)}</td>
+                <td>${esc(m.signal ?? '-')}</td>
+                <td>${esc(m.confidence ?? '-')}</td>
+                <td><code style="font-size:11px">${esc(JSON.stringify(m.scenario_match ?? {}))}</code></td>
+              </tr>`).join('')}
+            </tbody></table>`;
+        } catch {
+          el.innerHTML = '<p class="empty-msg">데이터 없음</p>';
+        }
+      }
+
+      async function fetchContext() {
+        const layer = document.getElementById('ctx-layer-select').value;
+        const limit = Math.min(Math.max(parseInt(document.getElementById('ctx-limit').value, 10) || 20, 1), 200);
+        const el = document.getElementById('context-content');
+        try {
+          const data = await fetchJSON(`/api/context/${layer}?limit=${limit}`);
+          const entries = data.entries ?? [];
+          if (entries.length === 0) {
+            el.innerHTML = '<p class="empty-msg">컨텍스트 없음</p>';
+            return;
+          }
+          el.innerHTML = `<table class="context-table">
+            <thead><tr><th>timeframe</th><th>key</th><th>value</th><th>updated</th></tr></thead>
+            <tbody>${entries.map(e => `
+              <tr>
+                <td>${esc(e.timeframe)}</td>
+                <td>${esc(e.key)}</td>
+                <td><div class="context-value">${esc(JSON.stringify(e.value ?? e.raw_value))}</div></td>
+                <td style="font-size:11px;color:var(--muted)">${esc((e.updated_at ?? '').slice(0, 16))}</td>
+              </tr>`).join('')}
+            </tbody></table>`;
+        } catch {
+          el.innerHTML = '<p class="empty-msg">데이터 없음</p>';
+        }
+      }
+
       async function refreshAll() {
         document.getElementById('last-updated').textContent = '업데이트 중...';
         await Promise.all([
@@ -529,6 +751,10 @@
           fetchPositions(),
           fetchPnlHistory(currentDays),
           fetchDecisions(currentMarket),
+          fetchPlaybook(),
+          fetchScorecard(),
+          fetchScenarios(),
+          fetchContext(),
         ]);
         const now = new Date();
         const timeStr = now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
