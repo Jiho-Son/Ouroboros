@@ -3001,3 +3001,185 @@ async def test_buy_proceeds_when_no_open_position() -> None:
 
     # 포지션이 없으므로 해외 주문이 실행되어야 함
     overseas_broker.send_overseas_order.assert_called_once()
+
+
+class TestOverseasBrokerIntegration:
+    """Test overseas broker live-balance gating for double-buy prevention.
+
+    Issue #195: KIS VTS SELL limit orders are accepted (rt_cd=0) immediately
+    but may not fill until the market price reaches the limit. During this window,
+    the DB records the position as closed, causing the next cycle to BUY again.
+    These tests verify that live broker balance is used as the authoritative source.
+    """
+
+    @pytest.mark.asyncio
+    async def test_overseas_buy_suppressed_by_broker_balance_when_db_shows_closed(
+        self,
+    ) -> None:
+        """BUY must be suppressed when broker still holds shares even if DB says closed.
+
+        Scenario: SELL limit order was accepted (DB shows closed), but hasn't
+        filled yet — broker balance still shows 10 AAPL shares.
+        Expected: send_overseas_order is NOT called.
+        """
+        db_conn = init_db(":memory:")
+        # DB: BUY then SELL recorded → get_open_position returns None (closed)
+        log_trade(
+            conn=db_conn,
+            stock_code="AAPL",
+            action="BUY",
+            confidence=90,
+            rationale="entry",
+            quantity=10,
+            price=180.0,
+            market="US_NASDAQ",
+            exchange_code="NASD",
+        )
+        log_trade(
+            conn=db_conn,
+            stock_code="AAPL",
+            action="SELL",
+            confidence=90,
+            rationale="sell order accepted",
+            quantity=10,
+            price=182.0,
+            market="US_NASDAQ",
+            exchange_code="NASD",
+        )
+
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "182.50"}}
+        )
+        # 브로커: 여전히 AAPL 10주 보유 중 (SELL 미체결)
+        overseas_broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output1": [{"ovrs_pdno": "AAPL", "ovrs_cblc_qty": "10"}],
+                "output2": [
+                    {
+                        "frcr_dncl_amt_2": "50000.00",
+                        "frcr_evlu_tota": "60000.00",
+                        "frcr_buy_amt_smtl": "50000.00",
+                    }
+                ],
+            }
+        )
+        overseas_broker.send_overseas_order = AsyncMock(return_value={"msg1": "주문접수"})
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_buy_match("AAPL"))
+
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+        await trading_cycle(
+            broker=MagicMock(),
+            overseas_broker=overseas_broker,
+            scenario_engine=engine,
+            playbook=_make_playbook(market="US"),
+            risk=MagicMock(),
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(
+                get_latest_timeframe=MagicMock(return_value=None),
+                set_context=MagicMock(),
+            ),
+            criticality_assessor=MagicMock(
+                assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                get_timeout=MagicMock(return_value=5.0),
+            ),
+            telegram=telegram,
+            market=market,
+            stock_code="AAPL",
+            scan_candidates={},
+        )
+
+        # 브로커 잔고에 보유 중이므로 BUY 주문이 억제되어야 함 (이중 매수 방지)
+        overseas_broker.send_overseas_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_overseas_buy_proceeds_when_broker_shows_no_holding(
+        self,
+    ) -> None:
+        """BUY must proceed when both DB and broker confirm no existing holding.
+
+        Scenario: No prior trades in DB and broker balance shows no AAPL.
+        Expected: send_overseas_order IS called (normal buy flow).
+        """
+        db_conn = init_db(":memory:")
+        # DB: 레코드 없음 (신규 포지션)
+
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "182.50"}}
+        )
+        # 브로커: AAPL 미보유
+        overseas_broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output1": [],
+                "output2": [
+                    {
+                        "frcr_dncl_amt_2": "50000.00",
+                        "frcr_evlu_tota": "50000.00",
+                        "frcr_buy_amt_smtl": "0.00",
+                    }
+                ],
+            }
+        )
+        overseas_broker.send_overseas_order = AsyncMock(return_value={"msg1": "주문접수"})
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_buy_match("AAPL"))
+
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=MagicMock(),
+                overseas_broker=overseas_broker,
+                scenario_engine=engine,
+                playbook=_make_playbook(market="US"),
+                risk=MagicMock(),
+                db_conn=db_conn,
+                decision_logger=decision_logger,
+                context_store=MagicMock(
+                    get_latest_timeframe=MagicMock(return_value=None),
+                    set_context=MagicMock(),
+                ),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                market=market,
+                stock_code="AAPL",
+                scan_candidates={},
+            )
+
+        # DB도 브로커도 보유 없음 → BUY 주문이 실행되어야 함 (회귀 테스트)
+        overseas_broker.send_overseas_order.assert_called_once()
