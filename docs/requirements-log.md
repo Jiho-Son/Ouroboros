@@ -322,3 +322,36 @@ Order result: 모의투자 매수주문이 완료 되었습니다.  ✓
    - `TestHandleDomesticPendingOrders` (4), `TestDomesticLimitOrderPrice` (2)
 
 **이슈/PR:** #232, PR #233
+
+---
+
+## 2026-02-24
+
+### 해외잔고 ghost position 수정 — '모의투자 잔고내역이 없습니다' 반복 방지 (#235)
+
+**배경:**
+- 모의투자 실행 시 MLECW, KNRX, NBY, SNSE 등 만료/정지된 종목에 대해
+  `모의투자 잔고내역이 없습니다` 오류가 매 사이클 반복됨
+
+**근본 원인:**
+1. `ovrs_cblc_qty` (해외잔고수량, 총 보유) vs `ord_psbl_qty` (주문가능수량, 실제 매도 가능)
+   - 기존 코드: `ovrs_cblc_qty` 우선 사용 → 만료 Warrant가 `ovrs_cblc_qty=289456`이지만 실제 `ord_psbl_qty=0`
+   - startup sync / build_overseas_symbol_universe가 이 종목들을 포지션으로 기록
+2. SELL 실패 시 DB 포지션이 닫히지 않아 다음 사이클에서도 재시도 (무한 반복)
+
+**구현 내용:**
+
+1. `src/main.py` — `_extract_held_codes_from_balance`, `_extract_held_qty_from_balance`
+   - 해외 잔고 필드 우선순위 변경: `ord_psbl_qty` → `ovrs_cblc_qty` → `hldg_qty` (fallback 유지)
+   - KIS 공식 문서(VTTS3012R) 기준: `ord_psbl_qty`가 실제 매도 가능 수량
+
+2. `src/main.py` — `trading_cycle` ghost-close 처리
+   - 해외 SELL이 `잔고내역이 없습니다`로 실패 시 DB 포지션을 `[ghost-close]` SELL로 종료
+   - exchange code 불일치 등 예외 상황에서 무한 반복 방지
+
+3. 테스트 7개 추가:
+   - `TestExtractHeldQtyFromBalance` 3개: ord_psbl_qty 우선, 0이면 0 반환, fallback
+   - `TestExtractHeldCodesFromBalance` 2개: ord_psbl_qty=0인 종목 제외, fallback
+   - `TestOverseasGhostPositionClose` 2개: ghost-close 로그 확인, 일반 오류 무시
+
+**이슈/PR:** #235, PR #236
