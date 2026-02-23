@@ -101,9 +101,23 @@ class TestExtractHeldQtyFromBalance:
         balance = {"output1": [], "output2": [{}]}
         assert _extract_held_qty_from_balance(balance, "005930", is_domestic=True) == 0
 
-    def test_overseas_returns_ovrs_cblc_qty(self) -> None:
+    def test_overseas_returns_ord_psbl_qty_first(self) -> None:
+        """ord_psbl_qty (주문가능수량) takes priority over ovrs_cblc_qty."""
+        balance = {
+            "output1": [{"ovrs_pdno": "AAPL", "ord_psbl_qty": "8", "ovrs_cblc_qty": "10"}]
+        }
+        assert _extract_held_qty_from_balance(balance, "AAPL", is_domestic=False) == 8
+
+    def test_overseas_fallback_to_ovrs_cblc_qty_when_ord_psbl_qty_absent(self) -> None:
         balance = {"output1": [{"ovrs_pdno": "AAPL", "ovrs_cblc_qty": "10"}]}
         assert _extract_held_qty_from_balance(balance, "AAPL", is_domestic=False) == 10
+
+    def test_overseas_returns_zero_when_ord_psbl_qty_zero(self) -> None:
+        """Expired/delisted securities: ovrs_cblc_qty large but ord_psbl_qty=0."""
+        balance = {
+            "output1": [{"ovrs_pdno": "MLECW", "ord_psbl_qty": "0", "ovrs_cblc_qty": "289456"}]
+        }
+        assert _extract_held_qty_from_balance(balance, "MLECW", is_domestic=False) == 0
 
     def test_overseas_fallback_to_hldg_qty(self) -> None:
         balance = {"output1": [{"ovrs_pdno": "AAPL", "hldg_qty": "4"}]}
@@ -146,6 +160,26 @@ class TestExtractHeldCodesFromBalance:
         balance = {"output1": [{"ovrs_pdno": "AAPL", "ovrs_cblc_qty": "3"}]}
         result = _extract_held_codes_from_balance(balance, is_domestic=False)
         assert result == ["AAPL"]
+
+    def test_overseas_uses_ord_psbl_qty_to_filter(self) -> None:
+        """ord_psbl_qty=0 should exclude stock even if ovrs_cblc_qty is large."""
+        balance = {
+            "output1": [
+                {"ovrs_pdno": "MLECW", "ord_psbl_qty": "0", "ovrs_cblc_qty": "289456"},
+                {"ovrs_pdno": "AAPL", "ord_psbl_qty": "5", "ovrs_cblc_qty": "5"},
+            ]
+        }
+        result = _extract_held_codes_from_balance(balance, is_domestic=False)
+        assert "MLECW" not in result
+        assert "AAPL" in result
+
+    def test_overseas_includes_stock_when_ord_psbl_qty_absent_and_ovrs_cblc_qty_positive(
+        self,
+    ) -> None:
+        """Fallback to ovrs_cblc_qty when ord_psbl_qty field is missing."""
+        balance = {"output1": [{"ovrs_pdno": "TSLA", "ovrs_cblc_qty": "3"}]}
+        result = _extract_held_codes_from_balance(balance, is_domestic=False)
+        assert "TSLA" in result
 
 
 class TestDetermineOrderQuantity:
@@ -4378,3 +4412,189 @@ class TestDomesticLimitOrderPrice:
         expected_price = kr_round_down(current_price * 0.998)
         assert call_kwargs["price"] == expected_price
         assert call_kwargs["order_type"] == "SELL"
+
+
+# ---------------------------------------------------------------------------
+# Ghost position — overseas SELL "잔고내역이 없습니다" handling
+# ---------------------------------------------------------------------------
+
+
+class TestOverseasGhostPositionClose:
+    """trading_cycle must close ghost DB position when broker returns 잔고없음."""
+
+    def _make_overseas_market(self) -> MagicMock:
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+        return market
+
+    def _make_overseas_broker(
+        self,
+        current_price: float,
+        balance_data: dict,
+        sell_result: dict,
+    ) -> MagicMock:
+        ob = MagicMock()
+        ob.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": str(current_price), "rate": "0.0"}}
+        )
+        ob.get_overseas_balance = AsyncMock(return_value=balance_data)
+        ob.send_overseas_order = AsyncMock(return_value=sell_result)
+        return ob
+
+    @pytest.mark.asyncio
+    async def test_ghost_position_closes_db_on_no_balance_error(self) -> None:
+        """When SELL fails with '잔고내역이 없습니다', log_trade is called to close the ghost.
+
+        This can happen when exchange code recorded at startup differs from the
+        exchange code used in the SELL cycle (e.g. KNRX recorded as NASD but
+        actually traded on AMEX), causing the broker to see no matching balance.
+        The position has ord_psbl_qty > 0 (so a SELL is attempted), but KIS
+        rejects it with '잔고내역이 없습니다'.
+        """
+        from src.strategy.models import ScenarioAction
+
+        stock_code = "KNRX"
+        current_price = 1.5
+        # ord_psbl_qty=5 means the code passes the qty check and a SELL is sent
+        balance_data = {
+            "output1": [
+                {"ovrs_pdno": stock_code, "ord_psbl_qty": "5", "ovrs_cblc_qty": "5"}
+            ],
+            "output2": [{"tot_evlu_amt": "10000", "frcr_dncl_amt_2": "10000"}],
+        }
+        sell_result = {"rt_cd": "1", "msg1": "모의투자 잔고내역이 없습니다"}
+
+        domestic_broker = MagicMock()
+        domestic_broker.get_balance = AsyncMock(return_value={"output1": [], "output2": [{}]})
+        overseas_broker = self._make_overseas_broker(current_price, balance_data, sell_result)
+        market = self._make_overseas_market()
+
+        sell_match = ScenarioMatch(
+            stock_code=stock_code,
+            matched_scenario=None,
+            action=ScenarioAction.SELL,
+            confidence=85,
+            rationale="test ghost KNRX",
+        )
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=sell_match)
+
+        risk = MagicMock()
+        risk.validate_order = MagicMock()
+        risk.check_circuit_breaker = MagicMock()
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        db_conn = MagicMock()
+
+        settings = MagicMock(spec=Settings)
+        settings.MODE = "paper"
+        settings.POSITION_SIZING_ENABLED = False
+        settings.PAPER_OVERSEAS_CASH = 0
+
+        with patch("src.main.log_trade") as mock_log_trade, patch(
+            "src.main.get_open_position", return_value=None
+        ), patch("src.main.get_latest_buy_trade", return_value=None):
+            await trading_cycle(
+                broker=domestic_broker,
+                overseas_broker=overseas_broker,
+                scenario_engine=engine,
+                playbook=_make_playbook(market="US_NASDAQ"),
+                risk=risk,
+                db_conn=db_conn,
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                market=market,
+                stock_code=stock_code,
+                scan_candidates={},
+                settings=settings,
+            )
+
+        # log_trade must be called with action="SELL" to close the ghost position
+        ghost_close_calls = [
+            c
+            for c in mock_log_trade.call_args_list
+            if c.kwargs.get("action") == "SELL"
+            and "[ghost-close]" in (c.kwargs.get("rationale") or "")
+        ]
+        assert ghost_close_calls, "Expected ghost-close log_trade call was not made"
+
+    @pytest.mark.asyncio
+    async def test_normal_sell_failure_does_not_close_db(self) -> None:
+        """Non-잔고없음 SELL failures must NOT close the DB position."""
+        from src.strategy.models import ScenarioAction
+
+        stock_code = "TSLA"
+        current_price = 250.0
+        balance_data = {
+            "output1": [{"ovrs_pdno": stock_code, "ord_psbl_qty": "5", "ovrs_cblc_qty": "5"}],
+            "output2": [{"tot_evlu_amt": "100000", "frcr_dncl_amt_2": "100000"}],
+        }
+        sell_result = {"rt_cd": "1", "msg1": "일시적 오류가 발생했습니다"}
+
+        domestic_broker = MagicMock()
+        domestic_broker.get_balance = AsyncMock(return_value={"output1": [], "output2": [{}]})
+        overseas_broker = self._make_overseas_broker(current_price, balance_data, sell_result)
+        market = self._make_overseas_market()
+
+        sell_match = ScenarioMatch(
+            stock_code=stock_code,
+            matched_scenario=None,
+            action=ScenarioAction.SELL,
+            confidence=85,
+            rationale="test",
+        )
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=sell_match)
+
+        risk = MagicMock()
+        risk.validate_order = MagicMock()
+        risk.check_circuit_breaker = MagicMock()
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        db_conn = MagicMock()
+
+        with patch("src.main.log_trade") as mock_log_trade, patch(
+            "src.main.get_open_position", return_value=None
+        ):
+            await trading_cycle(
+                broker=domestic_broker,
+                overseas_broker=overseas_broker,
+                scenario_engine=engine,
+                playbook=_make_playbook(market="US_NASDAQ"),
+                risk=risk,
+                db_conn=db_conn,
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                market=market,
+                stock_code=stock_code,
+                scan_candidates={},
+            )
+
+        ghost_close_calls = [
+            c
+            for c in mock_log_trade.call_args_list
+            if c.kwargs.get("action") == "SELL"
+            and "[ghost-close]" in (c.kwargs.get("rationale") or "")
+        ]
+        assert not ghost_close_calls, "Ghost-close must NOT be triggered for non-잔고없음 errors"
