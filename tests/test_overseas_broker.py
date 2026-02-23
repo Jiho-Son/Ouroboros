@@ -813,3 +813,221 @@ class TestOverseasTRIDBranching:
 
         await broker.send_overseas_order("NASD", "AAPL", "SELL", 1)
         assert "TTTT1006U" in captured
+
+
+class TestGetOverseasPendingOrders:
+    """Tests for get_overseas_pending_orders method."""
+
+    @pytest.mark.asyncio
+    async def test_paper_mode_returns_empty(
+        self, overseas_broker: OverseasBroker
+    ) -> None:
+        """Paper mode should immediately return [] without any API call."""
+        # Default mock_settings has MODE="paper"
+        overseas_broker._broker._settings = overseas_broker._broker._settings.model_copy(
+            update={"MODE": "paper"}
+        )
+        mock_session = MagicMock()
+        _setup_broker_mocks(overseas_broker, mock_session)
+
+        result = await overseas_broker.get_overseas_pending_orders("NASD")
+
+        assert result == []
+        mock_session.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_live_mode_calls_ttts3018r_with_correct_params(
+        self, overseas_broker: OverseasBroker
+    ) -> None:
+        """Live mode should call TTTS3018R with OVRS_EXCG_CD and return output list."""
+        overseas_broker._broker._settings = overseas_broker._broker._settings.model_copy(
+            update={"MODE": "live"}
+        )
+        captured_tr_id: list[str] = []
+        captured_params: list[dict] = []
+
+        async def mock_auth_headers(tr_id: str) -> dict:
+            captured_tr_id.append(tr_id)
+            return {}
+
+        overseas_broker._broker._auth_headers = mock_auth_headers  # type: ignore[method-assign]
+
+        pending_orders = [
+            {"odno": "001", "pdno": "AAPL", "sll_buy_dvsn_cd": "02", "nccs_qty": "5"}
+        ]
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"output": pending_orders})
+
+        mock_session = MagicMock()
+
+        def _capture_get(url: str, **kwargs: object) -> MagicMock:
+            captured_params.append(kwargs.get("params", {}))
+            return _make_async_cm(mock_resp)
+
+        mock_session.get = MagicMock(side_effect=_capture_get)
+        overseas_broker._broker._rate_limiter.acquire = AsyncMock()
+        overseas_broker._broker._get_session = MagicMock(return_value=mock_session)
+
+        result = await overseas_broker.get_overseas_pending_orders("NASD")
+
+        assert result == pending_orders
+        assert captured_tr_id == ["TTTS3018R"]
+        assert captured_params[0]["OVRS_EXCG_CD"] == "NASD"
+
+    @pytest.mark.asyncio
+    async def test_live_mode_connection_error(
+        self, overseas_broker: OverseasBroker
+    ) -> None:
+        """Network error in live mode should raise ConnectionError."""
+        overseas_broker._broker._settings = overseas_broker._broker._settings.model_copy(
+            update={"MODE": "live"}
+        )
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(side_effect=aiohttp.ClientError("timeout"))
+        cm.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=cm)
+        _setup_broker_mocks(overseas_broker, mock_session)
+
+        with pytest.raises(ConnectionError, match="Network error fetching pending orders"):
+            await overseas_broker.get_overseas_pending_orders("NASD")
+
+
+class TestCancelOverseasOrder:
+    """Tests for cancel_overseas_order method."""
+
+    def _setup_cancel_mocks(
+        self, overseas_broker: OverseasBroker, response: dict
+    ) -> tuple[list[str], MagicMock]:
+        """Wire up mocks for a successful cancel call; return captured TR_IDs and session."""
+        captured_tr_ids: list[str] = []
+
+        async def mock_auth_headers(tr_id: str) -> dict:
+            captured_tr_ids.append(tr_id)
+            return {}
+
+        overseas_broker._broker._auth_headers = mock_auth_headers  # type: ignore[method-assign]
+        overseas_broker._broker._get_hash_key = AsyncMock(return_value="hash_val")  # type: ignore[method-assign]
+        overseas_broker._broker._rate_limiter.acquire = AsyncMock()
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value=response)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=_make_async_cm(mock_resp))
+        overseas_broker._broker._get_session = MagicMock(return_value=mock_session)
+
+        return captured_tr_ids, mock_session
+
+    @pytest.mark.asyncio
+    async def test_us_live_uses_tttt1004u(
+        self, overseas_broker: OverseasBroker
+    ) -> None:
+        """US exchange in live mode should use TTTT1004U."""
+        overseas_broker._broker._settings = overseas_broker._broker._settings.model_copy(
+            update={"MODE": "live"}
+        )
+        captured, _ = self._setup_cancel_mocks(
+            overseas_broker, {"rt_cd": "0", "msg1": "OK"}
+        )
+
+        await overseas_broker.cancel_overseas_order("NASD", "AAPL", "ORD001", 5)
+
+        assert "TTTT1004U" in captured
+
+    @pytest.mark.asyncio
+    async def test_us_paper_uses_vttt1004u(
+        self, overseas_broker: OverseasBroker
+    ) -> None:
+        """US exchange in paper mode should use VTTT1004U."""
+        # Default mock_settings has MODE="paper"
+        captured, _ = self._setup_cancel_mocks(
+            overseas_broker, {"rt_cd": "0", "msg1": "OK"}
+        )
+
+        await overseas_broker.cancel_overseas_order("NASD", "AAPL", "ORD001", 5)
+
+        assert "VTTT1004U" in captured
+
+    @pytest.mark.asyncio
+    async def test_hk_live_uses_ttts1003u(
+        self, overseas_broker: OverseasBroker
+    ) -> None:
+        """SEHK exchange in live mode should use TTTS1003U."""
+        overseas_broker._broker._settings = overseas_broker._broker._settings.model_copy(
+            update={"MODE": "live"}
+        )
+        captured, _ = self._setup_cancel_mocks(
+            overseas_broker, {"rt_cd": "0", "msg1": "OK"}
+        )
+
+        await overseas_broker.cancel_overseas_order("SEHK", "0700", "ORD002", 10)
+
+        assert "TTTS1003U" in captured
+
+    @pytest.mark.asyncio
+    async def test_cancel_sets_rvse_cncl_dvsn_cd_02(
+        self, overseas_broker: OverseasBroker
+    ) -> None:
+        """Cancel body must include RVSE_CNCL_DVSN_CD='02' and OVRS_ORD_UNPR='0'."""
+        captured_body: list[dict] = []
+
+        async def mock_auth_headers(tr_id: str) -> dict:
+            return {}
+
+        overseas_broker._broker._auth_headers = mock_auth_headers  # type: ignore[method-assign]
+        overseas_broker._broker._get_hash_key = AsyncMock(return_value="h")  # type: ignore[method-assign]
+        overseas_broker._broker._rate_limiter.acquire = AsyncMock()
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"rt_cd": "0"})
+
+        mock_session = MagicMock()
+
+        def _capture_post(url: str, **kwargs: object) -> MagicMock:
+            captured_body.append(kwargs.get("json", {}))
+            return _make_async_cm(mock_resp)
+
+        mock_session.post = MagicMock(side_effect=_capture_post)
+        overseas_broker._broker._get_session = MagicMock(return_value=mock_session)
+
+        await overseas_broker.cancel_overseas_order("NASD", "AAPL", "ORD003", 3)
+
+        assert captured_body[0]["RVSE_CNCL_DVSN_CD"] == "02"
+        assert captured_body[0]["OVRS_ORD_UNPR"] == "0"
+        assert captured_body[0]["ORGN_ODNO"] == "ORD003"
+
+    @pytest.mark.asyncio
+    async def test_cancel_sets_hashkey_header(
+        self, overseas_broker: OverseasBroker
+    ) -> None:
+        """hashkey must be set in the request headers."""
+        captured_headers: list[dict] = []
+        overseas_broker._broker._get_hash_key = AsyncMock(return_value="test_hash")  # type: ignore[method-assign]
+        overseas_broker._broker._rate_limiter.acquire = AsyncMock()
+
+        async def mock_auth_headers(tr_id: str) -> dict:
+            return {"tr_id": tr_id}
+
+        overseas_broker._broker._auth_headers = mock_auth_headers  # type: ignore[method-assign]
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"rt_cd": "0"})
+
+        mock_session = MagicMock()
+
+        def _capture_post(url: str, **kwargs: object) -> MagicMock:
+            captured_headers.append(dict(kwargs.get("headers", {})))
+            return _make_async_cm(mock_resp)
+
+        mock_session.post = MagicMock(side_effect=_capture_post)
+        overseas_broker._broker._get_session = MagicMock(return_value=mock_session)
+
+        await overseas_broker.cancel_overseas_order("NASD", "AAPL", "ORD004", 2)
+
+        assert captured_headers[0].get("hashkey") == "test_hash"

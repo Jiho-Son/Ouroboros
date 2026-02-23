@@ -978,6 +978,181 @@ async def trading_cycle(
         )
 
 
+async def handle_overseas_pending_orders(
+    overseas_broker: OverseasBroker,
+    telegram: TelegramClient,
+    settings: Settings,
+    sell_resubmit_counts: dict[str, int],
+    buy_cooldown: dict[str, float] | None = None,
+) -> None:
+    """Check and handle unfilled (pending) overseas limit orders.
+
+    Called once per market loop iteration before new orders are considered.
+    In paper mode the KIS pending-orders API (TTTS3018R) is unsupported, so
+    this function returns immediately without making any API calls.
+
+    BUY pending  → cancel (to free up balance) + optionally set cooldown.
+    SELL pending → cancel then resubmit at a wider spread (-0.4% from last
+                   price).  Resubmission is attempted at most once per key
+                   per session to avoid infinite retry loops.
+
+    Args:
+        overseas_broker: OverseasBroker instance.
+        telegram: TelegramClient for notifications.
+        settings: Application settings (MODE, ENABLED_MARKETS).
+        sell_resubmit_counts: Mutable dict tracking SELL resubmission attempts
+            per "{exchange_code}:{stock_code}" key.  Passed by reference so
+            counts persist across calls within the same session.
+        buy_cooldown: Optional cooldown dict shared with the main trading loop.
+            When provided, cancelled BUY orders are added with a
+            _BUY_COOLDOWN_SECONDS expiry.
+    """
+    # Determine which exchange codes to query, deduplicating US exchanges.
+    # NASD alone returns all US (NASD/NYSE/AMEX) pending orders.
+    us_exchanges = frozenset({"NASD", "NYSE", "AMEX"})
+    exchange_codes: list[str] = []
+    seen_us = False
+    for market_code in settings.enabled_market_list:
+        market_info = MARKETS.get(market_code)
+        if market_info is None or market_info.is_domestic:
+            continue
+        exc_code = market_info.exchange_code
+        if exc_code in us_exchanges:
+            if not seen_us:
+                exchange_codes.append("NASD")
+                seen_us = True
+        elif exc_code not in exchange_codes:
+            exchange_codes.append(exc_code)
+
+    now = asyncio.get_event_loop().time()
+
+    for exchange_code in exchange_codes:
+        try:
+            orders = await overseas_broker.get_overseas_pending_orders(exchange_code)
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch pending orders for %s: %s", exchange_code, exc
+            )
+            continue
+
+        for order in orders:
+            try:
+                stock_code = order.get("pdno", "")
+                odno = order.get("odno", "")
+                sll_buy = order.get("sll_buy_dvsn_cd", "")  # "01"=SELL, "02"=BUY
+                nccs_qty = int(order.get("nccs_qty", "0") or "0")
+                order_exchange = order.get("ovrs_excg_cd") or exchange_code
+                key = f"{order_exchange}:{stock_code}"
+
+                if not stock_code or not odno or nccs_qty <= 0:
+                    continue
+
+                # Cancel the pending order first regardless of direction.
+                cancel_result = await overseas_broker.cancel_overseas_order(
+                    exchange_code=order_exchange,
+                    stock_code=stock_code,
+                    odno=odno,
+                    qty=nccs_qty,
+                )
+                if cancel_result.get("rt_cd") != "0":
+                    logger.warning(
+                        "Cancel failed for %s %s: rt_cd=%s msg=%s",
+                        order_exchange,
+                        stock_code,
+                        cancel_result.get("rt_cd"),
+                        cancel_result.get("msg1"),
+                    )
+                    continue
+
+                if sll_buy == "02":
+                    # BUY pending → cancelled; set cooldown to avoid immediate re-buy.
+                    if buy_cooldown is not None:
+                        buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                    try:
+                        await telegram.notify_unfilled_order(
+                            stock_code=stock_code,
+                            market=order_exchange,
+                            action="BUY",
+                            quantity=nccs_qty,
+                            outcome="cancelled",
+                        )
+                    except Exception as notify_exc:
+                        logger.warning("notify_unfilled_order failed: %s", notify_exc)
+
+                elif sll_buy == "01":
+                    # SELL pending — attempt one resubmit at a wider spread.
+                    if sell_resubmit_counts.get(key, 0) >= 1:
+                        # Already resubmitted once — only cancel (already done above).
+                        logger.warning(
+                            "SELL %s %s already resubmitted once — no further resubmit",
+                            order_exchange,
+                            stock_code,
+                        )
+                        try:
+                            await telegram.notify_unfilled_order(
+                                stock_code=stock_code,
+                                market=order_exchange,
+                                action="SELL",
+                                quantity=nccs_qty,
+                                outcome="cancelled",
+                            )
+                        except Exception as notify_exc:
+                            logger.warning(
+                                "notify_unfilled_order failed: %s", notify_exc
+                            )
+                    else:
+                        # First unfilled SELL → resubmit at last * 0.996 (-0.4%).
+                        try:
+                            price_data = await overseas_broker.get_overseas_price(
+                                order_exchange, stock_code
+                            )
+                            last_price = float(
+                                price_data.get("output", {}).get("last", "0") or "0"
+                            )
+                            if last_price <= 0:
+                                raise ValueError(
+                                    f"Invalid price ({last_price}) for {stock_code}"
+                                )
+                            new_price = round(last_price * 0.996, 4)
+                            await overseas_broker.send_overseas_order(
+                                exchange_code=order_exchange,
+                                stock_code=stock_code,
+                                order_type="SELL",
+                                quantity=nccs_qty,
+                                price=new_price,
+                            )
+                            sell_resubmit_counts[key] = (
+                                sell_resubmit_counts.get(key, 0) + 1
+                            )
+                            try:
+                                await telegram.notify_unfilled_order(
+                                    stock_code=stock_code,
+                                    market=order_exchange,
+                                    action="SELL",
+                                    quantity=nccs_qty,
+                                    outcome="resubmitted",
+                                    new_price=new_price,
+                                )
+                            except Exception as notify_exc:
+                                logger.warning(
+                                    "notify_unfilled_order failed: %s", notify_exc
+                                )
+                        except Exception as exc:
+                            logger.error(
+                                "SELL resubmit failed for %s %s: %s",
+                                order_exchange,
+                                stock_code,
+                                exc,
+                            )
+
+            except Exception as exc:
+                logger.error(
+                    "Error handling pending order for %s: %s",
+                    order.get("pdno", "?"),
+                    exc,
+                )
+
+
 async def run_daily_session(
     broker: KISBroker,
     overseas_broker: OverseasBroker,
@@ -1022,10 +1197,26 @@ async def run_daily_session(
     # BUY cooldown: prevents retrying stocks rejected for insufficient balance
     daily_buy_cooldown: dict[str, float] = {}  # "{market_code}:{stock_code}" -> expiry timestamp
 
+    # Tracks SELL resubmission attempts per "{exchange_code}:{stock_code}" (max 1 per session).
+    sell_resubmit_counts: dict[str, int] = {}
+
     # Process each open market
     for market in open_markets:
         # Use market-local date for playbook keying
         market_today = datetime.now(market.timezone).date()
+
+        # Check and handle overseas pending (unfilled) limit orders before new decisions.
+        if not market.is_domestic:
+            try:
+                await handle_overseas_pending_orders(
+                    overseas_broker,
+                    telegram,
+                    settings,
+                    sell_resubmit_counts,
+                    daily_buy_cooldown,
+                )
+            except Exception as exc:
+                logger.warning("Pending order check failed: %s", exc)
 
         # Dynamic stock discovery via scanner (no static watchlists)
         candidates_list: list[ScanCandidate] = []
@@ -2085,6 +2276,9 @@ async def run(settings: Settings) -> None:
     # BUY cooldown: prevents retrying a stock rejected for insufficient balance
     buy_cooldown: dict[str, float] = {}  # "{market_code}:{stock_code}" -> expiry timestamp
 
+    # Tracks SELL resubmission attempts per "{exchange_code}:{stock_code}" (max 1 until restart).
+    sell_resubmit_counts: dict[str, int] = {}
+
     # Initialize latency control system
     criticality_assessor = CriticalityAssessor(
         critical_pnl_threshold=-2.5,  # Near circuit breaker at -3.0%
@@ -2269,6 +2463,19 @@ async def run(settings: Settings) -> None:
                         except Exception as exc:
                             logger.warning("Market open notification failed: %s", exc)
                         _market_states[market.code] = True
+
+                    # Check and handle overseas pending (unfilled) limit orders.
+                    if not market.is_domestic:
+                        try:
+                            await handle_overseas_pending_orders(
+                                overseas_broker,
+                                telegram,
+                                settings,
+                                sell_resubmit_counts,
+                                buy_cooldown,
+                            )
+                        except Exception as exc:
+                            logger.warning("Pending order check failed: %s", exc)
 
                     # Smart Scanner: dynamic stock discovery (no static watchlists)
                     now_timestamp = asyncio.get_event_loop().time()

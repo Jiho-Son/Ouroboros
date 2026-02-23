@@ -29,6 +29,20 @@ _RANKING_EXCHANGE_MAP: dict[str, str] = {
 # NASD → NAS, NYSE → NYS, AMEX → AMS (confirmed: AMEX returns empty, AMS returns price).
 _PRICE_EXCHANGE_MAP: dict[str, str] = _RANKING_EXCHANGE_MAP
 
+# Cancel order TR_IDs per exchange code — (live_tr_id, paper_tr_id).
+# Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 주문취소' 시트
+_CANCEL_TR_ID_MAP: dict[str, tuple[str, str]] = {
+    "NASD": ("TTTT1004U", "VTTT1004U"),
+    "NYSE": ("TTTT1004U", "VTTT1004U"),
+    "AMEX": ("TTTT1004U", "VTTT1004U"),
+    "SEHK": ("TTTS1003U", "VTTS1003U"),
+    "TSE":  ("TTTS0309U", "VTTS0309U"),
+    "SHAA": ("TTTS0302U", "VTTS0302U"),
+    "SZAA": ("TTTS0306U", "VTTS0306U"),
+    "HNX":  ("TTTS0312U", "VTTS0312U"),
+    "HSX":  ("TTTS0312U", "VTTS0312U"),
+}
+
 
 class OverseasBroker:
     """KIS Overseas Stock API wrapper that reuses KISBroker infrastructure."""
@@ -290,6 +304,131 @@ class OverseasBroker:
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(
                 f"Network error sending overseas order: {exc}"
+            ) from exc
+
+    async def get_overseas_pending_orders(
+        self, exchange_code: str
+    ) -> list[dict[str, Any]]:
+        """Fetch unfilled (pending) overseas orders for a given exchange.
+
+        Args:
+            exchange_code: Exchange code (e.g., "NASD", "SEHK").
+                For US markets, NASD returns all US pending orders (NASD/NYSE/AMEX).
+
+        Returns:
+            List of pending order dicts with fields: odno, pdno, sll_buy_dvsn_cd,
+            ft_ord_qty, nccs_qty, ft_ord_unpr3, ovrs_excg_cd.
+            Always returns [] in paper mode (TTTS3018R is live-only).
+
+        Raises:
+            ConnectionError: On network or API errors (live mode only).
+        """
+        if self._broker._settings.MODE != "live":
+            logger.debug(
+                "Pending orders API (TTTS3018R) not supported in paper mode; returning []"
+            )
+            return []
+
+        await self._broker._rate_limiter.acquire()
+        session = self._broker._get_session()
+
+        # TTTS3018R: 해외주식 미체결내역조회 (실전 전용)
+        # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 미체결조회' 시트
+        headers = await self._broker._auth_headers("TTTS3018R")
+        params = {
+            "CANO": self._broker._account_no,
+            "ACNT_PRDT_CD": self._broker._product_cd,
+            "OVRS_EXCG_CD": exchange_code,
+            "SORT_SQN": "DS",
+            "CTX_AREA_FK200": "",
+            "CTX_AREA_NK200": "",
+        }
+        url = (
+            f"{self._broker._base_url}/uapi/overseas-stock/v1/trading/inquire-nccs"
+        )
+
+        try:
+            async with session.get(url, headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise ConnectionError(
+                        f"get_overseas_pending_orders failed ({resp.status}): {text}"
+                    )
+                data = await resp.json()
+                output = data.get("output", [])
+                if isinstance(output, list):
+                    return output
+                return []
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise ConnectionError(
+                f"Network error fetching pending orders: {exc}"
+            ) from exc
+
+    async def cancel_overseas_order(
+        self,
+        exchange_code: str,
+        stock_code: str,
+        odno: str,
+        qty: int,
+    ) -> dict[str, Any]:
+        """Cancel an overseas limit order.
+
+        Args:
+            exchange_code: Exchange code (e.g., "NASD", "SEHK").
+            stock_code: Stock ticker symbol.
+            odno: Original order number to cancel.
+            qty: Unfilled quantity to cancel.
+
+        Returns:
+            API response dict containing rt_cd and msg1.
+
+        Raises:
+            ValueError: If exchange_code has no cancel TR_ID mapping.
+            ConnectionError: On network or API errors.
+        """
+        tr_ids = _CANCEL_TR_ID_MAP.get(exchange_code)
+        if tr_ids is None:
+            raise ValueError(f"No cancel TR_ID mapping for exchange: {exchange_code}")
+        live_tr_id, paper_tr_id = tr_ids
+        tr_id = live_tr_id if self._broker._settings.MODE == "live" else paper_tr_id
+
+        await self._broker._rate_limiter.acquire()
+        session = self._broker._get_session()
+
+        # RVSE_CNCL_DVSN_CD="02" means cancel (not revision).
+        # OVRS_ORD_UNPR must be "0" for cancellations.
+        # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 정정취소주문' 시트
+        body = {
+            "CANO": self._broker._account_no,
+            "ACNT_PRDT_CD": self._broker._product_cd,
+            "OVRS_EXCG_CD": exchange_code,
+            "PDNO": stock_code,
+            "ORGN_ODNO": odno,
+            "RVSE_CNCL_DVSN_CD": "02",
+            "ORD_QTY": str(qty),
+            "OVRS_ORD_UNPR": "0",
+            "ORD_SVR_DVSN_CD": "0",
+        }
+
+        hash_key = await self._broker._get_hash_key(body)
+        headers = await self._broker._auth_headers(tr_id)
+        headers["hashkey"] = hash_key
+
+        url = (
+            f"{self._broker._base_url}/uapi/overseas-stock/v1/trading/order-rvsecncl"
+        )
+
+        try:
+            async with session.post(url, headers=headers, json=body) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise ConnectionError(
+                        f"cancel_overseas_order failed ({resp.status}): {text}"
+                    )
+                return await resp.json()
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise ConnectionError(
+                f"Network error cancelling overseas order: {exc}"
             ) from exc
 
     def _get_currency_code(self, exchange_code: str) -> str:

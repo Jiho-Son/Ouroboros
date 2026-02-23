@@ -473,6 +473,48 @@ class TelegramClient:
             NotificationMessage(priority=priority, message=message)
         )
 
+    async def notify_unfilled_order(
+        self,
+        stock_code: str,
+        market: str,
+        action: str,
+        quantity: int,
+        outcome: str,
+        new_price: float | None = None,
+    ) -> None:
+        """Notify about an unfilled overseas order that was cancelled or resubmitted.
+
+        Args:
+            stock_code: Stock ticker symbol.
+            market: Exchange/market code (e.g., "NASD", "SEHK").
+            action: "BUY" or "SELL".
+            quantity: Unfilled quantity.
+            outcome: "cancelled" or "resubmitted".
+            new_price: New order price if resubmitted (None if only cancelled).
+        """
+        if not self._filter.trades:
+            return
+        # SELL resubmit is high priority — position liquidation at risk.
+        # BUY cancel is medium priority — only cash is freed.
+        priority = (
+            NotificationPriority.HIGH
+            if action == "SELL"
+            else NotificationPriority.MEDIUM
+        )
+        outcome_emoji = "🔄" if outcome == "resubmitted" else "❌"
+        outcome_label = "재주문" if outcome == "resubmitted" else "취소됨"
+        action_emoji = "🔴" if action == "SELL" else "🟢"
+        lines = [
+            f"<b>{outcome_emoji} 미체결 주문 {outcome_label}</b>",
+            f"Symbol: <code>{stock_code}</code> ({market})",
+            f"Action: {action_emoji} {action}",
+            f"Quantity: {quantity:,} shares",
+        ]
+        if new_price is not None:
+            lines.append(f"New Price: {new_price:.4f}")
+        message = "\n".join(lines)
+        await self._send_notification(NotificationMessage(priority=priority, message=message))
+
     async def notify_error(
         self, error_type: str, error_msg: str, context: str
     ) -> None:
