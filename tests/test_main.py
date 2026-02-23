@@ -18,6 +18,7 @@ from src.main import (
     _extract_held_codes_from_balance,
     _extract_held_qty_from_balance,
     _handle_market_close,
+    _retry_connection,
     _run_context_scheduler,
     _run_evolution_loop,
     _start_dashboard_server,
@@ -3183,3 +3184,90 @@ class TestOverseasBrokerIntegration:
 
         # DB도 브로커도 보유 없음 → BUY 주문이 실행되어야 함 (회귀 테스트)
         overseas_broker.send_overseas_order.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _retry_connection — unit tests (issue #209)
+# ---------------------------------------------------------------------------
+
+
+class TestRetryConnection:
+    """Unit tests for the _retry_connection helper (issue #209)."""
+
+    @pytest.mark.asyncio
+    async def test_success_on_first_attempt(self) -> None:
+        """Returns the result immediately when the first call succeeds."""
+        async def ok() -> str:
+            return "data"
+
+        result = await _retry_connection(ok, label="test")
+        assert result == "data"
+
+    @pytest.mark.asyncio
+    async def test_succeeds_after_one_connection_error(self) -> None:
+        """Retries once on ConnectionError and returns result on 2nd attempt."""
+        call_count = 0
+
+        async def flaky() -> str:
+            nonlocal call_count
+            call_count += 1
+            if call_count < 2:
+                raise ConnectionError("timeout")
+            return "ok"
+
+        with patch("src.main.asyncio.sleep") as mock_sleep:
+            mock_sleep.return_value = None
+            result = await _retry_connection(flaky, label="flaky")
+
+        assert result == "ok"
+        assert call_count == 2
+        mock_sleep.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_raises_after_all_retries_exhausted(self) -> None:
+        """Raises ConnectionError after MAX_CONNECTION_RETRIES attempts."""
+        from src.main import MAX_CONNECTION_RETRIES
+
+        call_count = 0
+
+        async def always_fail() -> None:
+            nonlocal call_count
+            call_count += 1
+            raise ConnectionError("unreachable")
+
+        with patch("src.main.asyncio.sleep") as mock_sleep:
+            mock_sleep.return_value = None
+            with pytest.raises(ConnectionError, match="unreachable"):
+                await _retry_connection(always_fail, label="always_fail")
+
+        assert call_count == MAX_CONNECTION_RETRIES
+
+    @pytest.mark.asyncio
+    async def test_passes_args_and_kwargs_to_factory(self) -> None:
+        """Forwards positional and keyword arguments to the callable."""
+        received: dict = {}
+
+        async def capture(a: int, b: int, *, key: str) -> str:
+            received["a"] = a
+            received["b"] = b
+            received["key"] = key
+            return "captured"
+
+        result = await _retry_connection(capture, 1, 2, key="val", label="test")
+        assert result == "captured"
+        assert received == {"a": 1, "b": 2, "key": "val"}
+
+    @pytest.mark.asyncio
+    async def test_non_connection_error_not_retried(self) -> None:
+        """Non-ConnectionError exceptions propagate immediately without retry."""
+        call_count = 0
+
+        async def bad_input() -> None:
+            nonlocal call_count
+            call_count += 1
+            raise ValueError("bad data")
+
+        with pytest.raises(ValueError, match="bad data"):
+            await _retry_connection(bad_input, label="bad")
+
+        assert call_count == 1  # No retry for non-ConnectionError
