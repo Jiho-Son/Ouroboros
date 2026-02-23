@@ -43,6 +43,19 @@
         font-size: 12px; transition: border-color 0.2s;
       }
       .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .mode-badge {
+        padding: 3px 10px; border-radius: 5px; font-size: 12px; font-weight: 700;
+        letter-spacing: 0.5px;
+      }
+      .mode-badge.live {
+        background: rgba(224, 85, 85, 0.15); color: var(--red);
+        border: 1px solid rgba(224, 85, 85, 0.4);
+        animation: pulse-warn 2s ease-in-out infinite;
+      }
+      .mode-badge.paper {
+        background: rgba(232, 160, 64, 0.15); color: var(--warn);
+        border: 1px solid rgba(232, 160, 64, 0.4);
+      }
 
       /* CB Gauge */
       .cb-gauge-wrap {
@@ -225,6 +238,7 @@
       <header>
         <h1>&#x1F40D; The Ouroboros</h1>
         <div class="header-right">
+          <span class="mode-badge" id="mode-badge">--</span>
           <div class="cb-gauge-wrap" id="cb-gauge" title="Circuit Breaker">
             <span class="cb-dot unknown" id="cb-dot"></span>
             <span id="cb-label">CB --</span>
@@ -512,7 +526,20 @@
           }
           document.getElementById('card-pnl-sub').textContent = `결정 ${t.decision_count ?? 0}건`;
           renderCbGauge(d.circuit_breaker);
+          renderModeBadge(d.mode);
         } catch {}
+      }
+
+      function renderModeBadge(mode) {
+        const el = document.getElementById('mode-badge');
+        if (!el) return;
+        if (mode === 'live') {
+          el.textContent = '🔴 실전투자';
+          el.className = 'mode-badge live';
+        } else {
+          el.textContent = '🟡 모의투자';
+          el.className = 'mode-badge paper';
+        }
       }
 
       async function fetchPerformance() {

@@ -413,3 +413,30 @@ def test_status_circuit_breaker_unknown_when_no_data(tmp_path: Path) -> None:
     cb = body["circuit_breaker"]
     assert cb["status"] == "unknown"
     assert cb["current_pnl_pct"] is None
+
+
+def test_status_mode_paper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MODE=paper일 때 status 응답에 mode=paper가 포함돼야 한다."""
+    monkeypatch.setenv("MODE", "paper")
+    app = _app(tmp_path)
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+    assert body["mode"] == "paper"
+
+
+def test_status_mode_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MODE=live일 때 status 응답에 mode=live가 포함돼야 한다."""
+    monkeypatch.setenv("MODE", "live")
+    app = _app(tmp_path)
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+    assert body["mode"] == "live"
+
+
+def test_status_mode_default_paper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MODE 환경변수가 없으면 mode 기본값은 paper여야 한다."""
+    monkeypatch.delenv("MODE", raising=False)
+    app = _app(tmp_path)
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+    assert body["mode"] == "paper"

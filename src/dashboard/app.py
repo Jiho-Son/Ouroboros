@@ -111,6 +111,7 @@ def create_dashboard_app(db_path: str) -> FastAPI:
 
             return {
                 "date": today,
+                "mode": os.getenv("MODE", "paper"),
                 "markets": market_status,
                 "totals": {
                     "trade_count": total_trades,
