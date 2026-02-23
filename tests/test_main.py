@@ -22,6 +22,7 @@ from src.main import (
     _run_context_scheduler,
     _run_evolution_loop,
     _start_dashboard_server,
+    handle_domestic_pending_orders,
     handle_overseas_pending_orders,
     run_daily_session,
     safe_float,
@@ -4058,3 +4059,322 @@ class TestHandleOverseasPendingOrders:
         # Should be called exactly once with "NASD"
         assert overseas_broker.get_overseas_pending_orders.call_count == 1
         overseas_broker.get_overseas_pending_orders.assert_called_once_with("NASD")
+
+
+# ---------------------------------------------------------------------------
+# Domestic Pending Order Handling
+# ---------------------------------------------------------------------------
+
+
+class TestHandleDomesticPendingOrders:
+    """Tests for handle_domestic_pending_orders function."""
+
+    def _make_settings(self) -> Settings:
+        return Settings(
+            KIS_APP_KEY="k",
+            KIS_APP_SECRET="s",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="g",
+            ENABLED_MARKETS="KR",
+        )
+
+    def _make_telegram(self) -> MagicMock:
+        t = MagicMock()
+        t.notify_unfilled_order = AsyncMock()
+        return t
+
+    @pytest.mark.asyncio
+    async def test_buy_pending_is_cancelled_and_cooldown_set(self) -> None:
+        """BUY pending order should be cancelled and buy_cooldown should be set."""
+        settings = self._make_settings()
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORD001",
+            "ord_gno_brno": "BRN01",
+            "sll_buy_dvsn_cd": "02",  # BUY
+            "psbl_qty": "3",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(
+            return_value={"rt_cd": "0", "msg1": "OK"}
+        )
+
+        sell_resubmit_counts: dict[str, int] = {}
+        buy_cooldown: dict[str, float] = {}
+
+        await handle_domestic_pending_orders(
+            broker, telegram, settings, sell_resubmit_counts, buy_cooldown
+        )
+
+        broker.cancel_domestic_order.assert_called_once_with(
+            stock_code="005930",
+            orgn_odno="ORD001",
+            krx_fwdg_ord_orgno="BRN01",
+            qty=3,
+        )
+        assert "KR:005930" in buy_cooldown
+        telegram.notify_unfilled_order.assert_called_once()
+        call_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert call_kwargs["action"] == "BUY"
+        assert call_kwargs["outcome"] == "cancelled"
+        assert call_kwargs["market"] == "KR"
+
+    @pytest.mark.asyncio
+    async def test_sell_pending_is_cancelled_then_resubmitted(self) -> None:
+        """First unfilled SELL should be cancelled then resubmitted at -0.4% price."""
+        from src.broker.kis_api import kr_round_down
+
+        settings = self._make_settings()
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORD002",
+            "ord_gno_brno": "BRN02",
+            "sll_buy_dvsn_cd": "01",  # SELL
+            "psbl_qty": "5",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(
+            return_value={"rt_cd": "0", "msg1": "OK"}
+        )
+        broker.get_current_price = AsyncMock(return_value=(50000.0, 0.0, 0.0))
+        broker.send_order = AsyncMock(return_value={"rt_cd": "0"})
+
+        sell_resubmit_counts: dict[str, int] = {}
+
+        await handle_domestic_pending_orders(
+            broker, telegram, settings, sell_resubmit_counts
+        )
+
+        broker.cancel_domestic_order.assert_called_once()
+        broker.send_order.assert_called_once()
+        resubmit_kwargs = broker.send_order.call_args[1]
+        assert resubmit_kwargs["order_type"] == "SELL"
+        expected_price = kr_round_down(50000.0 * 0.996)
+        assert resubmit_kwargs["price"] == expected_price
+        assert sell_resubmit_counts.get("KR:005930") == 1
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["outcome"] == "resubmitted"
+
+    @pytest.mark.asyncio
+    async def test_sell_cancel_failure_skips_resubmit(self) -> None:
+        """When cancel returns rt_cd != '0', resubmit should NOT be attempted."""
+        settings = self._make_settings()
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORD003",
+            "ord_gno_brno": "BRN03",
+            "sll_buy_dvsn_cd": "01",  # SELL
+            "psbl_qty": "2",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(
+            return_value={"rt_cd": "1", "msg1": "Error"}  # failure
+        )
+        broker.send_order = AsyncMock()
+
+        sell_resubmit_counts: dict[str, int] = {}
+
+        await handle_domestic_pending_orders(
+            broker, telegram, settings, sell_resubmit_counts
+        )
+
+        broker.send_order.assert_not_called()
+        telegram.notify_unfilled_order.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sell_already_resubmitted_is_only_cancelled(self) -> None:
+        """Second unfilled SELL (sell_resubmit_counts >= 1) should only cancel, no resubmit."""
+        settings = self._make_settings()
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORD004",
+            "ord_gno_brno": "BRN04",
+            "sll_buy_dvsn_cd": "01",  # SELL
+            "psbl_qty": "4",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(
+            return_value={"rt_cd": "0", "msg1": "OK"}
+        )
+        broker.send_order = AsyncMock()
+
+        # Already resubmitted once
+        sell_resubmit_counts: dict[str, int] = {"KR:005930": 1}
+
+        await handle_domestic_pending_orders(
+            broker, telegram, settings, sell_resubmit_counts
+        )
+
+        broker.cancel_domestic_order.assert_called_once()
+        broker.send_order.assert_not_called()
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["outcome"] == "cancelled"
+        assert notify_kwargs["action"] == "SELL"
+
+
+# ---------------------------------------------------------------------------
+# Domestic Limit Order Price in trading_cycle
+# ---------------------------------------------------------------------------
+
+
+class TestDomesticLimitOrderPrice:
+    """trading_cycle must use kr_round_down limit prices for domestic orders."""
+
+    def _make_market(self) -> MagicMock:
+        market = MagicMock()
+        market.name = "Korea"
+        market.code = "KR"
+        market.exchange_code = "KRX"
+        market.is_domestic = True
+        return market
+
+    def _make_broker(self, current_price: float, balance_data: dict) -> MagicMock:
+        broker = MagicMock()
+        broker.get_current_price = AsyncMock(return_value=(current_price, 0.0, 0.0))
+        broker.get_balance = AsyncMock(return_value=balance_data)
+        broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        return broker
+
+    @pytest.mark.asyncio
+    async def test_trading_cycle_domestic_buy_uses_limit_price(self) -> None:
+        """BUY order for domestic stock must use kr_round_down(price * 1.002)."""
+        from src.broker.kis_api import kr_round_down
+        from src.strategy.models import ScenarioAction
+
+        current_price = 70000.0
+        balance_data = {
+            "output2": [
+                {
+                    "tot_evlu_amt": "10000000",
+                    "dnca_tot_amt": "5000000",
+                    "pchs_amt_smtl_amt": "5000000",
+                }
+            ]
+        }
+        broker = self._make_broker(current_price, balance_data)
+        market = self._make_market()
+
+        buy_match = ScenarioMatch(
+            stock_code="005930",
+            matched_scenario=None,
+            action=ScenarioAction.BUY,
+            confidence=85,
+            rationale="test",
+        )
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=buy_match)
+
+        risk = MagicMock()
+        risk.validate_order = MagicMock()
+        risk.check_circuit_breaker = MagicMock()
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=risk,
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                market=market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        broker.send_order.assert_called_once()
+        call_kwargs = broker.send_order.call_args[1]
+        expected_price = kr_round_down(current_price * 1.002)
+        assert call_kwargs["price"] == expected_price
+        assert call_kwargs["order_type"] == "BUY"
+
+    @pytest.mark.asyncio
+    async def test_trading_cycle_domestic_sell_uses_limit_price(self) -> None:
+        """SELL order for domestic stock must use kr_round_down(price * 0.998)."""
+        from src.broker.kis_api import kr_round_down
+        from src.strategy.models import ScenarioAction
+
+        current_price = 70000.0
+        stock_code = "005930"
+        balance_data = {
+            "output1": [
+                {"pdno": stock_code, "hldg_qty": "5", "prpr": "70000", "evlu_amt": "350000"}
+            ],
+            "output2": [
+                {
+                    "tot_evlu_amt": "350000",
+                    "dnca_tot_amt": "0",
+                    "pchs_amt_smtl_amt": "350000",
+                }
+            ],
+        }
+        broker = self._make_broker(current_price, balance_data)
+        market = self._make_market()
+
+        sell_match = ScenarioMatch(
+            stock_code=stock_code,
+            matched_scenario=None,
+            action=ScenarioAction.SELL,
+            confidence=85,
+            rationale="test",
+        )
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=sell_match)
+
+        risk = MagicMock()
+        risk.validate_order = MagicMock()
+        risk.check_circuit_breaker = MagicMock()
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=risk,
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                market=market,
+                stock_code=stock_code,
+                scan_candidates={},
+            )
+
+        broker.send_order.assert_called_once()
+        call_kwargs = broker.send_order.call_args[1]
+        expected_price = kr_round_down(current_price * 0.998)
+        assert call_kwargs["price"] == expected_price
+        assert call_kwargs["order_type"] == "SELL"

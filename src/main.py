@@ -19,7 +19,7 @@ from src.analysis.smart_scanner import ScanCandidate, SmartVolatilityScanner
 from src.analysis.volatility import VolatilityAnalyzer
 from src.brain.context_selector import ContextSelector
 from src.brain.gemini_client import GeminiClient, TradeDecision
-from src.broker.kis_api import KISBroker
+from src.broker.kis_api import KISBroker, kr_round_down
 from src.broker.overseas import OverseasBroker
 from src.config import Settings
 from src.context.aggregator import ContextAggregator
@@ -853,11 +853,19 @@ async def trading_cycle(
         # 5. Send order
         order_succeeded = True
         if market.is_domestic:
+            # Use limit orders (지정가) for domestic stocks to avoid market order
+            # quantity calculation issues. KRX tick rounding applied via kr_round_down.
+            # BUY: +0.2% — ensures fill even when ask is slightly above last price.
+            # SELL: -0.2% — ensures fill even when bid is slightly below last price.
+            if decision.action == "BUY":
+                order_price = kr_round_down(current_price * 1.002)
+            else:
+                order_price = kr_round_down(current_price * 0.998)
             result = await broker.send_order(
                 stock_code=stock_code,
                 order_type=decision.action,
                 quantity=quantity,
-                price=0,  # market order
+                price=order_price,
             )
         else:
             # For overseas orders, always use limit orders (지정가):
@@ -867,16 +875,17 @@ async def trading_cycle(
             #   achieving >90% fill rate on large-cap US stocks.
             # - SELL: -0.2% below last price — ensures fill even when price dips slightly
             #   (placing at exact last price risks no-fill if the bid is just below).
+            overseas_price: float
             if decision.action == "BUY":
-                order_price = round(current_price * 1.002, 4)
+                overseas_price = round(current_price * 1.002, 4)
             else:
-                order_price = round(current_price * 0.998, 4)
+                overseas_price = round(current_price * 0.998, 4)
             result = await overseas_broker.send_overseas_order(
                 exchange_code=market.exchange_code,
                 stock_code=stock_code,
                 order_type=decision.action,
                 quantity=quantity,
-                price=order_price,  # limit order
+                price=overseas_price,  # limit order
             )
             # Check if KIS rejected the order (rt_cd != "0")
             if result.get("rt_cd", "") != "0":
@@ -976,6 +985,153 @@ async def trading_cycle(
             criticality.value,
             cycle_latency,
         )
+
+
+async def handle_domestic_pending_orders(
+    broker: KISBroker,
+    telegram: TelegramClient,
+    settings: Settings,
+    sell_resubmit_counts: dict[str, int],
+    buy_cooldown: dict[str, float] | None = None,
+) -> None:
+    """Check and handle unfilled (pending) domestic limit orders.
+
+    Called once per market loop iteration before new orders are considered.
+    In paper mode the KIS pending-orders API (TTTC0084R) is unsupported, so
+    ``get_domestic_pending_orders`` returns [] immediately and this function
+    exits without making further API calls.
+
+    BUY pending  → cancel (to free up balance) + optionally set cooldown.
+    SELL pending → cancel then resubmit at a wider spread (-0.4% from last
+                   price, kr_round_down applied).  Resubmission is attempted
+                   at most once per key per session to avoid infinite loops.
+
+    Args:
+        broker: KISBroker instance.
+        telegram: TelegramClient for notifications.
+        settings: Application settings.
+        sell_resubmit_counts: Mutable dict tracking SELL resubmission attempts
+            per "KR:{stock_code}" key.  Passed by reference so counts persist
+            across calls within the same session.
+        buy_cooldown: Optional cooldown dict shared with the main trading loop.
+            When provided, cancelled BUY orders are added with a
+            _BUY_COOLDOWN_SECONDS expiry.
+    """
+    try:
+        orders = await broker.get_domestic_pending_orders()
+    except Exception as exc:
+        logger.warning("Failed to fetch domestic pending orders: %s", exc)
+        return
+
+    now = asyncio.get_event_loop().time()
+
+    for order in orders:
+        try:
+            stock_code = order.get("pdno", "")
+            orgn_odno = order.get("orgn_odno", "")
+            krx_fwdg_ord_orgno = order.get("ord_gno_brno", "")
+            sll_buy = order.get("sll_buy_dvsn_cd", "")  # "01"=SELL, "02"=BUY
+            psbl_qty = int(order.get("psbl_qty", "0") or "0")
+            key = f"KR:{stock_code}"
+
+            if not stock_code or not orgn_odno or psbl_qty <= 0:
+                continue
+
+            # Cancel the pending order first regardless of direction.
+            cancel_result = await broker.cancel_domestic_order(
+                stock_code=stock_code,
+                orgn_odno=orgn_odno,
+                krx_fwdg_ord_orgno=krx_fwdg_ord_orgno,
+                qty=psbl_qty,
+            )
+            if cancel_result.get("rt_cd") != "0":
+                logger.warning(
+                    "Cancel failed for KR %s: rt_cd=%s msg=%s",
+                    stock_code,
+                    cancel_result.get("rt_cd"),
+                    cancel_result.get("msg1"),
+                )
+                continue
+
+            if sll_buy == "02":
+                # BUY pending → cancelled; set cooldown to avoid immediate re-buy.
+                if buy_cooldown is not None:
+                    buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                try:
+                    await telegram.notify_unfilled_order(
+                        stock_code=stock_code,
+                        market="KR",
+                        action="BUY",
+                        quantity=psbl_qty,
+                        outcome="cancelled",
+                    )
+                except Exception as notify_exc:
+                    logger.warning("notify_unfilled_order failed: %s", notify_exc)
+
+            elif sll_buy == "01":
+                # SELL pending — attempt one resubmit at a wider spread.
+                if sell_resubmit_counts.get(key, 0) >= 1:
+                    # Already resubmitted once — only cancel (already done above).
+                    logger.warning(
+                        "SELL KR %s already resubmitted once — no further resubmit",
+                        stock_code,
+                    )
+                    try:
+                        await telegram.notify_unfilled_order(
+                            stock_code=stock_code,
+                            market="KR",
+                            action="SELL",
+                            quantity=psbl_qty,
+                            outcome="cancelled",
+                        )
+                    except Exception as notify_exc:
+                        logger.warning(
+                            "notify_unfilled_order failed: %s", notify_exc
+                        )
+                else:
+                    # First unfilled SELL → resubmit at last * 0.996 (-0.4%).
+                    try:
+                        last_price, _, _ = await broker.get_current_price(stock_code)
+                        if last_price <= 0:
+                            raise ValueError(
+                                f"Invalid price ({last_price}) for {stock_code}"
+                            )
+                        new_price = kr_round_down(last_price * 0.996)
+                        await broker.send_order(
+                            stock_code=stock_code,
+                            order_type="SELL",
+                            quantity=psbl_qty,
+                            price=new_price,
+                        )
+                        sell_resubmit_counts[key] = (
+                            sell_resubmit_counts.get(key, 0) + 1
+                        )
+                        try:
+                            await telegram.notify_unfilled_order(
+                                stock_code=stock_code,
+                                market="KR",
+                                action="SELL",
+                                quantity=psbl_qty,
+                                outcome="resubmitted",
+                                new_price=float(new_price),
+                            )
+                        except Exception as notify_exc:
+                            logger.warning(
+                                "notify_unfilled_order failed: %s", notify_exc
+                            )
+                    except Exception as exc:
+                        logger.error(
+                            "SELL resubmit failed for KR %s: %s",
+                            stock_code,
+                            exc,
+                        )
+
+        except Exception as exc:
+            logger.error(
+                "Error handling domestic pending order for %s: %s",
+                order.get("pdno", "?"),
+                exc,
+            )
 
 
 async def handle_overseas_pending_orders(
@@ -1204,6 +1360,19 @@ async def run_daily_session(
     for market in open_markets:
         # Use market-local date for playbook keying
         market_today = datetime.now(market.timezone).date()
+
+        # Check and handle domestic pending (unfilled) limit orders before new decisions.
+        if market.is_domestic:
+            try:
+                await handle_domestic_pending_orders(
+                    broker,
+                    telegram,
+                    settings,
+                    sell_resubmit_counts,
+                    daily_buy_cooldown,
+                )
+            except Exception as exc:
+                logger.warning("Domestic pending order check failed: %s", exc)
 
         # Check and handle overseas pending (unfilled) limit orders before new decisions.
         if not market.is_domestic:
@@ -1607,11 +1776,21 @@ async def run_daily_session(
                 order_succeeded = True
                 try:
                     if market.is_domestic:
+                        # Use limit orders (지정가) for domestic stocks.
+                        # KRX tick rounding applied via kr_round_down.
+                        if decision.action == "BUY":
+                            order_price = kr_round_down(
+                                stock_data["current_price"] * 1.002
+                            )
+                        else:
+                            order_price = kr_round_down(
+                                stock_data["current_price"] * 0.998
+                            )
                         result = await broker.send_order(
                             stock_code=stock_code,
                             order_type=decision.action,
                             quantity=quantity,
-                            price=0,  # market order
+                            price=order_price,
                         )
                     else:
                         # KIS VTS only accepts limit orders; use 0.5% premium for BUY
@@ -2463,6 +2642,19 @@ async def run(settings: Settings) -> None:
                         except Exception as exc:
                             logger.warning("Market open notification failed: %s", exc)
                         _market_states[market.code] = True
+
+                    # Check and handle domestic pending (unfilled) limit orders.
+                    if market.is_domestic:
+                        try:
+                            await handle_domestic_pending_orders(
+                                broker,
+                                telegram,
+                                settings,
+                                sell_resubmit_counts,
+                                buy_cooldown,
+                            )
+                        except Exception as exc:
+                            logger.warning("Domestic pending order check failed: %s", exc)
 
                     # Check and handle overseas pending (unfilled) limit orders.
                     if not market.is_domestic:
