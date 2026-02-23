@@ -24,6 +24,7 @@ from src.main import (
     _start_dashboard_server,
     run_daily_session,
     safe_float,
+    sync_positions_from_broker,
     trading_cycle,
 )
 from src.strategy.models import (
@@ -3274,7 +3275,6 @@ class TestRetryConnection:
         assert call_count == 1  # No retry for non-ConnectionError
 
 
-# ---------------------------------------------------------------------------
 # run_daily_session — daily CB baseline (daily_start_eval) tests (issue #207)
 # ---------------------------------------------------------------------------
 
@@ -3512,3 +3512,283 @@ class TestDailyCBBaseline:
 
         # Must return the original baseline, NOT the new total_eval (58000)
         assert result == 55000.0
+
+
+# ---------------------------------------------------------------------------
+# sync_positions_from_broker — startup DB sync tests (issue #206)
+# ---------------------------------------------------------------------------
+
+
+class TestSyncPositionsFromBroker:
+    """Tests for sync_positions_from_broker() startup position sync (issue #206).
+
+    The function queries broker balances at startup and inserts synthetic BUY
+    records for any holdings that the local DB is unaware of, preventing
+    double-buy when positions were opened in a previous session or manually.
+    """
+
+    def _make_settings(self, enabled_markets: str = "KR") -> Settings:
+        return Settings(
+            KIS_APP_KEY="k",
+            KIS_APP_SECRET="s",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="g",
+            ENABLED_MARKETS=enabled_markets,
+            MODE="paper",
+        )
+
+    def _domestic_balance(
+        self,
+        stock_code: str = "005930",
+        qty: int = 5,
+    ) -> dict:
+        return {
+            "output1": [{"pdno": stock_code, "ord_psbl_qty": str(qty)}],
+            "output2": [
+                {
+                    "tot_evlu_amt": "1000000",
+                    "dnca_tot_amt": "500000",
+                    "pchs_amt_smtl_amt": "500000",
+                }
+            ],
+        }
+
+    def _overseas_balance(
+        self,
+        stock_code: str = "AAPL",
+        qty: int = 10,
+    ) -> dict:
+        return {
+            "output1": [{"ovrs_pdno": stock_code, "ovrs_cblc_qty": str(qty)}],
+            "output2": [
+                {
+                    "frcr_evlu_tota": "50000",
+                    "frcr_dncl_amt_2": "10000",
+                    "frcr_buy_amt_smtl": "40000",
+                }
+            ],
+        }
+
+    @pytest.mark.asyncio
+    async def test_syncs_domestic_position_not_in_db(self) -> None:
+        """A domestic holding found in broker but absent from DB is inserted."""
+        settings = self._make_settings("KR")
+        db_conn = init_db(":memory:")
+
+        broker = MagicMock()
+        broker.get_balance = AsyncMock(
+            return_value=self._domestic_balance("005930", qty=7)
+        )
+        overseas_broker = MagicMock()
+
+        synced = await sync_positions_from_broker(
+            broker, overseas_broker, db_conn, settings
+        )
+
+        assert synced == 1
+        from src.db import get_open_position
+        pos = get_open_position(db_conn, "005930", "KR")
+        assert pos is not None
+        assert pos["quantity"] == 7
+
+    @pytest.mark.asyncio
+    async def test_skips_position_already_in_db(self) -> None:
+        """No duplicate record is created when the position already exists in DB."""
+        settings = self._make_settings("KR")
+        db_conn = init_db(":memory:")
+        # Pre-insert a BUY record
+        log_trade(
+            conn=db_conn,
+            stock_code="005930",
+            action="BUY",
+            confidence=85,
+            rationale="existing position",
+            quantity=5,
+            price=70000.0,
+            market="KR",
+            exchange_code="KRX",
+        )
+
+        broker = MagicMock()
+        broker.get_balance = AsyncMock(
+            return_value=self._domestic_balance("005930", qty=5)
+        )
+        overseas_broker = MagicMock()
+
+        synced = await sync_positions_from_broker(
+            broker, overseas_broker, db_conn, settings
+        )
+
+        assert synced == 0
+
+    @pytest.mark.asyncio
+    async def test_syncs_overseas_position_not_in_db(self) -> None:
+        """An overseas holding found in broker but absent from DB is inserted."""
+        settings = self._make_settings("US_NASDAQ")
+        db_conn = init_db(":memory:")
+
+        broker = MagicMock()
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_balance = AsyncMock(
+            return_value=self._overseas_balance("AAPL", qty=10)
+        )
+
+        synced = await sync_positions_from_broker(
+            broker, overseas_broker, db_conn, settings
+        )
+
+        assert synced == 1
+        from src.db import get_open_position
+        pos = get_open_position(db_conn, "AAPL", "US_NASDAQ")
+        assert pos is not None
+        assert pos["quantity"] == 10
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_broker_has_no_holdings(self) -> None:
+        """Returns 0 when broker reports empty holdings."""
+        settings = self._make_settings("KR")
+        db_conn = init_db(":memory:")
+
+        broker = MagicMock()
+        broker.get_balance = AsyncMock(
+            return_value={"output1": [], "output2": [{}]}
+        )
+        overseas_broker = MagicMock()
+
+        synced = await sync_positions_from_broker(
+            broker, overseas_broker, db_conn, settings
+        )
+
+        assert synced == 0
+
+    @pytest.mark.asyncio
+    async def test_handles_connection_error_gracefully(self) -> None:
+        """ConnectionError during balance fetch is logged but does not raise."""
+        settings = self._make_settings("KR")
+        db_conn = init_db(":memory:")
+
+        broker = MagicMock()
+        broker.get_balance = AsyncMock(
+            side_effect=ConnectionError("KIS unreachable")
+        )
+        overseas_broker = MagicMock()
+
+        synced = await sync_positions_from_broker(
+            broker, overseas_broker, db_conn, settings
+        )
+
+        assert synced == 0  # Failure treated as no-op
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_exchange_codes_for_overseas(self) -> None:
+        """Each exchange code is queried at most once even if multiple market
+        codes share the same exchange (defensive deduplication)."""
+        # Both US_NASDAQ and a hypothetical duplicate would share "NASD"
+        # Use two DIFFERENT overseas markets (NASD vs NYSE) to verify each is
+        # queried separately.
+        settings = self._make_settings("US_NASDAQ,US_NYSE")
+        db_conn = init_db(":memory:")
+
+        broker = MagicMock()
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_balance = AsyncMock(
+            return_value={"output1": [], "output2": [{}]}
+        )
+
+        await sync_positions_from_broker(
+            broker, overseas_broker, db_conn, settings
+        )
+
+        # Two distinct exchange codes (NASD, NYSE) → 2 calls
+        assert overseas_broker.get_overseas_balance.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Domestic BUY double-prevention (issue #206) — trading_cycle integration
+# ---------------------------------------------------------------------------
+
+
+class TestDomesticBuyDoublePreventionTradingCycle:
+    """Verify domestic BUY suppression using broker balance in trading_cycle.
+
+    Issue #206: the broker-balance check was overseas-only; domestic stocks
+    were not protected against double-buy caused by untracked positions.
+    """
+
+    @pytest.mark.asyncio
+    async def test_domestic_buy_suppressed_when_broker_holds_stock(
+        self,
+    ) -> None:
+        """BUY for a domestic stock must be suppressed when broker holds it,
+        even if the DB shows no open position."""
+        db_conn = init_db(":memory:")
+        # DB: no open position for 005930
+
+        broker = MagicMock()
+        broker.get_current_price = AsyncMock(return_value=(70000.0, 1.0, 0.0))
+        # Broker balance: holds 5 shares of 005930
+        broker.get_balance = AsyncMock(
+            return_value={
+                "output1": [{"pdno": "005930", "ord_psbl_qty": "5"}],
+                "output2": [
+                    {
+                        "tot_evlu_amt": "1000000",
+                        "dnca_tot_amt": "500000",
+                        "pchs_amt_smtl_amt": "500000",
+                    }
+                ],
+            }
+        )
+        broker.send_order = AsyncMock(return_value={"msg1": "주문접수"})
+
+        market = MagicMock()
+        market.name = "KR"
+        market.code = "KR"
+        market.exchange_code = "KRX"
+        market.is_domestic = True
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_buy_match("005930"))
+
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="d1")
+
+        settings = Settings(
+            KIS_APP_KEY="k",
+            KIS_APP_SECRET="s",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="g",
+            MODE="paper",
+        )
+
+        await trading_cycle(
+            broker=broker,
+            overseas_broker=MagicMock(),
+            scenario_engine=engine,
+            playbook=_make_playbook(market="KR"),
+            risk=MagicMock(),
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(
+                get_latest_timeframe=MagicMock(return_value=None),
+                set_context=MagicMock(),
+            ),
+            criticality_assessor=MagicMock(
+                assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                get_timeout=MagicMock(return_value=5.0),
+            ),
+            telegram=telegram,
+            settings=settings,
+            market=market,
+            stock_code="005930",
+            scan_candidates={"KR": {}},
+        )
+
+        # BUY must NOT have been executed because broker still holds the stock
+        broker.send_order.assert_not_called()

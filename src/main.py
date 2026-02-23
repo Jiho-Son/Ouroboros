@@ -40,7 +40,7 @@ from src.evolution.daily_review import DailyReviewer
 from src.evolution.optimizer import EvolutionOptimizer
 from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
-from src.markets.schedule import MarketInfo, get_next_market_open, get_open_markets
+from src.markets.schedule import MARKETS, MarketInfo, get_next_market_open, get_open_markets
 from src.notifications.telegram_client import NotificationFilter, TelegramClient, TelegramCommandHandler
 from src.strategy.models import DayPlaybook, MarketOutlook
 from src.strategy.playbook_store import PlaybookStore
@@ -127,6 +127,88 @@ async def _retry_connection(coro_factory: Any, *args: Any, label: str = "", **kw
                     exc,
                 )
                 raise
+
+
+async def sync_positions_from_broker(
+    broker: Any,
+    overseas_broker: Any,
+    db_conn: Any,
+    settings: "Settings",
+) -> int:
+    """Sync open positions from the live broker into the local DB at startup.
+
+    Fetches current holdings from the broker for all configured markets and
+    inserts a synthetic BUY record for any position that the DB does not
+    already know about.  This prevents double-buy when positions were opened
+    in a previous session or entered manually outside the system.
+
+    Returns:
+        Number of new positions synced.
+    """
+    synced = 0
+    seen_exchange_codes: set[str] = set()
+
+    for market_code in settings.enabled_market_list:
+        market = MARKETS.get(market_code)
+        if market is None:
+            continue
+
+        try:
+            if market.is_domestic:
+                balance_data = await broker.get_balance()
+                log_market = market_code  # "KR"
+            else:
+                if market.exchange_code in seen_exchange_codes:
+                    continue
+                seen_exchange_codes.add(market.exchange_code)
+                balance_data = await overseas_broker.get_overseas_balance(
+                    market.exchange_code
+                )
+                log_market = market_code  # e.g. "US_NASDAQ"
+        except ConnectionError as exc:
+            logger.warning(
+                "Startup sync: balance fetch failed for %s — skipping: %s",
+                market_code,
+                exc,
+            )
+            continue
+
+        held_codes = _extract_held_codes_from_balance(
+            balance_data, is_domestic=market.is_domestic
+        )
+        for stock_code in held_codes:
+            if get_open_position(db_conn, stock_code, log_market):
+                continue  # already tracked
+            qty = _extract_held_qty_from_balance(
+                balance_data, stock_code, is_domestic=market.is_domestic
+            )
+            log_trade(
+                conn=db_conn,
+                stock_code=stock_code,
+                action="BUY",
+                confidence=0,
+                rationale="[startup-sync] Position detected from broker at startup",
+                quantity=qty,
+                price=0.0,
+                market=log_market,
+                exchange_code=market.exchange_code,
+                mode=settings.MODE,
+            )
+            logger.info(
+                "Startup sync: %s/%s recorded as open position (qty=%d)",
+                log_market,
+                stock_code,
+                qty,
+            )
+            synced += 1
+
+    if synced:
+        logger.info(
+            "Startup sync complete: %d position(s) synced from broker", synced
+        )
+    else:
+        logger.info("Startup sync: no new positions to sync from broker")
+    return synced
 
 
 def _extract_symbol_from_holding(item: dict[str, Any]) -> str:
@@ -571,11 +653,11 @@ async def trading_cycle(
     # BUY 결정 전 기존 포지션 체크 (중복 매수 방지)
     if decision.action == "BUY":
         existing_position = get_open_position(db_conn, stock_code, market.code)
-        if not existing_position and not market.is_domestic:
+        if not existing_position:
             # SELL 지정가 접수 후 미체결 시 DB는 종료로 기록되나 브로커는 여전히 보유 중.
-            # 이중 매수 방지를 위해 라이브 브로커 잔고를 authoritative source로 사용.
+            # 국내/해외 모두 라이브 브로커 잔고를 authoritative source로 사용.
             broker_qty = _extract_held_qty_from_balance(
-                balance_data, stock_code, is_domestic=False
+                balance_data, stock_code, is_domestic=market.is_domestic
             )
             if broker_qty > 0:
                 existing_position = {"price": 0.0, "quantity": broker_qty}
@@ -1187,11 +1269,11 @@ async def run_daily_session(
             # BUY 중복 방지: 브로커 잔고 기반 (미체결 SELL 리밋 주문 보호)
             if decision.action == "BUY":
                 daily_existing = get_open_position(db_conn, stock_code, market.code)
-                if not daily_existing and not market.is_domestic:
+                if not daily_existing:
                     # SELL 지정가 접수 후 미체결 시 DB는 종료로 기록되나 브로커는 여전히 보유 중.
-                    # 이중 매수 방지를 위해 라이브 브로커 잔고를 authoritative source로 사용.
+                    # 국내/해외 모두 라이브 브로커 잔고를 authoritative source로 사용.
                     broker_qty = _extract_held_qty_from_balance(
-                        balance_data, stock_code, is_domestic=False
+                        balance_data, stock_code, is_domestic=market.is_domestic
                     )
                     if broker_qty > 0:
                         daily_existing = {"price": 0.0, "quantity": broker_qty}
@@ -2039,6 +2121,12 @@ async def run(settings: Settings) -> None:
         await telegram.notify_system_start(settings.MODE, settings.enabled_market_list)
     except Exception as exc:
         logger.warning("System startup notification failed: %s", exc)
+
+    # Sync broker positions → DB to prevent double-buy on restart
+    try:
+        await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
+    except Exception as exc:
+        logger.warning("Startup position sync failed (non-fatal): %s", exc)
 
     # Start command handler
     try:
