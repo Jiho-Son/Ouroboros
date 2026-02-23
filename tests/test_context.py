@@ -10,6 +10,7 @@ import pytest
 from src.context.aggregator import ContextAggregator
 from src.context.layer import LAYER_CONFIG, ContextLayer
 from src.context.store import ContextStore
+from src.context.summarizer import ContextSummarizer
 from src.db import init_db, log_trade
 
 
@@ -370,3 +371,259 @@ class TestLayerMetadata:
 
         # L1 aggregates from L2
         assert LAYER_CONFIG[ContextLayer.L1_LEGACY].aggregation_source == ContextLayer.L2_ANNUAL
+
+
+# ---------------------------------------------------------------------------
+# ContextSummarizer tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def summarizer(db_conn: sqlite3.Connection) -> ContextSummarizer:
+    """Provide a ContextSummarizer backed by an in-memory store."""
+    return ContextSummarizer(ContextStore(db_conn))
+
+
+class TestContextSummarizer:
+    """Test suite for ContextSummarizer."""
+
+    # ------------------------------------------------------------------
+    # summarize_numeric_values
+    # ------------------------------------------------------------------
+
+    def test_summarize_empty_values(self, summarizer: ContextSummarizer) -> None:
+        """Empty list must return SummaryStats with count=0 and no other fields."""
+        stats = summarizer.summarize_numeric_values([])
+        assert stats.count == 0
+        assert stats.mean is None
+        assert stats.min is None
+        assert stats.max is None
+
+    def test_summarize_single_value(self, summarizer: ContextSummarizer) -> None:
+        """Single-element list must return correct stats with std=0 and trend=flat."""
+        stats = summarizer.summarize_numeric_values([42.0])
+        assert stats.count == 1
+        assert stats.mean == 42.0
+        assert stats.std == 0.0
+        assert stats.trend == "flat"
+
+    def test_summarize_upward_trend(self, summarizer: ContextSummarizer) -> None:
+        """Increasing values must produce trend='up'."""
+        values = [1.0, 2.0, 3.0, 10.0, 20.0, 30.0]
+        stats = summarizer.summarize_numeric_values(values)
+        assert stats.trend == "up"
+
+    def test_summarize_downward_trend(self, summarizer: ContextSummarizer) -> None:
+        """Decreasing values must produce trend='down'."""
+        values = [30.0, 20.0, 10.0, 3.0, 2.0, 1.0]
+        stats = summarizer.summarize_numeric_values(values)
+        assert stats.trend == "down"
+
+    def test_summarize_flat_trend(self, summarizer: ContextSummarizer) -> None:
+        """Stable values must produce trend='flat'."""
+        values = [100.0, 100.1, 99.9, 100.0, 100.2, 99.8]
+        stats = summarizer.summarize_numeric_values(values)
+        assert stats.trend == "flat"
+
+    # ------------------------------------------------------------------
+    # summarize_layer
+    # ------------------------------------------------------------------
+
+    def test_summarize_layer_no_data(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """summarize_layer with no data must return the 'No data' sentinel."""
+        result = summarizer.summarize_layer(ContextLayer.L6_DAILY)
+        assert result["count"] == 0
+        assert "No data" in result["summary"]
+
+    def test_summarize_layer_numeric(
+        self, summarizer: ContextSummarizer, db_conn: sqlite3.Connection
+    ) -> None:
+        """summarize_layer must collect numeric values and produce stats."""
+        store = summarizer.store
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "total_pnl", 100.0)
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-02", "total_pnl", 200.0)
+
+        result = summarizer.summarize_layer(ContextLayer.L6_DAILY)
+        assert "total_entries" in result
+
+    def test_summarize_layer_with_dict_values(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """summarize_layer must handle dict values by extracting numeric subkeys."""
+        store = summarizer.store
+        # set_context serialises the value as JSON, so passing a dict works
+        store.set_context(
+            ContextLayer.L6_DAILY, "2026-02-01", "metrics",
+            {"win_rate": 65.0, "label": "good"}
+        )
+
+        result = summarizer.summarize_layer(ContextLayer.L6_DAILY)
+        assert "total_entries" in result
+        # numeric subkey "win_rate" should appear as "metrics.win_rate"
+        assert "metrics.win_rate" in result
+
+    def test_summarize_layer_with_string_values(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """summarize_layer must count string values separately."""
+        store = summarizer.store
+        # set_context stores string values as JSON-encoded strings
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "outlook", "BULLISH")
+
+        result = summarizer.summarize_layer(ContextLayer.L6_DAILY)
+        # String fields contribute a `<key>_count` entry
+        assert "outlook_count" in result
+
+    # ------------------------------------------------------------------
+    # rolling_window_summary
+    # ------------------------------------------------------------------
+
+    def test_rolling_window_summary_basic(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """rolling_window_summary must return the expected structure."""
+        store = summarizer.store
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "pnl", 500.0)
+
+        result = summarizer.rolling_window_summary(ContextLayer.L6_DAILY)
+        assert "window_days" in result
+        assert "recent_data" in result
+        assert "historical_summary" in result
+
+    def test_rolling_window_summary_no_older_data(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """rolling_window_summary with summarize_older=False skips history."""
+        result = summarizer.rolling_window_summary(
+            ContextLayer.L6_DAILY, summarize_older=False
+        )
+        assert result["historical_summary"] == {}
+
+    # ------------------------------------------------------------------
+    # aggregate_to_higher_layer
+    # ------------------------------------------------------------------
+
+    def test_aggregate_to_higher_layer_mean(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """aggregate_to_higher_layer with 'mean' via dict subkeys returns average."""
+        store = summarizer.store
+        # Use different outer keys but same inner metric key so get_all_contexts
+        # returns multiple rows with the target subkey.
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "day1", {"pnl": 100.0})
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "day2", {"pnl": 200.0})
+
+        result = summarizer.aggregate_to_higher_layer(
+            ContextLayer.L6_DAILY, ContextLayer.L5_WEEKLY, "pnl", "mean"
+        )
+        assert result == pytest.approx(150.0)
+
+    def test_aggregate_to_higher_layer_sum(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """aggregate_to_higher_layer with 'sum' must return the total."""
+        store = summarizer.store
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "day1", {"pnl": 100.0})
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "day2", {"pnl": 200.0})
+
+        result = summarizer.aggregate_to_higher_layer(
+            ContextLayer.L6_DAILY, ContextLayer.L5_WEEKLY, "pnl", "sum"
+        )
+        assert result == pytest.approx(300.0)
+
+    def test_aggregate_to_higher_layer_max(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """aggregate_to_higher_layer with 'max' must return the maximum."""
+        store = summarizer.store
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "day1", {"pnl": 100.0})
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "day2", {"pnl": 200.0})
+
+        result = summarizer.aggregate_to_higher_layer(
+            ContextLayer.L6_DAILY, ContextLayer.L5_WEEKLY, "pnl", "max"
+        )
+        assert result == pytest.approx(200.0)
+
+    def test_aggregate_to_higher_layer_min(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """aggregate_to_higher_layer with 'min' must return the minimum."""
+        store = summarizer.store
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "day1", {"pnl": 100.0})
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "day2", {"pnl": 200.0})
+
+        result = summarizer.aggregate_to_higher_layer(
+            ContextLayer.L6_DAILY, ContextLayer.L5_WEEKLY, "pnl", "min"
+        )
+        assert result == pytest.approx(100.0)
+
+    def test_aggregate_to_higher_layer_no_data(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """aggregate_to_higher_layer with no matching key must return None."""
+        result = summarizer.aggregate_to_higher_layer(
+            ContextLayer.L6_DAILY, ContextLayer.L5_WEEKLY, "nonexistent", "mean"
+        )
+        assert result is None
+
+    def test_aggregate_to_higher_layer_unknown_func_defaults_to_mean(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """Unknown aggregation function must fall back to mean."""
+        store = summarizer.store
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "day1", {"pnl": 100.0})
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "day2", {"pnl": 200.0})
+
+        result = summarizer.aggregate_to_higher_layer(
+            ContextLayer.L6_DAILY, ContextLayer.L5_WEEKLY, "pnl", "unknown_func"
+        )
+        assert result == pytest.approx(150.0)
+
+    # ------------------------------------------------------------------
+    # create_compact_summary + format_summary_for_prompt
+    # ------------------------------------------------------------------
+
+    def test_create_compact_summary(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """create_compact_summary must produce a dict keyed by layer value."""
+        store = summarizer.store
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "pnl", 100.0)
+
+        result = summarizer.create_compact_summary([ContextLayer.L6_DAILY])
+        assert ContextLayer.L6_DAILY.value in result
+
+    def test_format_summary_for_prompt_with_numeric_metrics(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """format_summary_for_prompt must render avg/trend fields."""
+        store = summarizer.store
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-01", "pnl", 100.0)
+        store.set_context(ContextLayer.L6_DAILY, "2026-02-02", "pnl", 200.0)
+
+        compact = summarizer.create_compact_summary([ContextLayer.L6_DAILY])
+        text = summarizer.format_summary_for_prompt(compact)
+        assert isinstance(text, str)
+
+    def test_format_summary_for_prompt_skips_empty_layers(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """format_summary_for_prompt must skip layers with no metrics."""
+        summary = {ContextLayer.L6_DAILY.value: {}}
+        text = summarizer.format_summary_for_prompt(summary)
+        assert text == ""
+
+    def test_format_summary_non_dict_value(
+        self, summarizer: ContextSummarizer
+    ) -> None:
+        """format_summary_for_prompt must render non-dict values as plain text."""
+        summary = {
+            "daily": {
+                "plain_count": 42,
+            }
+        }
+        text = summarizer.format_summary_for_prompt(summary)
+        assert "plain_count" in text
+        assert "42" in text
