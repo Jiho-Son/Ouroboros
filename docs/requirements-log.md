@@ -292,3 +292,33 @@ Order result: 모의투자 매수주문이 완료 되었습니다.  ✓
 ```
 
 **이슈/PR:** #149, #150
+
+---
+
+## 2026-02-23
+
+### 국내주식 지정가 전환 및 미체결 처리 (#232)
+
+**배경:**
+- 해외주식은 #211에서 지정가로 전환했으나 국내주식은 여전히 `price=0` (시장가)
+- KRX도 지정가 주문 사용 시 동일한 미체결 위험이 존재
+- 지정가 전환 + 미체결 처리를 함께 구현
+
+**구현 내용:**
+
+1. `src/broker/kis_api.py`
+   - `get_domestic_pending_orders()`: 모의 즉시 `[]`, 실전 `TTTC0084R` GET
+   - `cancel_domestic_order()`: 실전 `TTTC0013U` / 모의 `VTTC0013U`, hashkey 필수
+
+2. `src/main.py`
+   - import `kr_round_down` 추가
+   - `trading_cycle`, `run_daily_session` 국내 주문 `price=0` → 지정가:
+     BUY +0.2% / SELL -0.2%, `kr_round_down` KRX 틱 반올림 적용
+   - `handle_domestic_pending_orders` 함수: BUY→취소+쿨다운, SELL→취소+재주문(-0.4%, 최대1회)
+   - daily/realtime 두 모드에서 domestic pending 체크 호출 추가
+
+3. 테스트 14개 추가:
+   - `TestGetDomesticPendingOrders` (3), `TestCancelDomesticOrder` (5)
+   - `TestHandleDomesticPendingOrders` (4), `TestDomesticLimitOrderPrice` (2)
+
+**이슈/PR:** #232, PR #233

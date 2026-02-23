@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import ssl
-from typing import Any
+from typing import Any, cast
 
 import aiohttp
 
@@ -477,6 +477,112 @@ class KISBroker:
 
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching rankings: {exc}") from exc
+
+    async def get_domestic_pending_orders(self) -> list[dict[str, Any]]:
+        """Fetch unfilled (pending) domestic limit orders.
+
+        The KIS pending-orders API (TTTC0084R) is unsupported in paper (VTS)
+        mode, so this method returns an empty list immediately when MODE is
+        not "live".
+
+        Returns:
+            List of pending order dicts from the KIS ``output`` field.
+            Each dict includes keys such as ``odno``, ``orgn_odno``,
+            ``ord_gno_brno``, ``psbl_qty``, ``sll_buy_dvsn_cd``, ``pdno``.
+        """
+        if self._settings.MODE != "live":
+            logger.debug(
+                "get_domestic_pending_orders: paper mode — TTTC0084R unsupported, returning []"
+            )
+            return []
+
+        await self._rate_limiter.acquire()
+        session = self._get_session()
+
+        # TR_ID: 실전 TTTC0084R (모의 미지원)
+        # Source: 한국투자증권 오픈API 전체문서 (20260221) — '주식 미체결조회' 시트
+        headers = await self._auth_headers("TTTC0084R")
+        params = {
+            "CANO": self._account_no,
+            "ACNT_PRDT_CD": self._product_cd,
+            "INQR_DVSN_1": "0",
+            "INQR_DVSN_2": "0",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+        url = f"{self._base_url}/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
+
+        try:
+            async with session.get(url, headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise ConnectionError(
+                        f"get_domestic_pending_orders failed ({resp.status}): {text}"
+                    )
+                data = await resp.json()
+                return data.get("output", []) or []
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise ConnectionError(
+                f"Network error fetching domestic pending orders: {exc}"
+            ) from exc
+
+    async def cancel_domestic_order(
+        self,
+        stock_code: str,
+        orgn_odno: str,
+        krx_fwdg_ord_orgno: str,
+        qty: int,
+    ) -> dict[str, Any]:
+        """Cancel an unfilled domestic limit order.
+
+        Args:
+            stock_code: 6-digit domestic stock code (``pdno``).
+            orgn_odno: Original order number from pending-orders response
+                (``orgn_odno`` field).
+            krx_fwdg_ord_orgno: KRX forwarding order branch number from
+                pending-orders response (``ord_gno_brno`` field).
+            qty: Quantity to cancel (use ``psbl_qty`` from pending order).
+
+        Returns:
+            Raw KIS API response dict (check ``rt_cd == "0"`` for success).
+        """
+        await self._rate_limiter.acquire()
+        session = self._get_session()
+
+        # TR_ID: 실전 TTTC0013U, 모의 VTTC0013U
+        # Source: 한국투자증권 오픈API 전체문서 (20260221) — '주식주문(정정취소)' 시트
+        tr_id = "TTTC0013U" if self._settings.MODE == "live" else "VTTC0013U"
+
+        body = {
+            "CANO": self._account_no,
+            "ACNT_PRDT_CD": self._product_cd,
+            "KRX_FWDG_ORD_ORGNO": krx_fwdg_ord_orgno,
+            "ORGN_ODNO": orgn_odno,
+            "ORD_DVSN": "00",
+            "ORD_QTY": str(qty),
+            "ORD_UNPR": "0",
+            "RVSE_CNCL_DVSN_CD": "02",
+            "QTY_ALL_ORD_YN": "Y",
+        }
+
+        hash_key = await self._get_hash_key(body)
+        headers = await self._auth_headers(tr_id)
+        headers["hashkey"] = hash_key
+
+        url = f"{self._base_url}/uapi/domestic-stock/v1/trading/order-rvsecncl"
+
+        try:
+            async with session.post(url, headers=headers, json=body) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise ConnectionError(
+                        f"cancel_domestic_order failed ({resp.status}): {text}"
+                    )
+                return cast(dict[str, Any], await resp.json())
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise ConnectionError(
+                f"Network error cancelling domestic order: {exc}"
+            ) from exc
 
     async def get_daily_prices(
         self,

@@ -725,3 +725,195 @@ class TestTRIDBranchingDomestic:
 
         order_headers = mock_post.call_args_list[1][1].get("headers", {})
         assert order_headers["tr_id"] == "TTTC0011U"
+
+
+# ---------------------------------------------------------------------------
+# Domestic Pending Orders (get_domestic_pending_orders)
+# ---------------------------------------------------------------------------
+
+
+class TestGetDomesticPendingOrders:
+    """get_domestic_pending_orders must return [] in paper mode and call TTTC0084R in live."""
+
+    def _make_broker(self, settings, mode: str) -> KISBroker:
+        from src.config import Settings
+
+        s = Settings(
+            KIS_APP_KEY=settings.KIS_APP_KEY,
+            KIS_APP_SECRET=settings.KIS_APP_SECRET,
+            KIS_ACCOUNT_NO=settings.KIS_ACCOUNT_NO,
+            GEMINI_API_KEY=settings.GEMINI_API_KEY,
+            DB_PATH=":memory:",
+            ENABLED_MARKETS="KR",
+            MODE=mode,
+        )
+        b = KISBroker(s)
+        b._access_token = "tok"
+        b._token_expires_at = float("inf")
+        b._rate_limiter.acquire = AsyncMock()
+        return b
+
+    @pytest.mark.asyncio
+    async def test_paper_mode_returns_empty(self, settings) -> None:
+        """Paper mode must return [] immediately without any API call."""
+        broker = self._make_broker(settings, "paper")
+
+        with patch("aiohttp.ClientSession.get") as mock_get:
+            result = await broker.get_domestic_pending_orders()
+
+        assert result == []
+        mock_get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_live_mode_calls_tttc0084r_with_correct_params(
+        self, settings
+    ) -> None:
+        """Live mode must call TTTC0084R with INQR_DVSN_1/2 and paging params."""
+        broker = self._make_broker(settings, "live")
+        pending = [{"odno": "001", "pdno": "005930", "psbl_qty": "10"}]
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"output": pending})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp) as mock_get:
+            result = await broker.get_domestic_pending_orders()
+
+        assert result == pending
+        headers = mock_get.call_args[1].get("headers", {})
+        assert headers["tr_id"] == "TTTC0084R"
+        params = mock_get.call_args[1].get("params", {})
+        assert params["INQR_DVSN_1"] == "0"
+        assert params["INQR_DVSN_2"] == "0"
+
+    @pytest.mark.asyncio
+    async def test_live_mode_connection_error(self, settings) -> None:
+        """Network error must raise ConnectionError."""
+        import aiohttp as _aiohttp
+
+        broker = self._make_broker(settings, "live")
+
+        with patch(
+            "aiohttp.ClientSession.get",
+            side_effect=_aiohttp.ClientError("timeout"),
+        ):
+            with pytest.raises(ConnectionError):
+                await broker.get_domestic_pending_orders()
+
+
+# ---------------------------------------------------------------------------
+# Domestic Order Cancellation (cancel_domestic_order)
+# ---------------------------------------------------------------------------
+
+
+class TestCancelDomesticOrder:
+    """cancel_domestic_order must use correct TR_ID and build body correctly."""
+
+    def _make_broker(self, settings, mode: str) -> KISBroker:
+        from src.config import Settings
+
+        s = Settings(
+            KIS_APP_KEY=settings.KIS_APP_KEY,
+            KIS_APP_SECRET=settings.KIS_APP_SECRET,
+            KIS_ACCOUNT_NO=settings.KIS_ACCOUNT_NO,
+            GEMINI_API_KEY=settings.GEMINI_API_KEY,
+            DB_PATH=":memory:",
+            ENABLED_MARKETS="KR",
+            MODE=mode,
+        )
+        b = KISBroker(s)
+        b._access_token = "tok"
+        b._token_expires_at = float("inf")
+        b._rate_limiter.acquire = AsyncMock()
+        return b
+
+    def _make_post_mocks(self, order_payload: dict) -> tuple:
+        mock_hash = AsyncMock()
+        mock_hash.status = 200
+        mock_hash.json = AsyncMock(return_value={"HASH": "h"})
+        mock_hash.__aenter__ = AsyncMock(return_value=mock_hash)
+        mock_hash.__aexit__ = AsyncMock(return_value=False)
+
+        mock_order = AsyncMock()
+        mock_order.status = 200
+        mock_order.json = AsyncMock(return_value=order_payload)
+        mock_order.__aenter__ = AsyncMock(return_value=mock_order)
+        mock_order.__aexit__ = AsyncMock(return_value=False)
+
+        return mock_hash, mock_order
+
+    @pytest.mark.asyncio
+    async def test_live_uses_tttc0013u(self, settings) -> None:
+        """Live mode must use TR_ID TTTC0013U."""
+        broker = self._make_broker(settings, "live")
+        mock_hash, mock_order = self._make_post_mocks({"rt_cd": "0"})
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
+        ) as mock_post:
+            await broker.cancel_domestic_order("005930", "ORD001", "BRNO01", 5)
+
+        order_headers = mock_post.call_args_list[1][1].get("headers", {})
+        assert order_headers["tr_id"] == "TTTC0013U"
+
+    @pytest.mark.asyncio
+    async def test_paper_uses_vttc0013u(self, settings) -> None:
+        """Paper mode must use TR_ID VTTC0013U."""
+        broker = self._make_broker(settings, "paper")
+        mock_hash, mock_order = self._make_post_mocks({"rt_cd": "0"})
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
+        ) as mock_post:
+            await broker.cancel_domestic_order("005930", "ORD001", "BRNO01", 5)
+
+        order_headers = mock_post.call_args_list[1][1].get("headers", {})
+        assert order_headers["tr_id"] == "VTTC0013U"
+
+    @pytest.mark.asyncio
+    async def test_cancel_sets_rvse_cncl_dvsn_cd_02(self, settings) -> None:
+        """Body must have RVSE_CNCL_DVSN_CD='02' (취소) and QTY_ALL_ORD_YN='Y'."""
+        broker = self._make_broker(settings, "live")
+        mock_hash, mock_order = self._make_post_mocks({"rt_cd": "0"})
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
+        ) as mock_post:
+            await broker.cancel_domestic_order("005930", "ORD001", "BRNO01", 5)
+
+        body = mock_post.call_args_list[1][1].get("json", {})
+        assert body["RVSE_CNCL_DVSN_CD"] == "02"
+        assert body["QTY_ALL_ORD_YN"] == "Y"
+        assert body["ORD_UNPR"] == "0"
+
+    @pytest.mark.asyncio
+    async def test_cancel_sets_krx_fwdg_ord_orgno_in_body(self, settings) -> None:
+        """Body must include KRX_FWDG_ORD_ORGNO and ORGN_ODNO from arguments."""
+        broker = self._make_broker(settings, "live")
+        mock_hash, mock_order = self._make_post_mocks({"rt_cd": "0"})
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
+        ) as mock_post:
+            await broker.cancel_domestic_order("005930", "ORD123", "BRN456", 3)
+
+        body = mock_post.call_args_list[1][1].get("json", {})
+        assert body["KRX_FWDG_ORD_ORGNO"] == "BRN456"
+        assert body["ORGN_ODNO"] == "ORD123"
+        assert body["ORD_QTY"] == "3"
+
+    @pytest.mark.asyncio
+    async def test_cancel_sets_hashkey_header(self, settings) -> None:
+        """Request must include hashkey header (same pattern as send_order)."""
+        broker = self._make_broker(settings, "live")
+        mock_hash, mock_order = self._make_post_mocks({"rt_cd": "0"})
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
+        ) as mock_post:
+            await broker.cancel_domestic_order("005930", "ORD001", "BRNO01", 2)
+
+        order_headers = mock_post.call_args_list[1][1].get("headers", {})
+        assert "hashkey" in order_headers
+        assert order_headers["hashkey"] == "h"
