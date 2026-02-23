@@ -340,7 +340,13 @@ async def trading_cycle(
         purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
 
         # Paper mode fallback: VTS overseas balance API often fails for many accounts.
-        if total_cash <= 0 and settings and settings.PAPER_OVERSEAS_CASH > 0:
+        # Only activate in paper mode — live mode must use real balance from KIS.
+        if (
+            total_cash <= 0
+            and settings
+            and settings.MODE == "paper"
+            and settings.PAPER_OVERSEAS_CASH > 0
+        ):
             logger.debug(
                 "Overseas cash balance is 0 for %s; using paper fallback %.2f USD",
                 market.exchange_code,
@@ -499,9 +505,8 @@ async def trading_cycle(
         outlook = playbook.market_outlook
         if outlook == MarketOutlook.BEARISH:
             min_confidence = 90
-        elif outlook == MarketOutlook.BULLISH:
-            min_confidence = 75
         else:
+            # BULLISH/NEUTRAL: use base threshold (min 80 per CLAUDE.md non-negotiable rule)
             min_confidence = base_threshold
         if match.confidence < min_confidence:
             logger.info(
@@ -1041,11 +1046,12 @@ async def run_daily_session(
                 balance_info.get("frcr_buy_amt_smtl", "0") or "0"
             )
             # Paper mode fallback: VTS overseas balance API often fails for many accounts.
-            if total_cash <= 0 and settings.PAPER_OVERSEAS_CASH > 0:
-                total_cash = settings.PAPER_OVERSEAS_CASH
-
-            # VTS overseas balance API often returns 0; use paper fallback.
-            if total_cash <= 0 and settings.PAPER_OVERSEAS_CASH > 0:
+            # Only activate in paper mode — live mode must use real balance from KIS.
+            if (
+                total_cash <= 0
+                and settings.MODE == "paper"
+                and settings.PAPER_OVERSEAS_CASH > 0
+            ):
                 total_cash = settings.PAPER_OVERSEAS_CASH
 
         # Calculate daily P&L %
@@ -1979,6 +1985,10 @@ async def run(settings: Settings) -> None:
                     )
                 except CircuitBreakerTripped:
                     logger.critical("Circuit breaker tripped — shutting down")
+                    await telegram.notify_circuit_breaker(
+                        pnl_pct=settings.CIRCUIT_BREAKER_PCT,
+                        threshold=settings.CIRCUIT_BREAKER_PCT,
+                    )
                     shutdown.set()
                     break
                 except Exception as exc:
@@ -2296,6 +2306,8 @@ async def run(settings: Settings) -> None:
                 except TimeoutError:
                     pass  # Normal — timeout means it's time for next cycle
     finally:
+        # Notify shutdown before closing resources
+        await telegram.notify_system_shutdown("Normal shutdown")
         # Clean up resources
         await command_handler.stop_polling()
         await broker.close()

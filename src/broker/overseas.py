@@ -175,8 +175,12 @@ class OverseasBroker:
         await self._broker._rate_limiter.acquire()
         session = self._broker._get_session()
 
-        # Virtual trading TR_ID for overseas balance inquiry
-        headers = await self._broker._auth_headers("VTTS3012R")
+        # TR_ID: 실전 TTTS3012R, 모의 VTTS3012R
+        # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 잔고조회' 시트
+        balance_tr_id = (
+            "TTTS3012R" if self._broker._settings.MODE == "live" else "VTTS3012R"
+        )
+        headers = await self._broker._auth_headers(balance_tr_id)
         params = {
             "CANO": self._broker._account_no,
             "ACNT_PRDT_CD": self._broker._product_cd,
@@ -229,10 +233,12 @@ class OverseasBroker:
         await self._broker._rate_limiter.acquire()
         session = self._broker._get_session()
 
-        # Virtual trading TR_IDs for overseas orders
+        # TR_ID: 실전 BUY=TTTT1002U SELL=TTTT1006U, 모의 BUY=VTTT1002U SELL=VTTT1001U
         # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 주문' 시트
-        # VTTT1002U: 모의투자 미국 매수, VTTT1001U: 모의투자 미국 매도
-        tr_id = "VTTT1002U" if order_type == "BUY" else "VTTT1001U"
+        if self._broker._settings.MODE == "live":
+            tr_id = "TTTT1002U" if order_type == "BUY" else "TTTT1006U"
+        else:
+            tr_id = "VTTT1002U" if order_type == "BUY" else "VTTT1001U"
 
         body = {
             "CANO": self._broker._account_no,

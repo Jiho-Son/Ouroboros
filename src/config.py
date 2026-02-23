@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     KIS_APP_KEY: str
     KIS_APP_SECRET: str
     KIS_ACCOUNT_NO: str  # format: "XXXXXXXX-XX"
-    KIS_BASE_URL: str = "https://openapivts.koreainvestment.com:9443"
+    KIS_BASE_URL: str = "https://openapivts.koreainvestment.com:29443"
 
     # Google Gemini
     GEMINI_API_KEY: str

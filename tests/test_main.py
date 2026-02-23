@@ -2729,13 +2729,18 @@ class TestMarketOutlookConfidenceThreshold:
         assert call_args.kwargs["action"] == "BUY"
 
     @pytest.mark.asyncio
-    async def test_bullish_outlook_lowers_buy_confidence_threshold(
+    async def test_bullish_outlook_uses_same_threshold_as_neutral(
         self,
         mock_broker: MagicMock,
         mock_market: MagicMock,
         mock_telegram: MagicMock,
     ) -> None:
-        """BUY with confidence 77 should proceed in bullish market (threshold=75)."""
+        """BUY with confidence 77 should be suppressed even in bullish market.
+
+        CLAUDE.md non-negotiable rule: confidence < 80 → force HOLD.
+        BULLISH outlook does NOT lower the threshold below 80.
+        (issue #205)
+        """
         engine = MagicMock(spec=ScenarioEngine)
         engine.evaluate = MagicMock(return_value=self._make_buy_match_with_confidence(77))
         playbook = self._make_playbook_with_outlook("bullish")
@@ -2767,7 +2772,8 @@ class TestMarketOutlookConfidenceThreshold:
 
         call_args = decision_logger.log_decision.call_args
         assert call_args is not None
-        assert call_args.kwargs["action"] == "BUY"
+        # confidence 77 < 80 → must be suppressed to HOLD
+        assert call_args.kwargs["action"] == "HOLD"
 
     @pytest.mark.asyncio
     async def test_bullish_outlook_suppresses_very_low_confidence_buy(
@@ -2776,7 +2782,7 @@ class TestMarketOutlookConfidenceThreshold:
         mock_market: MagicMock,
         mock_telegram: MagicMock,
     ) -> None:
-        """BUY with confidence 70 should be suppressed even in bullish market (threshold=75)."""
+        """BUY with confidence 70 should be suppressed even in bullish market (threshold=80)."""
         engine = MagicMock(spec=ScenarioEngine)
         engine.evaluate = MagicMock(return_value=self._make_buy_match_with_confidence(70))
         playbook = self._make_playbook_with_outlook("bullish")

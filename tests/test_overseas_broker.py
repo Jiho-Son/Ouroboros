@@ -640,4 +640,176 @@ class TestPaperOverseasCash:
             GEMINI_API_KEY="g",
         )
         assert settings.PAPER_OVERSEAS_CASH == 0.0
-        del os.environ["PAPER_OVERSEAS_CASH"]
+
+
+# ---------------------------------------------------------------------------
+# TR_ID live/paper branching — overseas (issues #201, #203)
+# ---------------------------------------------------------------------------
+
+
+def _make_overseas_broker_with_mode(mode: str) -> OverseasBroker:
+    s = Settings(
+        KIS_APP_KEY="k",
+        KIS_APP_SECRET="s",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="g",
+        DB_PATH=":memory:",
+        MODE=mode,
+    )
+    kis = KISBroker(s)
+    kis._access_token = "tok"
+    kis._token_expires_at = float("inf")
+    kis._rate_limiter.acquire = AsyncMock()
+    return OverseasBroker(kis)
+
+
+class TestOverseasTRIDBranching:
+    """get_overseas_balance and send_overseas_order must use correct TR_ID."""
+
+    @pytest.mark.asyncio
+    async def test_get_overseas_balance_paper_uses_vtts3012r(self) -> None:
+        broker = _make_overseas_broker_with_mode("paper")
+        captured: list[str] = []
+
+        async def mock_auth_headers(tr_id: str) -> dict:
+            captured.append(tr_id)
+            return {"tr_id": tr_id, "authorization": "Bearer tok"}
+
+        broker._broker._auth_headers = mock_auth_headers  # type: ignore[method-assign]
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"output1": [], "output2": []})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=mock_resp)
+        broker._broker._get_session = MagicMock(return_value=mock_session)
+
+        await broker.get_overseas_balance("NASD")
+        assert "VTTS3012R" in captured
+
+    @pytest.mark.asyncio
+    async def test_get_overseas_balance_live_uses_ttts3012r(self) -> None:
+        broker = _make_overseas_broker_with_mode("live")
+        captured: list[str] = []
+
+        async def mock_auth_headers(tr_id: str) -> dict:
+            captured.append(tr_id)
+            return {"tr_id": tr_id, "authorization": "Bearer tok"}
+
+        broker._broker._auth_headers = mock_auth_headers  # type: ignore[method-assign]
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"output1": [], "output2": []})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=mock_resp)
+        broker._broker._get_session = MagicMock(return_value=mock_session)
+
+        await broker.get_overseas_balance("NASD")
+        assert "TTTS3012R" in captured
+
+    @pytest.mark.asyncio
+    async def test_send_overseas_order_buy_paper_uses_vttt1002u(self) -> None:
+        broker = _make_overseas_broker_with_mode("paper")
+        captured: list[str] = []
+
+        async def mock_auth_headers(tr_id: str) -> dict:
+            captured.append(tr_id)
+            return {"tr_id": tr_id, "authorization": "Bearer tok"}
+
+        broker._broker._auth_headers = mock_auth_headers  # type: ignore[method-assign]
+        broker._broker._get_hash_key = AsyncMock(return_value="h")  # type: ignore[method-assign]
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=mock_resp)
+        broker._broker._get_session = MagicMock(return_value=mock_session)
+
+        await broker.send_overseas_order("NASD", "AAPL", "BUY", 1)
+        assert "VTTT1002U" in captured
+
+    @pytest.mark.asyncio
+    async def test_send_overseas_order_buy_live_uses_tttt1002u(self) -> None:
+        broker = _make_overseas_broker_with_mode("live")
+        captured: list[str] = []
+
+        async def mock_auth_headers(tr_id: str) -> dict:
+            captured.append(tr_id)
+            return {"tr_id": tr_id, "authorization": "Bearer tok"}
+
+        broker._broker._auth_headers = mock_auth_headers  # type: ignore[method-assign]
+        broker._broker._get_hash_key = AsyncMock(return_value="h")  # type: ignore[method-assign]
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=mock_resp)
+        broker._broker._get_session = MagicMock(return_value=mock_session)
+
+        await broker.send_overseas_order("NASD", "AAPL", "BUY", 1)
+        assert "TTTT1002U" in captured
+
+    @pytest.mark.asyncio
+    async def test_send_overseas_order_sell_paper_uses_vttt1001u(self) -> None:
+        broker = _make_overseas_broker_with_mode("paper")
+        captured: list[str] = []
+
+        async def mock_auth_headers(tr_id: str) -> dict:
+            captured.append(tr_id)
+            return {"tr_id": tr_id, "authorization": "Bearer tok"}
+
+        broker._broker._auth_headers = mock_auth_headers  # type: ignore[method-assign]
+        broker._broker._get_hash_key = AsyncMock(return_value="h")  # type: ignore[method-assign]
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=mock_resp)
+        broker._broker._get_session = MagicMock(return_value=mock_session)
+
+        await broker.send_overseas_order("NASD", "AAPL", "SELL", 1)
+        assert "VTTT1001U" in captured
+
+    @pytest.mark.asyncio
+    async def test_send_overseas_order_sell_live_uses_tttt1006u(self) -> None:
+        broker = _make_overseas_broker_with_mode("live")
+        captured: list[str] = []
+
+        async def mock_auth_headers(tr_id: str) -> dict:
+            captured.append(tr_id)
+            return {"tr_id": tr_id, "authorization": "Bearer tok"}
+
+        broker._broker._auth_headers = mock_auth_headers  # type: ignore[method-assign]
+        broker._broker._get_hash_key = AsyncMock(return_value="h")  # type: ignore[method-assign]
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=mock_resp)
+        broker._broker._get_session = MagicMock(return_value=mock_session)
+
+        await broker.send_overseas_order("NASD", "AAPL", "SELL", 1)
+        assert "TTTT1006U" in captured
