@@ -257,7 +257,15 @@ def _extract_held_codes_from_balance(
         if is_domestic:
             qty = int(holding.get("ord_psbl_qty") or holding.get("hldg_qty") or 0)
         else:
-            qty = int(holding.get("ovrs_cblc_qty") or holding.get("hldg_qty") or 0)
+            # ord_psbl_qty (주문가능수량) is the actual sellable quantity.
+            # ovrs_cblc_qty (해외잔고수량) includes unsettled/expired holdings
+            # that cannot actually be sold (e.g. expired warrants).
+            qty = int(
+                holding.get("ord_psbl_qty")
+                or holding.get("ovrs_cblc_qty")
+                or holding.get("hldg_qty")
+                or 0
+            )
         if qty > 0:
             codes.append(code)
     return codes
@@ -280,10 +288,12 @@ def _extract_held_qty_from_balance(
         ord_psbl_qty  — 주문가능수량 (preferred: excludes unsettled)
         hldg_qty      — 보유수량 (fallback)
 
-    Overseas fields (output1):
+    Overseas fields (VTTS3012R / TTTS3012R output1):
         ovrs_pdno     — 종목코드
-        ovrs_cblc_qty — 해외잔고수량 (preferred)
-        hldg_qty      — 보유수량 (fallback)
+        ord_psbl_qty  — 주문가능수량 (preferred: actual sellable qty)
+        ovrs_cblc_qty — 해외잔고수량 (fallback: total holding, may include
+                        unsettled or expired positions with ord_psbl_qty=0)
+        hldg_qty      — 보유수량 (last-resort fallback)
     """
     output1 = balance_data.get("output1", [])
     if isinstance(output1, dict):
@@ -301,7 +311,12 @@ def _extract_held_qty_from_balance(
         if is_domestic:
             qty = int(holding.get("ord_psbl_qty") or holding.get("hldg_qty") or 0)
         else:
-            qty = int(holding.get("ovrs_cblc_qty") or holding.get("hldg_qty") or 0)
+            qty = int(
+                holding.get("ord_psbl_qty")
+                or holding.get("ovrs_cblc_qty")
+                or holding.get("hldg_qty")
+                or 0
+            )
         return qty
     return 0
 
@@ -907,6 +922,33 @@ async def trading_cycle(
                         "BUY cooldown set for %s: %.0fs (insufficient balance)",
                         stock_code,
                         _BUY_COOLDOWN_SECONDS,
+                    )
+                # Close ghost position when broker has no matching balance.
+                # This prevents infinite SELL retry cycles for positions that
+                # exist in the DB (from startup sync) but are no longer
+                # sellable at the broker (expired warrants, delisted stocks, etc.)
+                if decision.action == "SELL" and "잔고내역이 없습니다" in msg1:
+                    logger.warning(
+                        "Ghost position detected for %s (%s): broker reports no balance."
+                        " Closing DB position to prevent infinite retry.",
+                        stock_code,
+                        market.exchange_code,
+                    )
+                    log_trade(
+                        conn=db_conn,
+                        stock_code=stock_code,
+                        action="SELL",
+                        confidence=0,
+                        rationale=(
+                            "[ghost-close] Broker reported no balance;"
+                            " position closed without fill"
+                        ),
+                        quantity=0,
+                        price=0.0,
+                        pnl=0.0,
+                        market=market.code,
+                        exchange_code=market.exchange_code,
+                        mode=settings.MODE if settings else "paper",
                     )
         logger.info("Order result: %s", result.get("msg1", "OK"))
 
