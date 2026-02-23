@@ -22,6 +22,7 @@ from src.main import (
     _run_context_scheduler,
     _run_evolution_loop,
     _start_dashboard_server,
+    run_daily_session,
     safe_float,
     trading_cycle,
 )
@@ -3271,3 +3272,243 @@ class TestRetryConnection:
             await _retry_connection(bad_input, label="bad")
 
         assert call_count == 1  # No retry for non-ConnectionError
+
+
+# ---------------------------------------------------------------------------
+# run_daily_session — daily CB baseline (daily_start_eval) tests (issue #207)
+# ---------------------------------------------------------------------------
+
+
+class TestDailyCBBaseline:
+    """Tests for run_daily_session's daily_start_eval (CB baseline) behaviour.
+
+    Issue #207: CB P&L should be computed relative to the portfolio value at
+    the start of each trading day, not the cumulative purchase_total.
+    """
+
+    def _make_settings(self) -> Settings:
+        return Settings(
+            KIS_APP_KEY="test-key",
+            KIS_APP_SECRET="test-secret",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="test-gemini",
+            MODE="paper",
+            PAPER_OVERSEAS_CASH=0,
+        )
+
+    def _make_domestic_balance(
+        self, tot_evlu_amt: float = 0.0, dnca_tot_amt: float = 50000.0
+    ) -> dict:
+        return {
+            "output1": [],
+            "output2": [
+                {
+                    "tot_evlu_amt": str(tot_evlu_amt),
+                    "dnca_tot_amt": str(dnca_tot_amt),
+                    "pchs_amt_smtl_amt": "40000.0",
+                }
+            ],
+        }
+
+    @pytest.mark.asyncio
+    async def test_returns_daily_start_eval_when_no_markets_open(self) -> None:
+        """run_daily_session returns the unchanged daily_start_eval when no markets are open."""
+        with patch("src.main.get_open_markets", return_value=[]):
+            result = await run_daily_session(
+                broker=MagicMock(),
+                overseas_broker=MagicMock(),
+                scenario_engine=MagicMock(),
+                playbook_store=MagicMock(),
+                pre_market_planner=MagicMock(),
+                risk=MagicMock(),
+                db_conn=init_db(":memory:"),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(),
+                criticality_assessor=MagicMock(),
+                telegram=MagicMock(),
+                settings=self._make_settings(),
+                smart_scanner=None,
+                daily_start_eval=12345.0,
+            )
+        assert result == 12345.0
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_no_markets_and_no_baseline(self) -> None:
+        """run_daily_session returns 0.0 when no markets are open and daily_start_eval=0."""
+        with patch("src.main.get_open_markets", return_value=[]):
+            result = await run_daily_session(
+                broker=MagicMock(),
+                overseas_broker=MagicMock(),
+                scenario_engine=MagicMock(),
+                playbook_store=MagicMock(),
+                pre_market_planner=MagicMock(),
+                risk=MagicMock(),
+                db_conn=init_db(":memory:"),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(),
+                criticality_assessor=MagicMock(),
+                telegram=MagicMock(),
+                settings=self._make_settings(),
+                smart_scanner=None,
+                daily_start_eval=0.0,
+            )
+        assert result == 0.0
+
+    @pytest.mark.asyncio
+    async def test_captures_total_eval_as_baseline_on_first_session(self) -> None:
+        """When daily_start_eval=0 and balance returns a positive total_eval, the returned
+        value equals total_eval (the captured baseline for the day)."""
+        from src.analysis.smart_scanner import ScanCandidate
+
+        settings = self._make_settings()
+        broker = MagicMock()
+        # Domestic balance: tot_evlu_amt=55000
+        broker.get_balance = AsyncMock(
+            return_value=self._make_domestic_balance(tot_evlu_amt=55000.0)
+        )
+        # Price data for the stock
+        broker.get_current_price = AsyncMock(
+            return_value=(100.0, 1.5, 100.0)
+        )
+
+        market = MagicMock()
+        market.name = "KR"
+        market.code = "KR"
+        market.exchange_code = "KRX"
+        market.is_domestic = True
+        market.timezone = __import__("zoneinfo").ZoneInfo("Asia/Seoul")
+
+        smart_scanner = MagicMock()
+        smart_scanner.scan = AsyncMock(
+            return_value=[
+                ScanCandidate(
+                    stock_code="005930",
+                    name="Samsung",
+                    price=100.0,
+                    volume=1_000_000.0,
+                    volume_ratio=2.5,
+                    rsi=45.0,
+                    signal="momentum",
+                    score=80.0,
+                )
+            ]
+        )
+
+        playbook_store = MagicMock()
+        playbook_store.load = MagicMock(return_value=_make_playbook("KR"))
+
+        scenario_engine = MagicMock(spec=ScenarioEngine)
+        scenario_engine.evaluate = MagicMock(return_value=_make_hold_match("005930"))
+
+        risk = MagicMock()
+        risk.check_circuit_breaker = MagicMock()
+        risk.check_fat_finger = MagicMock()
+
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="d1")
+
+        async def _passthrough(fn, *a, label: str = "", **kw):  # type: ignore[override]
+            return await fn(*a, **kw)
+
+        with patch("src.main.get_open_markets", return_value=[market]), \
+             patch("src.main._retry_connection", new=_passthrough):
+            result = await run_daily_session(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=scenario_engine,
+                playbook_store=playbook_store,
+                pre_market_planner=MagicMock(),
+                risk=risk,
+                db_conn=init_db(":memory:"),
+                decision_logger=decision_logger,
+                context_store=MagicMock(),
+                criticality_assessor=MagicMock(),
+                telegram=telegram,
+                settings=settings,
+                smart_scanner=smart_scanner,
+                daily_start_eval=0.0,
+            )
+
+        assert result == 55000.0  # captured from tot_evlu_amt
+
+    @pytest.mark.asyncio
+    async def test_does_not_overwrite_existing_baseline(self) -> None:
+        """When daily_start_eval > 0, it must not be overwritten even if balance returns
+        a different value (baseline is fixed at the start of each trading day)."""
+        from src.analysis.smart_scanner import ScanCandidate
+
+        settings = self._make_settings()
+        broker = MagicMock()
+        # Balance reports a different eval value (market moved during the day)
+        broker.get_balance = AsyncMock(
+            return_value=self._make_domestic_balance(tot_evlu_amt=58000.0)
+        )
+        broker.get_current_price = AsyncMock(return_value=(100.0, 1.5, 100.0))
+
+        market = MagicMock()
+        market.name = "KR"
+        market.code = "KR"
+        market.exchange_code = "KRX"
+        market.is_domestic = True
+        market.timezone = __import__("zoneinfo").ZoneInfo("Asia/Seoul")
+
+        smart_scanner = MagicMock()
+        smart_scanner.scan = AsyncMock(
+            return_value=[
+                ScanCandidate(
+                    stock_code="005930",
+                    name="Samsung",
+                    price=100.0,
+                    volume=1_000_000.0,
+                    volume_ratio=2.5,
+                    rsi=45.0,
+                    signal="momentum",
+                    score=80.0,
+                )
+            ]
+        )
+
+        playbook_store = MagicMock()
+        playbook_store.load = MagicMock(return_value=_make_playbook("KR"))
+
+        scenario_engine = MagicMock(spec=ScenarioEngine)
+        scenario_engine.evaluate = MagicMock(return_value=_make_hold_match("005930"))
+
+        risk = MagicMock()
+        risk.check_circuit_breaker = MagicMock()
+
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="d1")
+
+        async def _passthrough(fn, *a, label: str = "", **kw):  # type: ignore[override]
+            return await fn(*a, **kw)
+
+        with patch("src.main.get_open_markets", return_value=[market]), \
+             patch("src.main._retry_connection", new=_passthrough):
+            result = await run_daily_session(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=scenario_engine,
+                playbook_store=playbook_store,
+                pre_market_planner=MagicMock(),
+                risk=risk,
+                db_conn=init_db(":memory:"),
+                decision_logger=decision_logger,
+                context_store=MagicMock(),
+                criticality_assessor=MagicMock(),
+                telegram=telegram,
+                settings=settings,
+                smart_scanner=smart_scanner,
+                daily_start_eval=55000.0,  # existing baseline
+            )
+
+        # Must return the original baseline, NOT the new total_eval (58000)
+        assert result == 55000.0
