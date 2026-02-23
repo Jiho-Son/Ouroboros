@@ -908,18 +908,30 @@ async def run_daily_session(
     telegram: TelegramClient,
     settings: Settings,
     smart_scanner: SmartVolatilityScanner | None = None,
-) -> None:
+    daily_start_eval: float = 0.0,
+) -> float:
     """Execute one daily trading session.
 
     V2 proactive strategy: 1 Gemini call for playbook generation,
     then local scenario evaluation per stock (0 API calls).
+
+    Args:
+        daily_start_eval: Portfolio evaluation at the start of the trading day.
+            Used to compute intra-day P&L for the Circuit Breaker.
+            Pass 0.0 on the first session of each day; the function will set
+            it from the first balance query and return it for subsequent
+            sessions.
+
+    Returns:
+        The daily_start_eval value that should be forwarded to the next
+        session of the same trading day.
     """
     # Get currently open markets
     open_markets = get_open_markets(settings.enabled_market_list)
 
     if not open_markets:
         logger.info("No markets open for this session")
-        return
+        return daily_start_eval
 
     logger.info("Starting daily trading session for %d markets", len(open_markets))
 
@@ -1121,12 +1133,27 @@ async def run_daily_session(
             ):
                 total_cash = settings.PAPER_OVERSEAS_CASH
 
-        # Calculate daily P&L %
-        pnl_pct = (
-            ((total_eval - purchase_total) / purchase_total * 100)
-            if purchase_total > 0
-            else 0.0
-        )
+        # Capture the day's opening portfolio value on the first market processed
+        # in this session.  Used to compute intra-day P&L for the CB instead of
+        # the cumulative purchase_total which spans the entire account history.
+        if daily_start_eval <= 0 and total_eval > 0:
+            daily_start_eval = total_eval
+            logger.info(
+                "Daily CB baseline set: total_eval=%.2f (first balance of the day)",
+                daily_start_eval,
+            )
+
+        # Daily P&L: compare current eval vs start-of-day eval.
+        # Falls back to purchase_total if daily_start_eval is unavailable (e.g. paper
+        # mode where balance API returns 0 for all values).
+        if daily_start_eval > 0:
+            pnl_pct = (total_eval - daily_start_eval) / daily_start_eval * 100
+        else:
+            pnl_pct = (
+                ((total_eval - purchase_total) / purchase_total * 100)
+                if purchase_total > 0
+                else 0.0
+            )
         portfolio_data = {
             "portfolio_pnl_pct": pnl_pct,
             "total_cash": total_cash,
@@ -1395,6 +1422,7 @@ async def run_daily_session(
             )
 
     logger.info("Daily trading session completed")
+    return daily_start_eval
 
 
 async def _handle_market_close(
@@ -2030,13 +2058,26 @@ async def run(settings: Settings) -> None:
 
             session_interval = settings.SESSION_INTERVAL_HOURS * 3600  # Convert to seconds
 
+            # daily_start_eval: portfolio eval captured at the first session of each
+            # trading day.  Reset on calendar-date change so the CB measures only
+            # today's drawdown, not cumulative account history.
+            _cb_daily_start_eval: float = 0.0
+            _cb_last_date: str = ""
+
             while not shutdown.is_set():
                 # Wait for trading to be unpaused
                 await pause_trading.wait()
                 _run_context_scheduler(context_scheduler, now=datetime.now(UTC))
 
+                # Reset intra-day CB baseline on a new calendar date
+                today_str = datetime.now(UTC).date().isoformat()
+                if today_str != _cb_last_date:
+                    _cb_last_date = today_str
+                    _cb_daily_start_eval = 0.0
+                    logger.info("New trading day %s — daily CB baseline reset", today_str)
+
                 try:
-                    await run_daily_session(
+                    _cb_daily_start_eval = await run_daily_session(
                         broker,
                         overseas_broker,
                         scenario_engine,
@@ -2050,6 +2091,7 @@ async def run(settings: Settings) -> None:
                         telegram,
                         settings,
                         smart_scanner=smart_scanner,
+                        daily_start_eval=_cb_daily_start_eval,
                     )
                 except CircuitBreakerTripped:
                     logger.critical("Circuit breaker tripped — shutting down")
