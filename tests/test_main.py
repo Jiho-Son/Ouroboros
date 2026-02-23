@@ -1105,10 +1105,11 @@ class TestOverseasBalanceParsing:
         mock_telegram: MagicMock,
         mock_overseas_market: MagicMock,
     ) -> None:
-        """Overseas BUY order must use current_price (limit), not 0 (market).
+        """Overseas BUY order must use current_price +0.2% limit, not market order.
 
-        KIS VTS rejects market orders for overseas paper trading.
-        Regression test for issue #149.
+        KIS market orders (ORD_DVSN=01) calculate quantity based on upper limit price
+        (상한가 기준), resulting in only 60-80% of intended cash being used.
+        Regression test for issue #149 / #211.
         """
         mock_telegram.notify_trade_execution = AsyncMock()
 
@@ -1129,14 +1130,93 @@ class TestOverseasBalanceParsing:
                 scan_candidates={},
             )
 
-        # Verify limit order was sent with actual price + 0.5% premium (issue #151), not 0.0
+        # Verify BUY limit order uses +0.2% premium (issue #211)
         mock_overseas_broker_with_buy_scenario.send_overseas_order.assert_called_once()
         call_kwargs = mock_overseas_broker_with_buy_scenario.send_overseas_order.call_args
         sent_price = call_kwargs[1].get("price") or call_kwargs[0][4]
-        expected_price = round(182.5 * 1.005, 4)  # 0.5% premium for BUY limit orders
+        expected_price = round(182.5 * 1.002, 4)  # 0.2% premium for BUY limit orders
         assert sent_price == expected_price, (
-            f"Expected limit price {expected_price} (182.5 * 1.005) but got {sent_price}. "
-            "KIS VTS only accepts limit orders; BUY uses 0.5% premium to improve fill rate."
+            f"Expected limit price {expected_price} (182.5 * 1.002) but got {sent_price}. "
+            "BUY uses +0.2% to improve fill rate while minimising overpayment (#211)."
+        )
+
+    @pytest.mark.asyncio
+    async def test_overseas_sell_order_uses_limit_price_below_current(
+        self,
+        mock_domestic_broker: MagicMock,
+        mock_playbook: DayPlaybook,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """Overseas SELL order must use current_price -0.2% limit (#211).
+
+        Placing SELL at exact last price risks no-fill when the bid is just below.
+        Using -0.2% ensures the order fills even if the price dips slightly.
+        """
+        sell_price = 182.5
+
+        # Broker mock: returns price data and a balance with 5 AAPL shares held.
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": str(sell_price), "rate": "1.5", "tvol": "5000000"}}
+        )
+        overseas_broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output1": [
+                    {
+                        "ovrs_pdno": "AAPL",
+                        "ovrs_cblc_qty": "5",
+                        "pchs_avg_pric": "170.0",
+                        "evlu_pfls_rt": "7.35",
+                    }
+                ],
+                "output2": [
+                    {
+                        "frcr_evlu_tota": "100000.00",
+                        "frcr_dncl_amt_2": "50000.00",
+                        "frcr_buy_amt_smtl": "50000.00",
+                    }
+                ],
+            }
+        )
+        overseas_broker.send_overseas_order = AsyncMock(
+            return_value={"rt_cd": "0", "msg1": "OK"}
+        )
+
+        sell_engine = MagicMock(spec=ScenarioEngine)
+        sell_engine.evaluate = MagicMock(return_value=_make_sell_match("AAPL"))
+        mock_telegram.notify_trade_execution = AsyncMock()
+
+        with patch("src.main.log_trade"), patch("src.main.get_open_position") as mock_pos:
+            mock_pos.return_value = {"quantity": 5, "stock_code": "AAPL", "price": 170.0}
+            await trading_cycle(
+                broker=mock_domestic_broker,
+                overseas_broker=overseas_broker,
+                scenario_engine=sell_engine,
+                playbook=mock_playbook,
+                risk=mock_risk,
+                db_conn=mock_db,
+                decision_logger=mock_decision_logger,
+                context_store=mock_context_store,
+                criticality_assessor=mock_criticality_assessor,
+                telegram=mock_telegram,
+                market=mock_overseas_market,
+                stock_code="AAPL",
+                scan_candidates={},
+            )
+
+        overseas_broker.send_overseas_order.assert_called_once()
+        call_kwargs = overseas_broker.send_overseas_order.call_args
+        sent_price = call_kwargs[1].get("price") or call_kwargs[0][4]
+        expected_price = round(sell_price * 0.998, 4)  # -0.2% for SELL limit orders
+        assert sent_price == expected_price, (
+            f"Expected SELL limit price {expected_price} (182.5 * 0.998) but got {sent_price}. "
+            "SELL uses -0.2% to ensure fill even when price dips slightly (#211)."
         )
 
 

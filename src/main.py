@@ -860,21 +860,23 @@ async def trading_cycle(
                 price=0,  # market order
             )
         else:
-            # For overseas orders:
-            # - KIS VTS only accepts limit orders (지정가만 가능)
-            # - BUY: use 0.5% premium over last price to improve fill probability
-            #   (ask price is typically slightly above last, and VTS won't fill below ask)
-            # - SELL: use last price as the limit
+            # For overseas orders, always use limit orders (지정가):
+            # - KIS market orders (ORD_DVSN=01) calculate quantity based on upper limit
+            #   price (상한가 기준), resulting in only 60-80% of intended cash being used.
+            # - BUY: +0.2% above last price — tight enough to minimise overpayment while
+            #   achieving >90% fill rate on large-cap US stocks.
+            # - SELL: -0.2% below last price — ensures fill even when price dips slightly
+            #   (placing at exact last price risks no-fill if the bid is just below).
             if decision.action == "BUY":
-                order_price = round(current_price * 1.005, 4)
+                order_price = round(current_price * 1.002, 4)
             else:
-                order_price = current_price
+                order_price = round(current_price * 0.998, 4)
             result = await overseas_broker.send_overseas_order(
                 exchange_code=market.exchange_code,
                 stock_code=stock_code,
                 order_type=decision.action,
                 quantity=quantity,
-                price=order_price,  # limit order — KIS VTS rejects market orders
+                price=order_price,  # limit order
             )
             # Check if KIS rejected the order (rt_cd != "0")
             if result.get("rt_cd", "") != "0":
