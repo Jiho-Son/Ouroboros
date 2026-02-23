@@ -822,6 +822,7 @@ async def trading_cycle(
         exchange_code=market.exchange_code,
         selection_context=selection_context,
         decision_id=decision_id,
+        mode=settings.MODE if settings else "paper",
     )
 
     # 7. Latency monitoring
@@ -1318,6 +1319,7 @@ async def run_daily_session(
                 market=market.code,
                 exchange_code=market.exchange_code,
                 decision_id=decision_id,
+                mode=settings.MODE,
             )
 
     logger.info("Daily trading session completed")
