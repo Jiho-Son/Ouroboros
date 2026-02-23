@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     # Google Gemini
     GEMINI_API_KEY: str
-    GEMINI_MODEL: str = "gemini-pro"
+    GEMINI_MODEL: str = "gemini-2.0-flash"
 
     # External Data APIs (optional — for data-driven decisions)
     NEWS_API_KEY: str | None = None
