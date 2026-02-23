@@ -88,6 +88,47 @@ DAILY_TRADE_SESSIONS = 4  # Number of trading sessions per day
 TRADE_SESSION_INTERVAL_HOURS = 6  # Hours between sessions
 
 
+async def _retry_connection(coro_factory: Any, *args: Any, label: str = "", **kwargs: Any) -> Any:
+    """Call an async function retrying on ConnectionError with exponential backoff.
+
+    Retries up to MAX_CONNECTION_RETRIES times (exclusive of the first attempt),
+    sleeping 2^attempt seconds between attempts.  Use only for idempotent read
+    operations — never for order submission.
+
+    Args:
+        coro_factory: Async callable (method or function) to invoke.
+        *args: Positional arguments forwarded to coro_factory.
+        label: Human-readable label for log messages.
+        **kwargs: Keyword arguments forwarded to coro_factory.
+
+    Raises:
+        ConnectionError: If all retries are exhausted.
+    """
+    for attempt in range(1, MAX_CONNECTION_RETRIES + 1):
+        try:
+            return await coro_factory(*args, **kwargs)
+        except ConnectionError as exc:
+            if attempt < MAX_CONNECTION_RETRIES:
+                wait_secs = 2 ** attempt
+                logger.warning(
+                    "Connection error %s (attempt %d/%d), retrying in %ds: %s",
+                    label,
+                    attempt,
+                    MAX_CONNECTION_RETRIES,
+                    wait_secs,
+                    exc,
+                )
+                await asyncio.sleep(wait_secs)
+            else:
+                logger.error(
+                    "Connection error %s — all %d retries exhausted: %s",
+                    label,
+                    MAX_CONNECTION_RETRIES,
+                    exc,
+                )
+                raise
+
+
 def _extract_symbol_from_holding(item: dict[str, Any]) -> str:
     """Extract symbol from overseas holding payload variants."""
     for key in (
@@ -964,11 +1005,18 @@ async def run_daily_session(
             try:
                 if market.is_domestic:
                     current_price, price_change_pct, foreigner_net = (
-                        await broker.get_current_price(stock_code)
+                        await _retry_connection(
+                            broker.get_current_price,
+                            stock_code,
+                            label=stock_code,
+                        )
                     )
                 else:
-                    price_data = await overseas_broker.get_overseas_price(
-                        market.exchange_code, stock_code
+                    price_data = await _retry_connection(
+                        overseas_broker.get_overseas_price,
+                        market.exchange_code,
+                        stock_code,
+                        label=f"{stock_code}@{market.exchange_code}",
                     )
                     current_price = safe_float(
                         price_data.get("output", {}).get("last", "0")
@@ -1019,9 +1067,27 @@ async def run_daily_session(
             logger.warning("No valid stock data for market %s", market.code)
             continue
 
-        # Get balance data once for the market
+        # Get balance data once for the market (read-only — safe to retry)
+        try:
+            if market.is_domestic:
+                balance_data = await _retry_connection(
+                    broker.get_balance, label=f"balance:{market.code}"
+                )
+            else:
+                balance_data = await _retry_connection(
+                    overseas_broker.get_overseas_balance,
+                    market.exchange_code,
+                    label=f"overseas_balance:{market.exchange_code}",
+                )
+        except ConnectionError as exc:
+            logger.error(
+                "Balance fetch failed for market %s after all retries — skipping market: %s",
+                market.code,
+                exc,
+            )
+            continue
+
         if market.is_domestic:
-            balance_data = await broker.get_balance()
             output2 = balance_data.get("output2", [{}])
             total_eval = safe_float(
                 output2[0].get("tot_evlu_amt", "0")
@@ -1033,7 +1099,6 @@ async def run_daily_session(
                 output2[0].get("pchs_amt_smtl_amt", "0")
             ) if output2 else 0
         else:
-            balance_data = await overseas_broker.get_overseas_balance(market.exchange_code)
             output2 = balance_data.get("output2", [{}])
             if isinstance(output2, list) and output2:
                 balance_info = output2[0]
