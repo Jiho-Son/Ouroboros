@@ -14,6 +14,11 @@ def init_db(db_path: str) -> sqlite3.Connection:
     if db_path != ":memory:":
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
+    # Enable WAL mode for concurrent read/write (dashboard + trading loop).
+    # WAL does not apply to in-memory databases.
+    if db_path != ":memory:":
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS trades (
