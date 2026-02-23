@@ -94,6 +94,7 @@ Smart Scanner runs in `TRADE_MODE=realtime` only. Daily mode uses static watchli
 - **[Testing](docs/testing.md)** — Test structure, coverage requirements, writing tests
 - **[Agent Policies](docs/agents.md)** — Prime directives, constraints, prohibited actions
 - **[Requirements Log](docs/requirements-log.md)** — User requirements and feedback tracking
+- **[Live Trading Checklist](docs/live-trading-checklist.md)** — 모의→실전 전환 체크리스트
 
 ## Core Principles
 
