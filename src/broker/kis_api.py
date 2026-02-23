@@ -285,7 +285,10 @@ class KISBroker:
         await self._rate_limiter.acquire()
         session = self._get_session()
 
-        headers = await self._auth_headers("VTTC8434R")  # 모의투자 잔고조회
+        # TR_ID: 실전 TTTC8434R, 모의 VTTC8434R
+        # Source: 한국투자증권 오픈API 전체문서 (20260221) — '국내주식 잔고조회' 시트
+        tr_id = "TTTC8434R" if self._settings.MODE == "live" else "VTTC8434R"
+        headers = await self._auth_headers(tr_id)
         params = {
             "CANO": self._account_no,
             "ACNT_PRDT_CD": self._product_cd,
@@ -330,7 +333,13 @@ class KISBroker:
         await self._rate_limiter.acquire()
         session = self._get_session()
 
-        tr_id = "VTTC0802U" if order_type == "BUY" else "VTTC0801U"
+        # TR_ID: 실전 BUY=TTTC0012U SELL=TTTC0011U, 모의 BUY=VTTC0012U SELL=VTTC0011U
+        # Source: 한국투자증권 오픈API 전체문서 (20260221) — '주식주문(현금)' 시트
+        # ※ TTTC0802U/VTTC0802U는 미수매수(증거금40% 계좌 전용) — 현금주문에 사용 금지
+        if self._settings.MODE == "live":
+            tr_id = "TTTC0012U" if order_type == "BUY" else "TTTC0011U"
+        else:
+            tr_id = "VTTC0012U" if order_type == "BUY" else "VTTC0011U"
 
         # KRX requires limit orders to be rounded down to the tick unit.
         # ORD_DVSN: "00"=지정가, "01"=시장가

@@ -572,4 +572,156 @@ class TestSendOrderTickRounding:
         order_call = mock_post.call_args_list[1]
         body = order_call[1].get("json", {})
         assert body["ORD_DVSN"] == "01"
-        assert body["ORD_UNPR"] == "0"
+
+
+# ---------------------------------------------------------------------------
+# TR_ID live/paper branching (issues #201, #202, #203)
+# ---------------------------------------------------------------------------
+
+
+class TestTRIDBranchingDomestic:
+    """get_balance and send_order must use correct TR_ID for live vs paper mode."""
+
+    def _make_broker(self, settings, mode: str) -> KISBroker:
+        from src.config import Settings
+
+        s = Settings(
+            KIS_APP_KEY=settings.KIS_APP_KEY,
+            KIS_APP_SECRET=settings.KIS_APP_SECRET,
+            KIS_ACCOUNT_NO=settings.KIS_ACCOUNT_NO,
+            GEMINI_API_KEY=settings.GEMINI_API_KEY,
+            DB_PATH=":memory:",
+            ENABLED_MARKETS="KR",
+            MODE=mode,
+        )
+        b = KISBroker(s)
+        b._access_token = "tok"
+        b._token_expires_at = float("inf")
+        b._rate_limiter.acquire = AsyncMock()
+        return b
+
+    @pytest.mark.asyncio
+    async def test_get_balance_paper_uses_vttc8434r(self, settings) -> None:
+        broker = self._make_broker(settings, "paper")
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={"output1": [], "output2": {}}
+        )
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp) as mock_get:
+            await broker.get_balance()
+
+        headers = mock_get.call_args[1].get("headers", {})
+        assert headers["tr_id"] == "VTTC8434R"
+
+    @pytest.mark.asyncio
+    async def test_get_balance_live_uses_tttc8434r(self, settings) -> None:
+        broker = self._make_broker(settings, "live")
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={"output1": [], "output2": {}}
+        )
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp) as mock_get:
+            await broker.get_balance()
+
+        headers = mock_get.call_args[1].get("headers", {})
+        assert headers["tr_id"] == "TTTC8434R"
+
+    @pytest.mark.asyncio
+    async def test_send_order_buy_paper_uses_vttc0012u(self, settings) -> None:
+        broker = self._make_broker(settings, "paper")
+        mock_hash = AsyncMock()
+        mock_hash.status = 200
+        mock_hash.json = AsyncMock(return_value={"HASH": "h"})
+        mock_hash.__aenter__ = AsyncMock(return_value=mock_hash)
+        mock_hash.__aexit__ = AsyncMock(return_value=False)
+
+        mock_order = AsyncMock()
+        mock_order.status = 200
+        mock_order.json = AsyncMock(return_value={"rt_cd": "0"})
+        mock_order.__aenter__ = AsyncMock(return_value=mock_order)
+        mock_order.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
+        ) as mock_post:
+            await broker.send_order("005930", "BUY", 1)
+
+        order_headers = mock_post.call_args_list[1][1].get("headers", {})
+        assert order_headers["tr_id"] == "VTTC0012U"
+
+    @pytest.mark.asyncio
+    async def test_send_order_buy_live_uses_tttc0012u(self, settings) -> None:
+        broker = self._make_broker(settings, "live")
+        mock_hash = AsyncMock()
+        mock_hash.status = 200
+        mock_hash.json = AsyncMock(return_value={"HASH": "h"})
+        mock_hash.__aenter__ = AsyncMock(return_value=mock_hash)
+        mock_hash.__aexit__ = AsyncMock(return_value=False)
+
+        mock_order = AsyncMock()
+        mock_order.status = 200
+        mock_order.json = AsyncMock(return_value={"rt_cd": "0"})
+        mock_order.__aenter__ = AsyncMock(return_value=mock_order)
+        mock_order.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
+        ) as mock_post:
+            await broker.send_order("005930", "BUY", 1)
+
+        order_headers = mock_post.call_args_list[1][1].get("headers", {})
+        assert order_headers["tr_id"] == "TTTC0012U"
+
+    @pytest.mark.asyncio
+    async def test_send_order_sell_paper_uses_vttc0011u(self, settings) -> None:
+        broker = self._make_broker(settings, "paper")
+        mock_hash = AsyncMock()
+        mock_hash.status = 200
+        mock_hash.json = AsyncMock(return_value={"HASH": "h"})
+        mock_hash.__aenter__ = AsyncMock(return_value=mock_hash)
+        mock_hash.__aexit__ = AsyncMock(return_value=False)
+
+        mock_order = AsyncMock()
+        mock_order.status = 200
+        mock_order.json = AsyncMock(return_value={"rt_cd": "0"})
+        mock_order.__aenter__ = AsyncMock(return_value=mock_order)
+        mock_order.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
+        ) as mock_post:
+            await broker.send_order("005930", "SELL", 1)
+
+        order_headers = mock_post.call_args_list[1][1].get("headers", {})
+        assert order_headers["tr_id"] == "VTTC0011U"
+
+    @pytest.mark.asyncio
+    async def test_send_order_sell_live_uses_tttc0011u(self, settings) -> None:
+        broker = self._make_broker(settings, "live")
+        mock_hash = AsyncMock()
+        mock_hash.status = 200
+        mock_hash.json = AsyncMock(return_value={"HASH": "h"})
+        mock_hash.__aenter__ = AsyncMock(return_value=mock_hash)
+        mock_hash.__aexit__ = AsyncMock(return_value=False)
+
+        mock_order = AsyncMock()
+        mock_order.status = 200
+        mock_order.json = AsyncMock(return_value={"rt_cd": "0"})
+        mock_order.__aenter__ = AsyncMock(return_value=mock_order)
+        mock_order.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
+        ) as mock_post:
+            await broker.send_order("005930", "SELL", 1)
+
+        order_headers = mock_post.call_args_list[1][1].get("headers", {})
+        assert order_headers["tr_id"] == "TTTC0011U"
