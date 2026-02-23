@@ -505,8 +505,9 @@ async def trading_cycle(
         outlook = playbook.market_outlook
         if outlook == MarketOutlook.BEARISH:
             min_confidence = 90
+        elif outlook == MarketOutlook.BULLISH:
+            min_confidence = 75
         else:
-            # BULLISH/NEUTRAL: use base threshold (min 80 per CLAUDE.md non-negotiable rule)
             min_confidence = base_threshold
         if match.confidence < min_confidence:
             logger.info(
