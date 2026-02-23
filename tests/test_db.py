@@ -95,3 +95,101 @@ def test_wal_mode_not_applied_to_memory_db() -> None:
     # In-memory DBs default to 'memory' journal mode
     assert mode != "wal", "WAL should not be set on in-memory database"
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# mode column tests (issue #212)
+# ---------------------------------------------------------------------------
+
+
+def test_log_trade_stores_mode_paper() -> None:
+    """log_trade must persist mode='paper' in the trades table."""
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=85,
+        rationale="test",
+        mode="paper",
+    )
+    row = conn.execute("SELECT mode FROM trades ORDER BY id DESC LIMIT 1").fetchone()
+    assert row is not None
+    assert row[0] == "paper"
+
+
+def test_log_trade_stores_mode_live() -> None:
+    """log_trade must persist mode='live' in the trades table."""
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=85,
+        rationale="test",
+        mode="live",
+    )
+    row = conn.execute("SELECT mode FROM trades ORDER BY id DESC LIMIT 1").fetchone()
+    assert row is not None
+    assert row[0] == "live"
+
+
+def test_log_trade_default_mode_is_paper() -> None:
+    """log_trade without explicit mode must default to 'paper'."""
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="005930",
+        action="HOLD",
+        confidence=50,
+        rationale="test",
+    )
+    row = conn.execute("SELECT mode FROM trades ORDER BY id DESC LIMIT 1").fetchone()
+    assert row is not None
+    assert row[0] == "paper"
+
+
+def test_mode_column_exists_in_schema() -> None:
+    """trades table must have a mode column after init_db."""
+    conn = init_db(":memory:")
+    cursor = conn.execute("PRAGMA table_info(trades)")
+    columns = {row[1] for row in cursor.fetchall()}
+    assert "mode" in columns
+
+
+def test_mode_migration_adds_column_to_existing_db() -> None:
+    """init_db must add mode column to existing DBs that lack it (migration)."""
+    import sqlite3
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        # Create DB without mode column (simulate old schema)
+        old_conn = sqlite3.connect(db_path)
+        old_conn.execute(
+            """CREATE TABLE trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                stock_code TEXT NOT NULL,
+                action TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                rationale TEXT,
+                quantity INTEGER,
+                price REAL,
+                pnl REAL DEFAULT 0.0,
+                market TEXT DEFAULT 'KR',
+                exchange_code TEXT DEFAULT 'KRX',
+                decision_id TEXT
+            )"""
+        )
+        old_conn.commit()
+        old_conn.close()
+
+        # Run init_db — should add mode column via migration
+        conn = init_db(db_path)
+        cursor = conn.execute("PRAGMA table_info(trades)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert "mode" in columns
+        conn.close()
+    finally:
+        os.unlink(db_path)

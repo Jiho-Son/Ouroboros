@@ -33,12 +33,13 @@ def init_db(db_path: str) -> sqlite3.Connection:
             pnl REAL DEFAULT 0.0,
             market TEXT DEFAULT 'KR',
             exchange_code TEXT DEFAULT 'KRX',
-            decision_id TEXT
+            decision_id TEXT,
+            mode TEXT DEFAULT 'paper'
         )
         """
     )
 
-    # Migration: Add market and exchange_code columns if they don't exist
+    # Migration: Add columns if they don't exist (backward-compatible schema upgrades)
     cursor = conn.execute("PRAGMA table_info(trades)")
     columns = {row[1] for row in cursor.fetchall()}
 
@@ -50,6 +51,8 @@ def init_db(db_path: str) -> sqlite3.Connection:
         conn.execute("ALTER TABLE trades ADD COLUMN selection_context TEXT")
     if "decision_id" not in columns:
         conn.execute("ALTER TABLE trades ADD COLUMN decision_id TEXT")
+    if "mode" not in columns:
+        conn.execute("ALTER TABLE trades ADD COLUMN mode TEXT DEFAULT 'paper'")
 
     # Context tree tables for multi-layered memory management
     conn.execute(
@@ -172,6 +175,7 @@ def log_trade(
     exchange_code: str = "KRX",
     selection_context: dict[str, any] | None = None,
     decision_id: str | None = None,
+    mode: str = "paper",
 ) -> None:
     """Insert a trade record into the database.
 
@@ -187,6 +191,8 @@ def log_trade(
         market: Market code
         exchange_code: Exchange code
         selection_context: Scanner selection data (RSI, volume_ratio, signal, score)
+        decision_id: Unique decision identifier for audit linking
+        mode: Trading mode ('paper' or 'live') for data separation
     """
     # Serialize selection context to JSON
     context_json = json.dumps(selection_context) if selection_context else None
@@ -195,9 +201,10 @@ def log_trade(
         """
         INSERT INTO trades (
             timestamp, stock_code, action, confidence, rationale,
-            quantity, price, pnl, market, exchange_code, selection_context, decision_id
+            quantity, price, pnl, market, exchange_code, selection_context, decision_id,
+            mode
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             datetime.now(UTC).isoformat(),
@@ -212,6 +219,7 @@ def log_trade(
             exchange_code,
             context_json,
             decision_id,
+            mode,
         ),
     )
     conn.commit()

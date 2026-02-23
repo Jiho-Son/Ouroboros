@@ -170,7 +170,7 @@ Markets auto-detected based on timezone and enabled in `ENABLED_MARKETS` env var
 - `src/core/risk_manager.py` is **READ-ONLY** — changes require human approval
 - Circuit breaker at -3.0% P&L — may only be made **stricter**
 - Fat-finger protection: max 30% of cash per order — always enforced
-- Confidence < 80 → force HOLD — cannot be weakened
+- Confidence 임계값 (market_outlook별, 낮출 수 없음): BEARISH ≥ 90, NEUTRAL/기본 ≥ 80, BULLISH ≥ 75
 - All code changes → corresponding tests → coverage ≥ 80%
 
 ## Contributing
