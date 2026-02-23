@@ -2045,7 +2045,7 @@ def _start_dashboard_server(settings: Settings) -> threading.Thread | None:
             import uvicorn
             from src.dashboard import create_dashboard_app
 
-            app = create_dashboard_app(settings.DB_PATH)
+            app = create_dashboard_app(settings.DB_PATH, mode=settings.MODE)
             uvicorn.run(
                 app,
                 host=settings.DASHBOARD_HOST,

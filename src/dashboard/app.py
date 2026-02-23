@@ -13,10 +13,11 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 
 
-def create_dashboard_app(db_path: str) -> FastAPI:
+def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
     """Create dashboard FastAPI app bound to a SQLite database path."""
     app = FastAPI(title="The Ouroboros Dashboard", version="1.0.0")
     app.state.db_path = db_path
+    app.state.mode = mode
 
     @app.get("/")
     def index() -> FileResponse:
@@ -111,7 +112,7 @@ def create_dashboard_app(db_path: str) -> FastAPI:
 
             return {
                 "date": today,
-                "mode": os.getenv("MODE", "paper"),
+                "mode": mode,
                 "markets": market_status,
                 "totals": {
                     "trade_count": total_trades,
