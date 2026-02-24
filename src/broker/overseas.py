@@ -133,7 +133,7 @@ class OverseasBroker:
                 "AUTH": "",
                 "EXCD": ranking_excd,
                 "NDAY": "0",
-                "GUBN": "1",
+                "GUBN": "0",  # 0=전체(상승+하락), 1=상승만 — 변동성 스캐너는 전체 필요
                 "VOL_RANG": "0",
             }
 

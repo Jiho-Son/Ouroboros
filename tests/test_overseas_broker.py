@@ -124,7 +124,7 @@ class TestFetchOverseasRankings:
         assert "/uapi/overseas-stock/v1/ranking/updown-rate" in url
         assert params["EXCD"] == "NAS"
         assert params["NDAY"] == "0"
-        assert params["GUBN"] == "1"
+        assert params["GUBN"] == "0"  # 0=전체(상승+하락), 변동성 스캐너에 필요
         assert params["VOL_RANG"] == "0"
 
         overseas_broker._broker._auth_headers.assert_called_with("HHDFS76290000")
