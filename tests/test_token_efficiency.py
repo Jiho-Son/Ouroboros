@@ -124,6 +124,10 @@ class TestPromptOptimizer:
         assert len(prompt) < 300
         assert "005930" in prompt
         assert "75000" in prompt
+        # Keys must match parse_response expectations (#242)
+        assert '"action"' in prompt
+        assert '"confidence"' in prompt
+        assert '"rationale"' in prompt
 
     def test_build_compressed_prompt_no_instructions(self):
         """Test compressed prompt without instructions."""
