@@ -182,6 +182,9 @@ async def sync_positions_from_broker(
             qty = _extract_held_qty_from_balance(
                 balance_data, stock_code, is_domestic=market.is_domestic
             )
+            avg_price = _extract_avg_price_from_balance(
+                balance_data, stock_code, is_domestic=market.is_domestic
+            )
             log_trade(
                 conn=db_conn,
                 stock_code=stock_code,
@@ -189,7 +192,7 @@ async def sync_positions_from_broker(
                 confidence=0,
                 rationale="[startup-sync] Position detected from broker at startup",
                 quantity=qty,
-                price=0.0,
+                price=avg_price,
                 market=log_market,
                 exchange_code=market.exchange_code,
                 mode=settings.MODE,
@@ -319,6 +322,37 @@ def _extract_held_qty_from_balance(
             )
         return qty
     return 0
+
+
+def _extract_avg_price_from_balance(
+    balance_data: dict[str, Any],
+    stock_code: str,
+    *,
+    is_domestic: bool,
+) -> float:
+    """Extract the broker-reported average purchase price for a stock.
+
+    Uses ``pchs_avg_pric`` (매입평균가격) from the balance response (output1).
+    Returns 0.0 when absent so callers can use ``if price > 0`` as sentinel.
+
+    Domestic fields (VTTC8434R output1):  pdno, pchs_avg_pric
+    Overseas fields (VTTS3012R output1):  ovrs_pdno, pchs_avg_pric
+    """
+    output1 = balance_data.get("output1", [])
+    if isinstance(output1, dict):
+        output1 = [output1]
+    if not isinstance(output1, list):
+        return 0.0
+
+    for holding in output1:
+        if not isinstance(holding, dict):
+            continue
+        code_key = "pdno" if is_domestic else "ovrs_pdno"
+        held_code = str(holding.get(code_key, "")).strip().upper()
+        if held_code != stock_code.strip().upper():
+            continue
+        return safe_float(holding.get("pchs_avg_pric"), 0.0)
+    return 0.0
 
 
 def _determine_order_quantity(
