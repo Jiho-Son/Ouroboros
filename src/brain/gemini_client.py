@@ -441,6 +441,18 @@ class GeminiClient:
                 action="HOLD", confidence=0, rationale=f"API error: {exc}", token_count=token_count
             )
 
+        # prompt_override callers (e.g. pre_market_planner) expect raw text back,
+        # not a parsed TradeDecision. Skip parse_response to avoid spurious
+        # "Missing fields" warnings and return the raw response directly. (#247)
+        if "prompt_override" in market_data:
+            logger.info(
+                "Gemini raw response received (prompt_override, tokens=%d)", token_count
+            )
+            # Not a trade decision — don't inflate _total_decisions metrics
+            return TradeDecision(
+                action="HOLD", confidence=0, rationale=raw, token_count=token_count
+            )
+
         decision = self.parse_response(raw)
         self._total_decisions += 1
 
