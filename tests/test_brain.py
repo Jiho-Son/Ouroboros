@@ -361,6 +361,36 @@ class TestPromptOverride:
                 assert decision.rationale == playbook_json
 
     @pytest.mark.asyncio
+    async def test_prompt_override_takes_priority_over_optimization(self, settings):
+        """prompt_override must win over enable_optimization=True."""
+        client = GeminiClient(settings)
+        client._enable_optimization = True
+
+        custom_prompt = "Explicit playbook prompt"
+
+        mock_response = MagicMock()
+        mock_response.text = '{"market_outlook": "neutral", "stocks": []}'
+
+        with patch.object(
+            client._client.aio.models,
+            "generate_content",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ) as mock_generate:
+            market_data = {
+                "stock_code": "PLANNER",
+                "current_price": 0,
+                "prompt_override": custom_prompt,
+            }
+            await client.decide(market_data)
+
+            actual_prompt = mock_generate.call_args[1].get(
+                "contents", mock_generate.call_args[0][1] if len(mock_generate.call_args[0]) > 1 else None
+            )
+            # The custom prompt must be used, not the compressed prompt
+            assert actual_prompt == custom_prompt
+
+    @pytest.mark.asyncio
     async def test_without_prompt_override_uses_build_prompt(self, settings):
         """Without prompt_override, decide() should use build_prompt as before."""
         client = GeminiClient(settings)
