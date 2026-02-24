@@ -346,8 +346,10 @@ class GeminiClient:
         # Validate required fields
         if not all(k in data for k in ("action", "confidence", "rationale")):
             logger.warning("Missing fields in Gemini response — defaulting to HOLD")
+            # Preserve raw text in rationale so prompt_override callers (e.g. pre_market_planner)
+            # can extract their own JSON format from decision.rationale (#245)
             return TradeDecision(
-                action="HOLD", confidence=0, rationale="Missing required fields"
+                action="HOLD", confidence=0, rationale=raw
             )
 
         action = str(data["action"]).upper()

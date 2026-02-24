@@ -93,9 +93,21 @@ class TestMalformedJsonHandling:
 
     def test_json_with_missing_fields_returns_hold(self, settings):
         client = GeminiClient(settings)
-        decision = client.parse_response('{"action": "BUY"}')
+        raw = '{"action": "BUY"}'
+        decision = client.parse_response(raw)
         assert decision.action == "HOLD"
         assert decision.confidence == 0
+        # rationale preserves raw so prompt_override callers (e.g. pre_market_planner)
+        # can extract non-TradeDecision JSON from decision.rationale (#245)
+        assert decision.rationale == raw
+
+    def test_non_trade_decision_json_preserves_raw_in_rationale(self, settings):
+        """Playbook JSON (no action/confidence/rationale) must be preserved for planner."""
+        client = GeminiClient(settings)
+        playbook_json = '{"market_outlook": "neutral", "stocks": []}'
+        decision = client.parse_response(playbook_json)
+        assert decision.action == "HOLD"
+        assert decision.rationale == playbook_json
 
     def test_json_with_invalid_action_returns_hold(self, settings):
         client = GeminiClient(settings)
