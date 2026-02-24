@@ -1246,7 +1246,8 @@ class TestOverseasBalanceParsing:
         mock_overseas_broker_with_buy_scenario.send_overseas_order.assert_called_once()
         call_kwargs = mock_overseas_broker_with_buy_scenario.send_overseas_order.call_args
         sent_price = call_kwargs[1].get("price") or call_kwargs[0][4]
-        expected_price = round(182.5 * 1.002, 4)  # 0.2% premium for BUY limit orders
+        # KIS requires max 2 decimal places for prices >= $1 (#252)
+        expected_price = round(182.5 * 1.002, 2)  # 0.2% premium for BUY limit orders
         assert sent_price == expected_price, (
             f"Expected limit price {expected_price} (182.5 * 1.002) but got {sent_price}. "
             "BUY uses +0.2% to improve fill rate while minimising overpayment (#211)."
@@ -1325,10 +1326,131 @@ class TestOverseasBalanceParsing:
         overseas_broker.send_overseas_order.assert_called_once()
         call_kwargs = overseas_broker.send_overseas_order.call_args
         sent_price = call_kwargs[1].get("price") or call_kwargs[0][4]
-        expected_price = round(sell_price * 0.998, 4)  # -0.2% for SELL limit orders
+        # KIS requires max 2 decimal places for prices >= $1 (#252)
+        expected_price = round(sell_price * 0.998, 2)  # -0.2% for SELL limit orders
         assert sent_price == expected_price, (
             f"Expected SELL limit price {expected_price} (182.5 * 0.998) but got {sent_price}. "
             "SELL uses -0.2% to ensure fill even when price dips slightly (#211)."
+        )
+
+    @pytest.mark.asyncio
+    async def test_overseas_buy_price_rounded_to_2_decimals_for_dollar_plus_stock(
+        self,
+        mock_domestic_broker: MagicMock,
+        mock_playbook: DayPlaybook,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """BUY price for $1+ stocks is rounded to 2 decimal places (issue #252).
+
+        KIS rejects prices with more than 2 decimal places for stocks priced >= $1.
+        current_price=50.1234 * 1.002 = 50.22... should be sent as 50.22, not 50.2236.
+        """
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output1": [],
+                "output2": [{"frcr_evlu_tota": "0", "frcr_dncl_amt_2": "10000", "frcr_buy_amt_smtl": "0"}],
+            }
+        )
+        overseas_broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "50.1234", "rate": "0"}}
+        )
+        overseas_broker.send_overseas_order = AsyncMock(
+            return_value={"rt_cd": None, "msg1": "주문접수"}
+        )
+
+        db_conn = init_db(":memory:")
+        decision_logger = DecisionLogger(db_conn)
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_buy_match())
+
+        await trading_cycle(
+            broker=mock_domestic_broker,
+            overseas_broker=overseas_broker,
+            scenario_engine=engine,
+            playbook=mock_playbook,
+            risk=mock_risk,
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=mock_context_store,
+            criticality_assessor=mock_criticality_assessor,
+            telegram=mock_telegram,
+            market=mock_overseas_market,
+            stock_code="TQQQ",
+            scan_candidates={},
+        )
+
+        overseas_broker.send_overseas_order.assert_called_once()
+        sent_price = overseas_broker.send_overseas_order.call_args[1].get("price") or \
+            overseas_broker.send_overseas_order.call_args[0][4]
+        # 50.1234 * 1.002 = 50.2235... rounded to 2 decimals = 50.22
+        assert sent_price == round(50.1234 * 1.002, 2), (
+            f"Expected 2-decimal price {round(50.1234 * 1.002, 2)} but got {sent_price} (#252)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_overseas_penny_stock_price_keeps_4_decimals(
+        self,
+        mock_domestic_broker: MagicMock,
+        mock_playbook: DayPlaybook,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """BUY price for penny stocks (< $1) uses 4 decimal places (issue #252)."""
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output1": [],
+                "output2": [{"frcr_evlu_tota": "0", "frcr_dncl_amt_2": "10000", "frcr_buy_amt_smtl": "0"}],
+            }
+        )
+        overseas_broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "0.5678", "rate": "0"}}
+        )
+        overseas_broker.send_overseas_order = AsyncMock(
+            return_value={"rt_cd": None, "msg1": "주문접수"}
+        )
+
+        db_conn = init_db(":memory:")
+        decision_logger = DecisionLogger(db_conn)
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_buy_match())
+
+        await trading_cycle(
+            broker=mock_domestic_broker,
+            overseas_broker=overseas_broker,
+            scenario_engine=engine,
+            playbook=mock_playbook,
+            risk=mock_risk,
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=mock_context_store,
+            criticality_assessor=mock_criticality_assessor,
+            telegram=mock_telegram,
+            market=mock_overseas_market,
+            stock_code="PENNYX",
+            scan_candidates={},
+        )
+
+        overseas_broker.send_overseas_order.assert_called_once()
+        sent_price = overseas_broker.send_overseas_order.call_args[1].get("price") or \
+            overseas_broker.send_overseas_order.call_args[0][4]
+        # 0.5678 * 1.002 = 0.56893... rounded to 4 decimals = 0.5689
+        assert sent_price == round(0.5678 * 1.002, 4), (
+            f"Expected 4-decimal price {round(0.5678 * 1.002, 4)} but got {sent_price} (#252)"
         )
 
 
@@ -2121,6 +2243,92 @@ async def test_hold_not_overridden_when_between_stop_loss_and_take_profit() -> N
         scan_candidates={},
     )
 
+    broker.send_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stop_loss_not_triggered_when_current_price_is_zero() -> None:
+    """HOLD must stay HOLD when current_price=0 even if entry_price is set (issue #251).
+
+    A price API failure that returns 0.0 must not cause a false -100% stop-loss.
+    """
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    buy_decision_id = decision_logger.log_decision(
+        stock_code="005930",
+        market="KR",
+        exchange_code="KRX",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        context_snapshot={},
+        input_data={},
+    )
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        quantity=1,
+        price=100.0,  # valid entry price
+        market="KR",
+        exchange_code="KRX",
+        decision_id=buy_decision_id,
+    )
+
+    broker = MagicMock()
+    # Price API returns 0.0 — simulates API failure or pre-market unavailability
+    broker.get_current_price = AsyncMock(return_value=(0.0, 0.0, 0.0))
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "10000",
+                    "pchs_amt_smtl_amt": "90000",
+                }
+            ]
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    await trading_cycle(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_hold_match())),
+        playbook=_make_playbook("KR"),
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        context_store=MagicMock(
+            get_latest_timeframe=MagicMock(return_value=None),
+            set_context=MagicMock(),
+        ),
+        criticality_assessor=MagicMock(
+            assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+            get_timeout=MagicMock(return_value=5.0),
+        ),
+        telegram=telegram,
+        market=market,
+        stock_code="005930",
+        scan_candidates={},
+    )
+
+    # No SELL order must be placed — current_price=0 must suppress stop-loss
     broker.send_order.assert_not_called()
 
 

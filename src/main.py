@@ -730,7 +730,7 @@ async def trading_cycle(
         open_position = get_open_position(db_conn, stock_code, market.code)
         if open_position:
             entry_price = safe_float(open_position.get("price"), 0.0)
-            if entry_price > 0:
+            if entry_price > 0 and current_price > 0:
                 loss_pct = (current_price - entry_price) / entry_price * 100
                 stop_loss_threshold = -2.0
                 take_profit_threshold = 3.0
@@ -925,10 +925,13 @@ async def trading_cycle(
             # - SELL: -0.2% below last price — ensures fill even when price dips slightly
             #   (placing at exact last price risks no-fill if the bid is just below).
             overseas_price: float
+            # KIS requires at most 2 decimal places for prices >= $1 (≥1달러 소수점 2자리 제한).
+            # Penny stocks (< $1) keep 4 decimal places to preserve price precision.
+            _price_decimals = 2 if current_price >= 1.0 else 4
             if decision.action == "BUY":
-                overseas_price = round(current_price * 1.002, 4)
+                overseas_price = round(current_price * 1.002, _price_decimals)
             else:
-                overseas_price = round(current_price * 0.998, 4)
+                overseas_price = round(current_price * 0.998, _price_decimals)
             result = await overseas_broker.send_overseas_order(
                 exchange_code=market.exchange_code,
                 stock_code=stock_code,
