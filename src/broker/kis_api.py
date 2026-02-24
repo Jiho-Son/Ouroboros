@@ -430,7 +430,7 @@ class KISBroker:
                 "fid_cond_mrkt_div_code": "J",
                 "fid_cond_scr_div_code": "20170",
                 "fid_input_iscd": "0000",
-                "fid_rank_sort_cls_code": "0000",
+                "fid_rank_sort_cls_code": "0",
                 "fid_input_cnt_1": str(limit),
                 "fid_prc_cls_code": "0",
                 "fid_input_price_1": "0",
@@ -466,7 +466,7 @@ class KISBroker:
             rankings = []
             for item in data.get("output", [])[:limit]:
                 rankings.append({
-                    "stock_code": item.get("mksc_shrn_iscd", ""),
+                    "stock_code": item.get("stck_shrn_iscd") or item.get("mksc_shrn_iscd", ""),
                     "name": item.get("hts_kor_isnm", ""),
                     "price": _safe_float(item.get("stck_prpr", "0")),
                     "volume": _safe_float(item.get("acml_vol", "0")),

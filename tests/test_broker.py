@@ -354,6 +354,8 @@ class TestFetchMarketRankings:
         assert "ranking/fluctuation" in url
         assert headers.get("tr_id") == "FHPST01700000"
         assert params.get("fid_cond_scr_div_code") == "20170"
+        # 실전 API는 4자리("0000") 거부 — 1자리("0")여야 한다 (#240)
+        assert params.get("fid_rank_sort_cls_code") == "0"
 
     @pytest.mark.asyncio
     async def test_volume_returns_parsed_rows(self, broker: KISBroker) -> None:
@@ -375,6 +377,27 @@ class TestFetchMarketRankings:
         assert result[0]["stock_code"] == "005930"
         assert result[0]["price"] == 75000.0
         assert result[0]["change_rate"] == 2.5
+
+    @pytest.mark.asyncio
+    async def test_fluctuation_parses_stck_shrn_iscd(self, broker: KISBroker) -> None:
+        """실전 API는 mksc_shrn_iscd 대신 stck_shrn_iscd를 반환한다 (#240)."""
+        items = [
+            {
+                "stck_shrn_iscd": "015260",
+                "hts_kor_isnm": "에이엔피",
+                "stck_prpr": "794",
+                "acml_vol": "4896196",
+                "prdy_ctrt": "29.74",
+                "vol_inrt": "0",
+            }
+        ]
+        mock_resp = _make_ranking_mock(items)
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp):
+            result = await broker.fetch_market_rankings(ranking_type="fluctuation")
+
+        assert len(result) == 1
+        assert result[0]["stock_code"] == "015260"
+        assert result[0]["change_rate"] == 29.74
 
 
 # ---------------------------------------------------------------------------
