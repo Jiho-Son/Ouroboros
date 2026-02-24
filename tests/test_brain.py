@@ -302,9 +302,10 @@ class TestPromptOverride:
         client = GeminiClient(settings)
 
         custom_prompt = "You are a playbook generator. Return JSON with scenarios."
+        playbook_json = '{"market_outlook": "neutral", "stocks": []}'
 
         mock_response = MagicMock()
-        mock_response.text = '{"action": "HOLD", "confidence": 50, "rationale": "test"}'
+        mock_response.text = playbook_json
 
         with patch.object(
             client._client.aio.models,
@@ -317,7 +318,7 @@ class TestPromptOverride:
                 "current_price": 0,
                 "prompt_override": custom_prompt,
             }
-            await client.decide(market_data)
+            decision = await client.decide(market_data)
 
             # Verify the custom prompt was sent, not a built prompt
             mock_generate.assert_called_once()
@@ -325,35 +326,39 @@ class TestPromptOverride:
                 "contents", mock_generate.call_args[0][1] if len(mock_generate.call_args[0]) > 1 else None
             )
             assert actual_prompt == custom_prompt
+            # Raw response preserved in rationale without parse_response (#247)
+            assert decision.rationale == playbook_json
 
     @pytest.mark.asyncio
-    async def test_prompt_override_skips_optimization(self, settings):
-        """prompt_override should bypass prompt optimization."""
+    async def test_prompt_override_skips_parse_response(self, settings):
+        """prompt_override bypasses parse_response — no Missing fields warning, raw preserved."""
         client = GeminiClient(settings)
         client._enable_optimization = True
 
         custom_prompt = "Custom playbook prompt"
+        playbook_json = '{"market_outlook": "bullish", "stocks": [{"stock_code": "AAPL"}]}'
 
         mock_response = MagicMock()
-        mock_response.text = '{"action": "HOLD", "confidence": 50, "rationale": "ok"}'
+        mock_response.text = playbook_json
 
         with patch.object(
             client._client.aio.models,
             "generate_content",
             new_callable=AsyncMock,
             return_value=mock_response,
-        ) as mock_generate:
-            market_data = {
-                "stock_code": "PLANNER",
-                "current_price": 0,
-                "prompt_override": custom_prompt,
-            }
-            await client.decide(market_data)
+        ):
+            with patch.object(client, "parse_response") as mock_parse:
+                market_data = {
+                    "stock_code": "PLANNER",
+                    "current_price": 0,
+                    "prompt_override": custom_prompt,
+                }
+                decision = await client.decide(market_data)
 
-            actual_prompt = mock_generate.call_args[1].get(
-                "contents", mock_generate.call_args[0][1] if len(mock_generate.call_args[0]) > 1 else None
-            )
-            assert actual_prompt == custom_prompt
+                # parse_response must NOT be called for prompt_override
+                mock_parse.assert_not_called()
+                # Raw playbook JSON preserved in rationale
+                assert decision.rationale == playbook_json
 
     @pytest.mark.asyncio
     async def test_without_prompt_override_uses_build_prompt(self, settings):
