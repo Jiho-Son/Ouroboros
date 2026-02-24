@@ -15,6 +15,7 @@ from src.logging.decision_logger import DecisionLogger
 from src.main import (
     _apply_dashboard_flag,
     _determine_order_quantity,
+    _extract_avg_price_from_balance,
     _extract_held_codes_from_balance,
     _extract_held_qty_from_balance,
     _handle_market_close,
@@ -74,6 +75,81 @@ def _make_sell_match(stock_code: str = "005930") -> ScenarioMatch:
         confidence=90,
         rationale="Test sell",
     )
+
+
+class TestExtractAvgPriceFromBalance:
+    """Tests for _extract_avg_price_from_balance() (issue #249)."""
+
+    def test_domestic_returns_pchs_avg_pric(self) -> None:
+        """Domestic balance with pchs_avg_pric returns the correct float."""
+        balance = {"output1": [{"pdno": "005930", "pchs_avg_pric": "68000.00"}]}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 68000.0
+
+    def test_overseas_returns_pchs_avg_pric(self) -> None:
+        """Overseas balance with pchs_avg_pric returns the correct float."""
+        balance = {"output1": [{"ovrs_pdno": "AAPL", "pchs_avg_pric": "170.50"}]}
+        result = _extract_avg_price_from_balance(balance, "AAPL", is_domestic=False)
+        assert result == 170.5
+
+    def test_returns_zero_when_field_absent(self) -> None:
+        """Returns 0.0 when pchs_avg_pric key is missing entirely."""
+        balance = {"output1": [{"pdno": "005930", "ord_psbl_qty": "5"}]}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 0.0
+
+    def test_returns_zero_when_field_empty_string(self) -> None:
+        """Returns 0.0 when pchs_avg_pric is an empty string."""
+        balance = {"output1": [{"pdno": "005930", "pchs_avg_pric": ""}]}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 0.0
+
+    def test_returns_zero_when_stock_not_found(self) -> None:
+        """Returns 0.0 when the requested stock_code is not in output1."""
+        balance = {"output1": [{"pdno": "000660", "pchs_avg_pric": "100000.0"}]}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 0.0
+
+    def test_returns_zero_when_output1_empty(self) -> None:
+        """Returns 0.0 when output1 is an empty list."""
+        balance = {"output1": []}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 0.0
+
+    def test_returns_zero_when_output1_key_absent(self) -> None:
+        """Returns 0.0 when output1 key is missing from balance_data."""
+        balance: dict = {}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 0.0
+
+    def test_handles_output1_as_dict(self) -> None:
+        """Handles the edge case where output1 is a dict instead of a list."""
+        balance = {"output1": {"pdno": "005930", "pchs_avg_pric": "55000.0"}}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 55000.0
+
+    def test_case_insensitive_code_matching(self) -> None:
+        """Stock code comparison is case-insensitive."""
+        balance = {"output1": [{"ovrs_pdno": "aapl", "pchs_avg_pric": "170.0"}]}
+        result = _extract_avg_price_from_balance(balance, "AAPL", is_domestic=False)
+        assert result == 170.0
+
+    def test_returns_zero_for_non_numeric_string(self) -> None:
+        """Returns 0.0 when pchs_avg_pric contains a non-numeric value."""
+        balance = {"output1": [{"pdno": "005930", "pchs_avg_pric": "N/A"}]}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 0.0
+
+    def test_returns_correct_stock_among_multiple(self) -> None:
+        """Returns only the avg price of the requested stock when output1 has multiple holdings."""
+        balance = {
+            "output1": [
+                {"pdno": "000660", "pchs_avg_pric": "150000.0"},
+                {"pdno": "005930", "pchs_avg_pric": "68000.0"},
+            ]
+        }
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 68000.0
 
 
 class TestExtractHeldQtyFromBalance:
@@ -3817,6 +3893,70 @@ class TestSyncPositionsFromBroker:
 
         # Two distinct exchange codes (NASD, NYSE) → 2 calls
         assert overseas_broker.get_overseas_balance.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_syncs_domestic_position_with_correct_avg_price(self) -> None:
+        """Domestic position is stored with pchs_avg_pric as price (issue #249)."""
+        settings = self._make_settings("KR")
+        db_conn = init_db(":memory:")
+
+        balance = {
+            "output1": [{"pdno": "005930", "ord_psbl_qty": "5", "pchs_avg_pric": "68000.0"}],
+            "output2": [{"tot_evlu_amt": "1000000", "dnca_tot_amt": "500000", "pchs_amt_smtl_amt": "500000"}],
+        }
+        broker = MagicMock()
+        broker.get_balance = AsyncMock(return_value=balance)
+        overseas_broker = MagicMock()
+
+        await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
+
+        from src.db import get_open_position
+        pos = get_open_position(db_conn, "005930", "KR")
+        assert pos is not None
+        assert pos["price"] == 68000.0
+
+    @pytest.mark.asyncio
+    async def test_syncs_overseas_position_with_correct_avg_price(self) -> None:
+        """Overseas position is stored with pchs_avg_pric as price (issue #249)."""
+        settings = self._make_settings("US_NASDAQ")
+        db_conn = init_db(":memory:")
+
+        balance = {
+            "output1": [{"ovrs_pdno": "AAPL", "ovrs_cblc_qty": "10", "pchs_avg_pric": "170.0"}],
+            "output2": [{"frcr_evlu_tota": "50000", "frcr_dncl_amt_2": "10000", "frcr_buy_amt_smtl": "40000"}],
+        }
+        broker = MagicMock()
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_balance = AsyncMock(return_value=balance)
+
+        await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
+
+        from src.db import get_open_position
+        pos = get_open_position(db_conn, "AAPL", "US_NASDAQ")
+        assert pos is not None
+        assert pos["price"] == 170.0
+
+    @pytest.mark.asyncio
+    async def test_syncs_position_with_zero_price_when_pchs_avg_pric_absent(self) -> None:
+        """Fallback to price=0.0 when pchs_avg_pric is absent (issue #249)."""
+        settings = self._make_settings("KR")
+        db_conn = init_db(":memory:")
+
+        # No pchs_avg_pric in output1
+        balance = {
+            "output1": [{"pdno": "005930", "ord_psbl_qty": "5"}],
+            "output2": [{"tot_evlu_amt": "1000000", "dnca_tot_amt": "500000", "pchs_amt_smtl_amt": "500000"}],
+        }
+        broker = MagicMock()
+        broker.get_balance = AsyncMock(return_value=balance)
+        overseas_broker = MagicMock()
+
+        await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
+
+        from src.db import get_open_position
+        pos = get_open_position(db_conn, "005930", "KR")
+        assert pos is not None
+        assert pos["price"] == 0.0
 
 
 # ---------------------------------------------------------------------------
