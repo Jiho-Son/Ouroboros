@@ -121,6 +121,7 @@ class OverseasBroker:
             tr_id = self._broker._settings.OVERSEAS_RANKING_VOLUME_TR_ID
             path = self._broker._settings.OVERSEAS_RANKING_VOLUME_PATH
             params: dict[str, str] = {
+                "KEYB": "",  # NEXT KEY BUFF — Required, 공백
                 "AUTH": "",
                 "EXCD": ranking_excd,
                 "MIXN": "0",
@@ -130,10 +131,11 @@ class OverseasBroker:
             tr_id = self._broker._settings.OVERSEAS_RANKING_FLUCT_TR_ID
             path = self._broker._settings.OVERSEAS_RANKING_FLUCT_PATH
             params = {
+                "KEYB": "",  # NEXT KEY BUFF — Required, 공백
                 "AUTH": "",
                 "EXCD": ranking_excd,
                 "NDAY": "0",
-                "GUBN": "0",  # 0=전체(상승+하락), 1=상승만 — 변동성 스캐너는 전체 필요
+                "GUBN": "1",  # 0=하락율, 1=상승율 — 변동성 스캐너는 급등 종목 우선
                 "VOL_RANG": "0",
             }
 

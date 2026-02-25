@@ -122,9 +122,10 @@ class TestFetchOverseasRankings:
         params = call_args[1]["params"]
 
         assert "/uapi/overseas-stock/v1/ranking/updown-rate" in url
+        assert params["KEYB"] == ""  # Required by KIS API spec
         assert params["EXCD"] == "NAS"
         assert params["NDAY"] == "0"
-        assert params["GUBN"] == "0"  # 0=전체(상승+하락), 변동성 스캐너에 필요
+        assert params["GUBN"] == "1"  # 1=상승율 — 변동성 스캐너는 급등 종목 우선
         assert params["VOL_RANG"] == "0"
 
         overseas_broker._broker._auth_headers.assert_called_with("HHDFS76290000")
@@ -157,6 +158,7 @@ class TestFetchOverseasRankings:
         params = call_args[1]["params"]
 
         assert "/uapi/overseas-stock/v1/ranking/volume-surge" in url
+        assert params["KEYB"] == ""  # Required by KIS API spec
         assert params["EXCD"] == "NYS"
         assert params["MIXN"] == "0"
         assert params["VOL_RANG"] == "0"
