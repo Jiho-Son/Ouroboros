@@ -537,7 +537,7 @@ async def trading_cycle(
                     market.exchange_code, stock_code, current_price
                 )
                 total_cash = safe_float(
-                    ps_data.get("output", {}).get("ord_psbl_frcr_amt", "0") or "0"
+                    ps_data.get("output", {}).get("ovrs_ord_psbl_amt", "0") or "0"
                 )
             except ConnectionError as exc:
                 logger.warning(
@@ -1710,7 +1710,7 @@ async def run_daily_session(
                         ref_stock["current_price"],
                     )
                     total_cash = safe_float(
-                        ps_data.get("output", {}).get("ord_psbl_frcr_amt", "0") or "0"
+                        ps_data.get("output", {}).get("ovrs_ord_psbl_amt", "0") or "0"
                     )
                 except ConnectionError as exc:
                     logger.warning(

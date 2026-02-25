@@ -909,7 +909,7 @@ class TestOverseasBalanceParsing:
             }
         )
         broker.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "5000.00"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "5000.00"}}
         )
         return broker
 
@@ -929,7 +929,7 @@ class TestOverseasBalanceParsing:
             }
         )
         broker.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "5000.00"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "5000.00"}}
         )
         return broker
 
@@ -942,7 +942,7 @@ class TestOverseasBalanceParsing:
         )
         broker.get_overseas_balance = AsyncMock(return_value={"output2": []})
         broker.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "0.00"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "0.00"}}
         )
         return broker
 
@@ -965,7 +965,7 @@ class TestOverseasBalanceParsing:
         )
         # get_overseas_buying_power not called when price=0, but mock for safety
         broker.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "5000.00"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "5000.00"}}
         )
         return broker
 
@@ -1202,7 +1202,7 @@ class TestOverseasBalanceParsing:
             }
         )
         broker.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "50000.00"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "50000.00"}}
         )
         broker.send_overseas_order = AsyncMock(return_value={"msg1": "주문접수"})
         return broker
@@ -1309,7 +1309,7 @@ class TestOverseasBalanceParsing:
             }
         )
         overseas_broker.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "50000.00"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "50000.00"}}
         )
         overseas_broker.send_overseas_order = AsyncMock(
             return_value={"rt_cd": "0", "msg1": "OK"}
@@ -1373,7 +1373,7 @@ class TestOverseasBalanceParsing:
             }
         )
         overseas_broker.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "10000"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "10000"}}
         )
         overseas_broker.get_overseas_price = AsyncMock(
             return_value={"output": {"last": "50.1234", "rate": "0"}}
@@ -1434,7 +1434,7 @@ class TestOverseasBalanceParsing:
             }
         )
         overseas_broker.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "10000"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "10000"}}
         )
         overseas_broker.get_overseas_price = AsyncMock(
             return_value={"output": {"last": "0.5678", "rate": "0"}}
@@ -1735,7 +1735,7 @@ class TestScenarioEngineIntegration:
             "output2": [{"frcr_evlu_tota": "10000", "frcr_buy_amt_smtl": "9000"}]
         })
         os_broker.get_overseas_buying_power = AsyncMock(return_value={
-            "output": {"ord_psbl_frcr_amt": "500"}
+            "output": {"ovrs_ord_psbl_amt": "500"}
         })
 
         with patch("src.main.log_trade"):
@@ -2861,7 +2861,7 @@ class TestBuyCooldown:
             "output2": [{"frcr_evlu_tota": "50000", "frcr_buy_amt_smtl": "0"}],
         })
         broker.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "50000"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "50000"}}
         )
         broker.send_overseas_order = AsyncMock(
             return_value={"rt_cd": "1", "msg1": "모의투자 주문가능금액이 부족합니다."}
@@ -2978,7 +2978,7 @@ class TestBuyCooldown:
             "output2": [{"frcr_evlu_tota": "50000", "frcr_buy_amt_smtl": "0"}],
         })
         overseas_broker.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "50000"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "50000"}}
         )
         overseas_broker.send_overseas_order = AsyncMock(
             return_value={"rt_cd": "1", "msg1": "기타 오류 메시지"}
@@ -3378,7 +3378,7 @@ async def test_buy_suppressed_when_open_position_exists() -> None:
         }
     )
     overseas_broker.get_overseas_buying_power = AsyncMock(
-        return_value={"output": {"ord_psbl_frcr_amt": "10000"}}
+        return_value={"output": {"ovrs_ord_psbl_amt": "10000"}}
     )
     overseas_broker.send_overseas_order = AsyncMock(return_value={"msg1": "OK"})
 
@@ -3445,7 +3445,7 @@ async def test_buy_proceeds_when_no_open_position() -> None:
         }
     )
     overseas_broker.get_overseas_buying_power = AsyncMock(
-        return_value={"output": {"ord_psbl_frcr_amt": "50000"}}
+        return_value={"output": {"ovrs_ord_psbl_amt": "50000"}}
     )
     overseas_broker.send_overseas_order = AsyncMock(return_value={"msg1": "OK"})
 
@@ -3554,7 +3554,7 @@ class TestOverseasBrokerIntegration:
             }
         )
         overseas_broker.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "50000.00"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "50000.00"}}
         )
         overseas_broker.send_overseas_order = AsyncMock(return_value={"msg1": "주문접수"})
 
@@ -3630,7 +3630,7 @@ class TestOverseasBrokerIntegration:
             }
         )
         overseas_broker.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "50000.00"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "50000.00"}}
         )
         overseas_broker.send_overseas_order = AsyncMock(return_value={"msg1": "주문접수"})
 
@@ -4880,7 +4880,7 @@ class TestOverseasGhostPositionClose:
         )
         ob.get_overseas_balance = AsyncMock(return_value=balance_data)
         ob.get_overseas_buying_power = AsyncMock(
-            return_value={"output": {"ord_psbl_frcr_amt": "0.00"}}
+            return_value={"output": {"ovrs_ord_psbl_amt": "0.00"}}
         )
         ob.send_overseas_order = AsyncMock(return_value=sell_result)
         return ob
