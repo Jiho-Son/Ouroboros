@@ -254,7 +254,7 @@ def get_open_position(
     """Return open position if latest trade is BUY, else None."""
     cursor = conn.execute(
         """
-        SELECT action, decision_id, price, quantity
+        SELECT action, decision_id, price, quantity, timestamp
         FROM trades
         WHERE stock_code = ?
           AND market = ?
@@ -266,7 +266,7 @@ def get_open_position(
     row = cursor.fetchone()
     if not row or row[0] != "BUY":
         return None
-    return {"decision_id": row[1], "price": row[2], "quantity": row[3]}
+    return {"decision_id": row[1], "price": row[2], "quantity": row[3], "timestamp": row[4]}
 
 
 def get_recent_symbols(
