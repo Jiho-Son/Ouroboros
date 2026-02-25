@@ -576,6 +576,22 @@ async def trading_cycle(
         market_data["rsi"] = candidate.rsi
         market_data["volume_ratio"] = candidate.volume_ratio
 
+    # Enrich market_data with holding info for SELL/HOLD scenario conditions
+    open_pos = get_open_position(db_conn, stock_code, market.code)
+    if open_pos and current_price > 0:
+        entry_price = safe_float(open_pos.get("price"), 0.0)
+        if entry_price > 0:
+            market_data["unrealized_pnl_pct"] = (
+                (current_price - entry_price) / entry_price * 100
+            )
+        entry_ts = open_pos.get("timestamp")
+        if entry_ts:
+            try:
+                entry_date = datetime.fromisoformat(entry_ts).date()
+                market_data["holding_days"] = (datetime.now(UTC).date() - entry_date).days
+            except (ValueError, TypeError):
+                pass
+
     # 1.3. Record L7 real-time context (market-scoped keys)
     timeframe = datetime.now(UTC).isoformat()
     context_store.set_context(
