@@ -28,6 +28,7 @@ def mock_settings() -> Settings:
         KIS_APP_SECRET="test_secret",
         KIS_ACCOUNT_NO="12345678-01",
         GEMINI_API_KEY="test_gemini_key",
+        MODE="paper",  # Explicitly set to avoid .env MODE=live override
     )
 
 
