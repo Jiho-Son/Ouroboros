@@ -23,7 +23,7 @@ if [ -z "${APP_CMD:-}" ]; then
 
     dashboard_port="${DASHBOARD_PORT:-8080}"
 
-    APP_CMD="DASHBOARD_PORT=$dashboard_port $PYTHON_BIN -m src.main --mode=paper --dashboard"
+    APP_CMD="DASHBOARD_PORT=$dashboard_port $PYTHON_BIN -m src.main --mode=live --dashboard"
 fi
 
 mkdir -p "$LOG_DIR"
