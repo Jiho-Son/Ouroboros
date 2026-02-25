@@ -258,6 +258,7 @@ def get_open_position(
         FROM trades
         WHERE stock_code = ?
           AND market = ?
+          AND action IN ('BUY', 'SELL')
         ORDER BY timestamp DESC
         LIMIT 1
         """,

@@ -508,8 +508,42 @@ async def trading_cycle(
             balance_info = {}
 
         total_eval = safe_float(balance_info.get("frcr_evlu_tota", "0") or "0")
-        total_cash = safe_float(balance_info.get("frcr_dncl_amt_2", "0") or "0")
         purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
+
+        # Resolve current price first (needed for buying power API)
+        current_price = safe_float(price_data.get("output", {}).get("last", "0"))
+        if current_price <= 0:
+            market_candidates_lookup = scan_candidates.get(market.code, {})
+            cand_lookup = market_candidates_lookup.get(stock_code)
+            if cand_lookup and cand_lookup.price > 0:
+                logger.debug(
+                    "Price API returned 0 for %s; using scanner candidate price %.4f",
+                    stock_code,
+                    cand_lookup.price,
+                )
+                current_price = cand_lookup.price
+        foreigner_net = 0.0  # Not available for overseas
+        price_change_pct = safe_float(price_data.get("output", {}).get("rate", "0"))
+
+        # Fetch available foreign currency cash via inquire-psamount (TTTS3007R/VTTS3007R).
+        # TTTS3012R output2 does not include a cash/deposit field — frcr_dncl_amt_2 does not exist.
+        # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 매수가능금액조회' 시트
+        total_cash = 0.0
+        if current_price > 0:
+            try:
+                ps_data = await overseas_broker.get_overseas_buying_power(
+                    market.exchange_code, stock_code, current_price
+                )
+                total_cash = safe_float(
+                    ps_data.get("output", {}).get("ord_psbl_frcr_amt", "0") or "0"
+                )
+            except ConnectionError as exc:
+                logger.warning(
+                    "Could not fetch overseas buying power for %s/%s: %s",
+                    market.exchange_code,
+                    stock_code,
+                    exc,
+                )
 
         # Paper mode fallback: VTS overseas balance API often fails for many accounts.
         # Only activate in paper mode — live mode must use real balance from KIS.
@@ -525,34 +559,6 @@ async def trading_cycle(
                 settings.PAPER_OVERSEAS_CASH,
             )
             total_cash = settings.PAPER_OVERSEAS_CASH
-
-        current_price = safe_float(price_data.get("output", {}).get("last", "0"))
-        # Fallback: if price API returns 0, use scanner candidate price
-        if current_price <= 0:
-            market_candidates_lookup = scan_candidates.get(market.code, {})
-            cand_lookup = market_candidates_lookup.get(stock_code)
-            if cand_lookup and cand_lookup.price > 0:
-                logger.debug(
-                    "Price API returned 0 for %s; using scanner candidate price %.4f",
-                    stock_code,
-                    cand_lookup.price,
-                )
-                current_price = cand_lookup.price
-        foreigner_net = 0.0  # Not available for overseas
-        price_change_pct = safe_float(price_data.get("output", {}).get("rate", "0"))
-
-        # Price API may return 0/empty for certain VTS exchange codes.
-        # Fall back to the scanner candidate's price so order sizing still works.
-        if current_price <= 0:
-            market_candidates_lookup = scan_candidates.get(market.code, {})
-            cand_lookup = market_candidates_lookup.get(stock_code)
-            if cand_lookup and cand_lookup.price > 0:
-                current_price = cand_lookup.price
-                logger.debug(
-                    "Price API returned 0 for %s; using scanner price %.4f",
-                    stock_code,
-                    current_price,
-                )
 
     # Calculate daily P&L %
     pnl_pct = (
@@ -1659,10 +1665,35 @@ async def run_daily_session(
                 balance_info = {}
 
             total_eval = safe_float(balance_info.get("frcr_evlu_tota", "0") or "0")
-            total_cash = safe_float(balance_info.get("frcr_dncl_amt_2", "0") or "0")
             purchase_total = safe_float(
                 balance_info.get("frcr_buy_amt_smtl", "0") or "0"
             )
+
+            # Fetch available foreign currency cash via inquire-psamount (TTTS3007R/VTTS3007R).
+            # TTTS3012R output2 does not include a cash/deposit field — frcr_dncl_amt_2 does not exist.
+            # Use the first stock with a valid price as the reference for the buying power query.
+            # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 매수가능금액조회' 시트
+            total_cash = 0.0
+            ref_stock = next(
+                (s for s in stocks_data if s.get("current_price", 0) > 0), None
+            )
+            if ref_stock:
+                try:
+                    ps_data = await overseas_broker.get_overseas_buying_power(
+                        market.exchange_code,
+                        ref_stock["stock_code"],
+                        ref_stock["current_price"],
+                    )
+                    total_cash = safe_float(
+                        ps_data.get("output", {}).get("ord_psbl_frcr_amt", "0") or "0"
+                    )
+                except ConnectionError as exc:
+                    logger.warning(
+                        "Could not fetch overseas buying power for %s: %s",
+                        market.exchange_code,
+                        exc,
+                    )
+
             # Paper mode fallback: VTS overseas balance API often fails for many accounts.
             # Only activate in paper mode — live mode must use real balance from KIS.
             if (
