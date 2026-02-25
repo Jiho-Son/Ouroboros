@@ -1712,6 +1712,61 @@ class TestScenarioEngineIntegration:
         assert market_data["current_price"] == 50000.0
 
     @pytest.mark.asyncio
+    async def test_holding_overseas_stock_derives_volume_ratio_from_price_api(
+        self, mock_broker: MagicMock, mock_telegram: MagicMock,
+    ) -> None:
+        """Test overseas holding stocks derive volume_ratio from get_overseas_price high/low."""
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_hold_match())
+
+        os_market = MagicMock()
+        os_market.name = "NASDAQ"
+        os_market.code = "US_NASDAQ"
+        os_market.exchange_code = "NAS"
+        os_market.is_domestic = False
+        os_market.timezone = UTC
+
+        os_broker = MagicMock()
+        # price_change_pct=5.0, high=106, low=94 → intraday_range=12% → volume_ratio=max(1,6)=6
+        os_broker.get_overseas_price = AsyncMock(return_value={
+            "output": {"last": "100.0", "rate": "5.0", "high": "106.0", "low": "94.0"}
+        })
+        os_broker.get_overseas_balance = AsyncMock(return_value={
+            "output2": [{"frcr_evlu_tota": "10000", "frcr_buy_amt_smtl": "9000"}]
+        })
+        os_broker.get_overseas_buying_power = AsyncMock(return_value={
+            "output": {"ord_psbl_frcr_amt": "500"}
+        })
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=os_broker,
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=os_market,
+                stock_code="NVDA",
+                scan_candidates={},  # Not in scanner — holding stock
+            )
+
+        market_data = engine.evaluate.call_args[0][2]
+        # rsi: 50.0 + 5.0 * 2.0 = 60.0
+        assert market_data["rsi"] == pytest.approx(60.0)
+        # intraday_range = (106-94)/100 * 100 = 12.0%
+        # volatility_pct = max(abs(5.0), 12.0) = 12.0
+        # volume_ratio = max(1.0, 12.0 / 2.0) = 6.0
+        assert market_data["volume_ratio"] == pytest.approx(6.0)
+
+    @pytest.mark.asyncio
     async def test_scenario_matched_notification_sent(
         self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
     ) -> None:

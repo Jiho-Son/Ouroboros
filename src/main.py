@@ -477,6 +477,7 @@ async def trading_cycle(
     cycle_start_time = asyncio.get_event_loop().time()
 
     # 1. Fetch market data
+    price_output: dict[str, Any] = {}  # Populated for overseas markets; used for fallback metrics
     if market.is_domestic:
         current_price, price_change_pct, foreigner_net = await broker.get_current_price(
             stock_code
@@ -511,7 +512,8 @@ async def trading_cycle(
         purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
 
         # Resolve current price first (needed for buying power API)
-        current_price = safe_float(price_data.get("output", {}).get("last", "0"))
+        price_output = price_data.get("output", {})
+        current_price = safe_float(price_output.get("last", "0"))
         if current_price <= 0:
             market_candidates_lookup = scan_candidates.get(market.code, {})
             cand_lookup = market_candidates_lookup.get(stock_code)
@@ -523,7 +525,7 @@ async def trading_cycle(
                 )
                 current_price = cand_lookup.price
         foreigner_net = 0.0  # Not available for overseas
-        price_change_pct = safe_float(price_data.get("output", {}).get("rate", "0"))
+        price_change_pct = safe_float(price_output.get("rate", "0"))
 
         # Fetch available foreign currency cash via inquire-psamount (TTTS3007R/VTTS3007R).
         # TTTS3012R output2 does not include a cash/deposit field — frcr_dncl_amt_2 does not exist.
@@ -582,10 +584,27 @@ async def trading_cycle(
         market_data["rsi"] = candidate.rsi
         market_data["volume_ratio"] = candidate.volume_ratio
     else:
-        # Holding stocks not in scanner: derive implied RSI from price change,
-        # volume_ratio defaults to 1.0 (no surge data available).
+        # Holding stocks not in scanner: derive metrics from price API data already fetched.
+        # For overseas stocks, price_output contains high/low/rate from get_overseas_price.
+        # For domestic stocks, only price_change_pct is available from get_current_price.
         market_data["rsi"] = max(0.0, min(100.0, 50.0 + price_change_pct * 2.0))
-        market_data["volume_ratio"] = 1.0
+        if price_output and current_price > 0:
+            pr_high = safe_float(
+                price_output.get("high") or price_output.get("ovrs_hgpr")
+                or price_output.get("stck_hgpr")
+            )
+            pr_low = safe_float(
+                price_output.get("low") or price_output.get("ovrs_lwpr")
+                or price_output.get("stck_lwpr")
+            )
+            if pr_high > 0 and pr_low > 0 and pr_high >= pr_low:
+                intraday_range_pct = (pr_high - pr_low) / current_price * 100.0
+                volatility_pct = max(abs(price_change_pct), intraday_range_pct)
+                market_data["volume_ratio"] = max(1.0, volatility_pct / 2.0)
+            else:
+                market_data["volume_ratio"] = 1.0
+        else:
+            market_data["volume_ratio"] = 1.0
 
     # Enrich market_data with holding info for SELL/HOLD scenario conditions
     open_pos = get_open_position(db_conn, stock_code, market.code)
