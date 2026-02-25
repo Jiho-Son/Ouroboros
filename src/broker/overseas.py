@@ -222,6 +222,59 @@ class OverseasBroker:
                 f"Network error fetching overseas balance: {exc}"
             ) from exc
 
+    async def get_overseas_buying_power(
+        self,
+        exchange_code: str,
+        stock_code: str,
+        price: float,
+    ) -> dict[str, Any]:
+        """
+        Fetch overseas buying power for a specific stock and price.
+
+        Args:
+            exchange_code: Exchange code (e.g., "NASD", "NYSE")
+            stock_code: Stock ticker symbol
+            price: Current stock price (used for quantity calculation)
+
+        Returns:
+            API response; key field: output.ord_psbl_frcr_amt (주문가능외화금액)
+
+        Raises:
+            ConnectionError: On network or API errors
+        """
+        await self._broker._rate_limiter.acquire()
+        session = self._broker._get_session()
+
+        # TR_ID: 실전 TTTS3007R, 모의 VTTS3007R
+        # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 매수가능금액조회' 시트
+        ps_tr_id = (
+            "TTTS3007R" if self._broker._settings.MODE == "live" else "VTTS3007R"
+        )
+        headers = await self._broker._auth_headers(ps_tr_id)
+        params = {
+            "CANO": self._broker._account_no,
+            "ACNT_PRDT_CD": self._broker._product_cd,
+            "OVRS_EXCG_CD": exchange_code,
+            "OVRS_ORD_UNPR": f"{price:.2f}",
+            "ITEM_CD": stock_code,
+        }
+        url = (
+            f"{self._broker._base_url}/uapi/overseas-stock/v1/trading/inquire-psamount"
+        )
+
+        try:
+            async with session.get(url, headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise ConnectionError(
+                        f"get_overseas_buying_power failed ({resp.status}): {text}"
+                    )
+                return await resp.json()
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise ConnectionError(
+                f"Network error fetching overseas buying power: {exc}"
+            ) from exc
+
     async def send_overseas_order(
         self,
         exchange_code: str,
