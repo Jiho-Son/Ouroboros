@@ -581,6 +581,11 @@ async def trading_cycle(
     if candidate:
         market_data["rsi"] = candidate.rsi
         market_data["volume_ratio"] = candidate.volume_ratio
+    else:
+        # Holding stocks not in scanner: derive implied RSI from price change,
+        # volume_ratio defaults to 1.0 (no surge data available).
+        market_data["rsi"] = max(0.0, min(100.0, 50.0 + price_change_pct * 2.0))
+        market_data["volume_ratio"] = 1.0
 
     # Enrich market_data with holding info for SELL/HOLD scenario conditions
     open_pos = get_open_position(db_conn, stock_code, market.code)
@@ -1499,8 +1504,9 @@ async def run_daily_session(
                 active_stocks={},
             )
             if not fallback_stocks:
-                logger.warning(
-                    "No dynamic overseas symbol universe for %s; scanner cannot run",
+                logger.debug(
+                    "No dynamic overseas symbol universe for %s;"
+                    " scanner will use overseas ranking API",
                     market.code,
                 )
         try:
@@ -2812,9 +2818,9 @@ async def run(settings: Settings) -> None:
                                     active_stocks=active_stocks,
                                 )
                                 if not fallback_stocks:
-                                    logger.warning(
+                                    logger.debug(
                                         "No dynamic overseas symbol universe for %s;"
-                                        " scanner cannot run",
+                                        " scanner will use overseas ranking API",
                                         market.code,
                                     )
 

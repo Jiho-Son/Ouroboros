@@ -1668,10 +1668,10 @@ class TestScenarioEngineIntegration:
                 scan_candidates={"US": {"005930": us_candidate}},  # Wrong market
             )
 
-        # Should NOT have rsi/volume_ratio because candidate is under US, not KR
+        # Should NOT use US candidate's rsi (=15.0); fallback implied_rsi used instead
         market_data = engine.evaluate.call_args[0][2]
-        assert "rsi" not in market_data
-        assert "volume_ratio" not in market_data
+        assert market_data["rsi"] != 15.0  # US candidate's rsi must be ignored
+        assert market_data["volume_ratio"] == 1.0  # Fallback default
 
     @pytest.mark.asyncio
     async def test_scenario_engine_called_without_scanner_data(
@@ -1702,11 +1702,13 @@ class TestScenarioEngineIntegration:
                 scan_candidates={},  # No scanner data
             )
 
-        # Should still work, just without rsi/volume_ratio
+        # Holding stocks without scanner data use implied_rsi (from price_change_pct)
+        # and volume_ratio=1.0 as fallback, so rsi/volume_ratio are always present.
         engine.evaluate.assert_called_once()
         market_data = engine.evaluate.call_args[0][2]
-        assert "rsi" not in market_data
-        assert "volume_ratio" not in market_data
+        assert "rsi" in market_data  # Implied RSI from price_change_pct=2.5 → 55.0
+        assert market_data["rsi"] == pytest.approx(55.0)
+        assert market_data["volume_ratio"] == 1.0
         assert market_data["current_price"] == 50000.0
 
     @pytest.mark.asyncio
