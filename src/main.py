@@ -897,6 +897,15 @@ async def trading_cycle(
     trade_price = current_price
     trade_pnl = 0.0
     if decision.action in ("BUY", "SELL"):
+        if KILL_SWITCH.new_orders_blocked:
+            logger.critical(
+                "KillSwitch block active: skip %s order for %s (%s)",
+                decision.action,
+                stock_code,
+                market.name,
+            )
+            return
+
         broker_held_qty = (
             _extract_held_qty_from_balance(
                 balance_data, stock_code, is_domestic=market.is_domestic
@@ -966,7 +975,7 @@ async def trading_cycle(
                 logger.warning("Fat finger notification failed: %s", notify_exc)
             raise  # Re-raise to prevent trade
         except CircuitBreakerTripped as exc:
-            await KILL_SWITCH.trigger(
+            ks_report = await KILL_SWITCH.trigger(
                 reason=f"circuit_breaker:{market.code}:{stock_code}:{exc.pnl_pct:.2f}",
                 snapshot_state=lambda: logger.critical(
                     "KillSwitch snapshot %s/%s pnl=%.2f threshold=%.2f",
@@ -976,16 +985,13 @@ async def trading_cycle(
                     exc.threshold,
                 ),
             )
-            try:
-                await telegram.notify_circuit_breaker(
-                    pnl_pct=exc.pnl_pct,
-                    threshold=exc.threshold,
+            if ks_report.errors:
+                logger.critical(
+                    "KillSwitch step errors for %s/%s: %s",
+                    market.code,
+                    stock_code,
+                    "; ".join(ks_report.errors),
                 )
-            except Exception as notify_exc:
-                logger.warning(
-                    "Circuit breaker notification failed: %s", notify_exc
-                )
-            KILL_SWITCH.clear_block()
             raise
 
         # 5. Send order
@@ -1888,6 +1894,15 @@ async def run_daily_session(
             trade_pnl = 0.0
             order_succeeded = True
             if decision.action in ("BUY", "SELL"):
+                if KILL_SWITCH.new_orders_blocked:
+                    logger.critical(
+                        "KillSwitch block active: skip %s order for %s (%s)",
+                        decision.action,
+                        stock_code,
+                        market.name,
+                    )
+                    continue
+
                 daily_broker_held_qty = (
                     _extract_held_qty_from_balance(
                         balance_data, stock_code, is_domestic=market.is_domestic
@@ -1954,7 +1969,7 @@ async def run_daily_session(
                         logger.warning("Fat finger notification failed: %s", notify_exc)
                     continue  # Skip this order
                 except CircuitBreakerTripped as exc:
-                    await KILL_SWITCH.trigger(
+                    ks_report = await KILL_SWITCH.trigger(
                         reason=f"daily_circuit_breaker:{market.code}:{stock_code}:{exc.pnl_pct:.2f}",
                         snapshot_state=lambda: logger.critical(
                             "Daily KillSwitch snapshot %s/%s pnl=%.2f threshold=%.2f",
@@ -1974,7 +1989,13 @@ async def run_daily_session(
                         logger.warning(
                             "Circuit breaker notification failed: %s", notify_exc
                         )
-                    KILL_SWITCH.clear_block()
+                    if ks_report.errors:
+                        logger.critical(
+                            "Daily KillSwitch step errors for %s/%s: %s",
+                            market.code,
+                            stock_code,
+                            "; ".join(ks_report.errors),
+                        )
                     raise
 
                 # Send order
