@@ -36,6 +36,7 @@ Updated: 2026-02-26
 역할 기반 승인:
 - Verifier 1명 승인 필수
 - TPM 또는 PM 1명 승인 필수
+- Runtime Verifier 관련 변경(PR 본문에 runtime 영향 있음) 시 Runtime Verifier 승인 필수
 
 설정 기준:
 - 최소 승인 수: 2
@@ -48,6 +49,7 @@ Updated: 2026-02-26
 - 이슈 연결(`Closes #N`) 존재
 - PR 본문에 `REQ-*`, `TASK-*`, `TEST-*` 매핑 표 존재
 - `src/core/risk_manager.py` 변경 없음
+- 주요 의사결정 체크포인트(DCP-01~04) 중 해당 단계 Main Agent 확인 기록 존재
 
 자동 점검:
 - 문서 검증 스크립트 통과
@@ -77,3 +79,10 @@ Updated: 2026-02-26
 - 브랜치 보호 미적용 발견 시: 즉시 릴리즈 중지
 - 필수 CI 우회 발견 시: 관리자 권한 점검 및 감사 이슈 발행
 - 리뷰 규칙 무효화 발견 시: 규칙 복구 후 재머지 정책 시행
+- Runtime 이상 이슈 미해결 상태에서 클로즈 시도 발견 시: 즉시 이슈 재오픈 + 릴리즈 중지
+
+## 8) 재계획(Dev Replan) 운영 규칙
+
+- Dev가 `REPLAN-REQUEST` 발행 시 TPM 심사 없이는 스코프/일정 변경 금지
+- `REPLAN-REQUEST`는 Main Agent 승인 전 \"제안\" 상태로 유지
+- 승인된 재계획은 `REQ/TASK/TEST` 문서를 동시 갱신해야 유효

@@ -26,6 +26,7 @@ Updated: 2026-02-26
 | `SCN-OPS-002` | Ops Incident | 정책 수치가 코드에만 반영되고 원장 미수정 | 문서 검증에서 실패 처리, PR 병합 차단 | `REQ-OPS-002`, `TASK-OPS-002`, `TEST-ACC-008` | P0 |
 | `SCN-OPS-003` | Ops Incident | 타임존 누락 로그/스케줄 데이터 유입 | KST/UTC 미표기 레코드 검증 실패 처리 | `REQ-OPS-001`, `TASK-OPS-001`, `TEST-ACC-007` | P1 |
 | `SCN-OPS-004` | Ops Incident | 신규 REQ 추가 후 TASK/TEST 누락 | 추적성 게이트 실패, 구현 PR 병합 차단 | `REQ-OPS-003`, `TASK-OPS-003`, `TEST-ACC-009` | P0 |
+| `SCN-OPS-005` | Ops Incident | 배포 후 런타임 이상 동작(주문오류/상태전이오류/정책위반) 탐지 | Runtime Verifier가 즉시 이슈 발행, Dev 수정 후 재관측으로 클로즈 판정 | `REQ-V2-008`, `REQ-V3-003`, `REQ-V3-005`, `TEST-ACC-002`, `TEST-ACC-003`, `TEST-ACC-004` | P0 |
 
 ## 2) 이슈 분류 체계 (Issue Taxonomy)
 
@@ -37,6 +38,7 @@ Updated: 2026-02-26
 | `RISK-EMERGENCY` | Kill Switch/리스크 비상 대응 실패 | 순서 위반, 차단 누락, 복구 절차 누락 | Risk | `REQ-V2-008`,`REQ-V3-008`, `TASK-V2-013`~`015`, `TASK-V3-015`, `TEST-ACC-002`,`018` |
 | `FX-ACCOUNTING` | 환율/통화 버퍼 정책 위반 | 전략손익/환차손익 혼합 집계, 버퍼 미적용 | Risk + Data | `REQ-V3-007`, `TASK-V3-013`,`014`, `TEST-ACC-006` |
 | `OPS-GOVERNANCE` | 문서/추적성/타임존 거버넌스 위반 | 원장 미수정, TEST 누락, 타임존 미표기 | PM + QA | `REQ-OPS-001`~`003`, `TASK-OPS-001`~`003`, `TEST-ACC-007`~`009` |
+| `RUNTIME-VERIFY` | 실동작 모니터링 검증 | 배포 후 이상 현상, 간헐 오류, 테스트 미포착 회귀 | Runtime Verifier + TPM | 관련 `REQ/TASK/TEST`와 런타임 로그 증적 필수 |
 
 ## 3) 티켓 생성 규칙 (Implementable)
 
@@ -48,6 +50,7 @@ Updated: 2026-02-26
 - P0: 실주문 위험, Kill Switch, 블랙아웃/시장가 정책, 추적성 게이트 실패
 - P1: 손익 왜곡 가능성(체결/FX/시간대), 운영 리스크 증가
 - P2: 보고서/관측성 품질 이슈(거래 안전성 영향 없음)
+5. Runtime Verifier가 발행한 `RUNTIME-VERIFY` 이슈는 Main Agent 확인 전 클로즈 금지.
 
 ## 4) 즉시 생성 권장 티켓 (초기 백로그)
 
@@ -56,6 +59,7 @@ Updated: 2026-02-26
 - `TKT-P0-003`: `[OPS-GOVERNANCE][SCN-OPS-004]` REQ/TASK/TEST 누락 시 PR 차단 게이트 상시 점검 (`REQ-OPS-003`)
 - `TKT-P1-001`: `[FX-ACCOUNTING][SCN-FAIL-004]` FX 버퍼 위반 시 진입 제한 회귀 케이스 보강 (`REQ-V3-007`)
 - `TKT-P1-002`: `[BACKTEST-MODEL][SCN-HAPPY-004]` 비용/슬리피지 미설정 백테스트 거부 UX 명확화 (`REQ-V2-007`)
+- `TKT-P0-004`: `[RUNTIME-VERIFY][SCN-OPS-005]` 배포 후 런타임 이상 탐지/재현/클로즈 판정 절차 자동화
 
 ## 5) 운영 체크포인트
 

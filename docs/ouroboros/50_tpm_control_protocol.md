@@ -6,11 +6,28 @@ Owner: tpm
 Updated: 2026-02-26
 -->
 
-# TPM Control Protocol (PM <-> Dev <-> Verifier)
+# TPM Control Protocol (Main <-> PM <-> TPM <-> Dev <-> Verifier <-> Runtime Verifier)
 
 목적:
 - PM 시나리오가 구현 가능한 단위로 분해되고, 개발/검증이 동일 ID 체계(`REQ-*`, `TASK-*`, `TEST-*`)로 닫히도록 강제한다.
 - 각 단계는 Entry/Exit gate를 통과해야 다음 단계로 이동 가능하다.
+- 주요 의사결정 포인트마다 Main Agent의 승인/의견 확인을 강제한다.
+
+## Team Roles
+
+- Main Agent: 최종 취합/우선순위/승인 게이트 오너
+- PM Agent: 시나리오/요구사항/티켓 관리
+- TPM Agent: PM-Dev-검증 간 구현 가능성/달성률 통제
+- Dev Agent: 구현 수행, 블로커 발생 시 재계획 요청
+- Verifier Agent: 문서/코드/테스트 산출물 검증
+- Runtime Verifier Agent: 실제 동작 모니터링, 이상 징후 이슈 발행, 수정 후 이슈 클로즈 판정
+
+## Main Decision Checkpoints (Mandatory)
+
+- DCP-01 범위 확정: Phase 0 종료 전 Main Agent 승인 필수
+- DCP-02 요구사항 확정: Phase 1 종료 전 Main Agent 승인 필수
+- DCP-03 구현 착수: Phase 2 종료 전 Main Agent 승인 필수
+- DCP-04 배포 승인: Phase 4 종료 후 Main Agent 최종 승인 필수
 
 ## Phase Control Gates
 
@@ -27,6 +44,7 @@ Exit criteria:
 
 Control checks:
 - PM/TPM 합의 완료
+- Main Agent 승인(DCP-01)
 - 산출물: 시나리오 카드, 초기 매핑 메모
 
 ### Phase 1: Requirement Registry Gate
@@ -42,6 +60,7 @@ Exit criteria:
 
 Control checks:
 - `python3 scripts/validate_ouroboros_docs.py` 통과
+- Main Agent 승인(DCP-02)
 - 산출물: 업데이트된 요구사항 원장
 
 ### Phase 2: Design and Work-Order Gate
@@ -57,6 +76,7 @@ Exit criteria:
 
 Control checks:
 - TPM이 `REQ -> TASK` 누락 여부 검토
+- Main Agent 승인(DCP-03)
 - 산출물: 승인된 Work Order 세트
 
 ### Phase 3: Implementation Gate
@@ -87,6 +107,7 @@ Exit criteria:
 
 Control checks:
 - Verifier가 테스트 증적(로그/리포트/실행 커맨드) 첨부
+- Runtime Verifier가 스테이징/실운영 모니터링 계획 승인
 - 산출물: 수용 승인 레코드
 
 ### Phase 5: Release and Post-Release Control
@@ -102,7 +123,32 @@ Exit criteria:
 
 Control checks:
 - PM/TPM/Dev 3자 종료 확인
+- Runtime Verifier가 운영 모니터링 이슈 상태(신규/진행/해결)를 리포트
+- Main Agent 최종 승인(DCP-04)
 - 산출물: 릴리즈 노트 + 후속 액션 목록
+
+## Replan Protocol (Dev -> TPM)
+
+- 트리거:
+  - 구현 불가능(기술적 제약/외부 API 제약)
+  - 예상 대비 개발 리소스 과다(공수/인력/의존성 급증)
+- 절차:
+  1) Dev Agent가 `REPLAN-REQUEST` 발행(영향 REQ/TASK, 원인, 대안, 추가 공수 포함)
+  2) TPM Agent가 1차 심사(범위 축소/단계 분할/요구사항 조정안)
+  3) Verifier/PM 의견 수렴 후 Main Agent 승인으로 재계획 확정
+- 규칙:
+  - Main Agent 승인 없는 재계획은 실행 금지
+  - 재계획 반영 시 문서(`REQ/TASK/TEST`) 동시 갱신 필수
+
+## Runtime Verification Protocol
+
+- Runtime Verifier는 테스트 통과 이후 실제 동작(스테이징/실운영)을 모니터링한다.
+- 이상 동작/현상 발견 시 즉시 이슈 발행:
+  - 제목 규칙: `[RUNTIME-VERIFY][SCN-*] ...`
+  - 본문 필수: 재현조건, 관측 로그, 영향 범위, 임시 완화책, 관련 `REQ/TASK/TEST`
+- 이슈 클로즈 규칙:
+  - Dev 수정 완료 + Verifier 재검증 통과 + Runtime Verifier 재관측 정상
+  - 최종 클로즈 승인자는 Main Agent
 
 ## Acceptance Matrix (PM Scenario -> Dev Tasks -> Verifier Checks)
 
