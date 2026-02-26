@@ -33,7 +33,11 @@ from src.core.blackout_manager import (
     parse_blackout_windows_kst,
 )
 from src.core.kill_switch import KillSwitchOrchestrator
-from src.core.order_policy import OrderPolicyRejected, validate_order_policy
+from src.core.order_policy import (
+    OrderPolicyRejected,
+    get_session_info,
+    validate_order_policy,
+)
 from src.core.priority_queue import PriorityTaskQueue
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
 from src.db import (
@@ -63,6 +67,7 @@ BLACKOUT_ORDER_MANAGER = BlackoutOrderManager(
     windows=[],
     max_queue_size=500,
 )
+_SESSION_CLOSE_WINDOWS = {"NXT_AFTER", "US_AFTER"}
 
 
 def safe_float(value: str | float | None, default: float = 0.0) -> float:
@@ -447,6 +452,21 @@ def _should_block_overseas_buy_for_fx_buffer(
     remaining = total_cash - order_amount
     required = settings.USD_BUFFER_MIN
     return remaining < required, remaining, required
+
+
+def _should_force_exit_for_overnight(
+    *,
+    market: MarketInfo,
+    settings: Settings | None,
+) -> bool:
+    session_id = get_session_info(market).session_id
+    if session_id not in _SESSION_CLOSE_WINDOWS:
+        return False
+    if KILL_SWITCH.new_orders_blocked:
+        return True
+    if settings is None:
+        return False
+    return not settings.OVERNIGHT_EXCEPTION_ENABLED
 
 
 async def build_overseas_symbol_universe(
@@ -1214,6 +1234,23 @@ async def trading_cycle(
                         loss_pct,
                         take_profit_threshold,
                     )
+            if decision.action == "HOLD" and _should_force_exit_for_overnight(
+                market=market,
+                settings=settings,
+            ):
+                decision = TradeDecision(
+                    action="SELL",
+                    confidence=max(decision.confidence, 85),
+                    rationale=(
+                        "Forced exit by overnight policy"
+                        " (session close window / kill switch priority)"
+                    ),
+                )
+                logger.info(
+                    "Overnight policy override for %s (%s): HOLD -> SELL",
+                    stock_code,
+                    market.name,
+                )
     logger.info(
         "Decision for %s (%s): %s (confidence=%d)",
         stock_code,
@@ -1274,7 +1311,7 @@ async def trading_cycle(
     trade_price = current_price
     trade_pnl = 0.0
     if decision.action in ("BUY", "SELL"):
-        if KILL_SWITCH.new_orders_blocked:
+        if KILL_SWITCH.new_orders_blocked and decision.action == "BUY":
             logger.critical(
                 "KillSwitch block active: skip %s order for %s (%s)",
                 decision.action,
@@ -2323,6 +2360,25 @@ async def run_daily_session(
                         stock_code,
                         market.name,
                     )
+            if decision.action == "HOLD":
+                daily_open = get_open_position(db_conn, stock_code, market.code)
+                if daily_open and _should_force_exit_for_overnight(
+                    market=market,
+                    settings=settings,
+                ):
+                    decision = TradeDecision(
+                        action="SELL",
+                        confidence=max(decision.confidence, 85),
+                        rationale=(
+                            "Forced exit by overnight policy"
+                            " (session close window / kill switch priority)"
+                        ),
+                    )
+                    logger.info(
+                        "Daily overnight policy override for %s (%s): HOLD -> SELL",
+                        stock_code,
+                        market.name,
+                    )
 
             # Log decision
             context_snapshot = {
@@ -2363,7 +2419,7 @@ async def run_daily_session(
             trade_pnl = 0.0
             order_succeeded = True
             if decision.action in ("BUY", "SELL"):
-                if KILL_SWITCH.new_orders_blocked:
+                if KILL_SWITCH.new_orders_blocked and decision.action == "BUY":
                     logger.critical(
                         "KillSwitch block active: skip %s order for %s (%s)",
                         decision.action,
