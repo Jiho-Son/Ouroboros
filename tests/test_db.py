@@ -155,6 +155,8 @@ def test_mode_column_exists_in_schema() -> None:
     cursor = conn.execute("PRAGMA table_info(trades)")
     columns = {row[1] for row in cursor.fetchall()}
     assert "mode" in columns
+    assert "strategy_pnl" in columns
+    assert "fx_pnl" in columns
 
 
 def test_mode_migration_adds_column_to_existing_db() -> None:
@@ -190,6 +192,52 @@ def test_mode_migration_adds_column_to_existing_db() -> None:
         cursor = conn.execute("PRAGMA table_info(trades)")
         columns = {row[1] for row in cursor.fetchall()}
         assert "mode" in columns
+        assert "strategy_pnl" in columns
+        assert "fx_pnl" in columns
         conn.close()
     finally:
         os.unlink(db_path)
+
+
+def test_log_trade_stores_strategy_and_fx_pnl_separately() -> None:
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="SELL",
+        confidence=90,
+        rationale="fx split",
+        pnl=120.0,
+        strategy_pnl=100.0,
+        fx_pnl=20.0,
+        market="US_NASDAQ",
+        exchange_code="NASD",
+    )
+    row = conn.execute(
+        "SELECT pnl, strategy_pnl, fx_pnl FROM trades ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    assert row[0] == 120.0
+    assert row[1] == 100.0
+    assert row[2] == 20.0
+
+
+def test_log_trade_backward_compat_sets_strategy_pnl_from_pnl() -> None:
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="005930",
+        action="SELL",
+        confidence=80,
+        rationale="legacy",
+        pnl=50.0,
+        market="KR",
+        exchange_code="KRX",
+    )
+    row = conn.execute(
+        "SELECT pnl, strategy_pnl, fx_pnl FROM trades ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    assert row[0] == 50.0
+    assert row[1] == 50.0
+    assert row[2] == 0.0
