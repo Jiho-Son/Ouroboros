@@ -8,9 +8,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from src.core.order_policy import classify_session_id
-from src.markets.schedule import MARKETS
-
 
 def init_db(db_path: str) -> sqlite3.Connection:
     """Initialize the trade logs database and return a connection."""
@@ -60,8 +57,10 @@ def init_db(db_path: str) -> sqlite3.Connection:
         conn.execute("ALTER TABLE trades ADD COLUMN decision_id TEXT")
     if "mode" not in columns:
         conn.execute("ALTER TABLE trades ADD COLUMN mode TEXT DEFAULT 'paper'")
+    session_id_added = False
     if "session_id" not in columns:
         conn.execute("ALTER TABLE trades ADD COLUMN session_id TEXT DEFAULT 'UNKNOWN'")
+        session_id_added = True
     if "strategy_pnl" not in columns:
         conn.execute("ALTER TABLE trades ADD COLUMN strategy_pnl REAL DEFAULT 0.0")
     if "fx_pnl" not in columns:
@@ -76,13 +75,14 @@ def init_db(db_path: str) -> sqlite3.Connection:
           AND fx_pnl = 0.0
         """
     )
-    conn.execute(
-        """
-        UPDATE trades
-        SET session_id = 'UNKNOWN'
-        WHERE session_id IS NULL OR session_id = ''
-        """
-    )
+    if session_id_added:
+        conn.execute(
+            """
+            UPDATE trades
+            SET session_id = 'UNKNOWN'
+            WHERE session_id IS NULL OR session_id = ''
+            """
+        )
 
     # Context tree tables for multi-layered memory management
     conn.execute(
@@ -232,10 +232,7 @@ def log_trade(
     """
     # Serialize selection context to JSON
     context_json = json.dumps(selection_context) if selection_context else None
-    resolved_session_id = session_id or "UNKNOWN"
-    market_info = MARKETS.get(market)
-    if session_id is None and market_info is not None:
-        resolved_session_id = classify_session_id(market_info)
+    resolved_session_id = _resolve_session_id(market=market, session_id=session_id)
     if strategy_pnl is None and fx_pnl is None:
         strategy_pnl = pnl
         fx_pnl = 0.0
@@ -275,6 +272,21 @@ def log_trade(
         ),
     )
     conn.commit()
+
+
+def _resolve_session_id(*, market: str, session_id: str | None) -> str:
+    if session_id:
+        return session_id
+    try:
+        from src.core.order_policy import classify_session_id
+        from src.markets.schedule import MARKETS
+
+        market_info = MARKETS.get(market)
+        if market_info is not None:
+            return classify_session_id(market_info)
+    except Exception:
+        pass
+    return "UNKNOWN"
 
 
 def get_latest_buy_trade(

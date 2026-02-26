@@ -297,3 +297,35 @@ def test_log_trade_persists_explicit_session_id() -> None:
     row = conn.execute("SELECT session_id FROM trades ORDER BY id DESC LIMIT 1").fetchone()
     assert row is not None
     assert row[0] == "US_PRE"
+
+
+def test_log_trade_auto_derives_session_id_when_not_provided() -> None:
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=70,
+        rationale="auto session",
+        market="KR",
+        exchange_code="KRX",
+    )
+    row = conn.execute("SELECT session_id FROM trades ORDER BY id DESC LIMIT 1").fetchone()
+    assert row is not None
+    assert row[0] != "UNKNOWN"
+
+
+def test_log_trade_unknown_market_falls_back_to_unknown_session() -> None:
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="X",
+        action="BUY",
+        confidence=70,
+        rationale="unknown market",
+        market="MARS",
+        exchange_code="MARS",
+    )
+    row = conn.execute("SELECT session_id FROM trades ORDER BY id DESC LIMIT 1").fetchone()
+    assert row is not None
+    assert row[0] == "UNKNOWN"
