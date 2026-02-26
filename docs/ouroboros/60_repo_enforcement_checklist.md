@@ -50,6 +50,7 @@ Updated: 2026-02-26
 - PR 본문에 `REQ-*`, `TASK-*`, `TEST-*` 매핑 표 존재
 - `src/core/risk_manager.py` 변경 없음
 - 주요 의사결정 체크포인트(DCP-01~04) 중 해당 단계 Main Agent 확인 기록 존재
+- 주요 의사결정(리뷰 지적/수정 합의/검증 승인)에 대한 에이전트 PR 코멘트 존재
 - 티켓 PR의 base가 `main`이 아닌 program feature branch인지 확인
 
 자동 점검:

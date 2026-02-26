@@ -22,6 +22,7 @@
 - Ticket-level development happens only on **ticket temp branches** cut from the program feature branch.
 - Ticket PR merges into program feature branch are allowed after verifier approval.
 - Until final user sign-off, `main` merge is prohibited.
+- 각 에이전트는 주요 의사결정(리뷰 지적, 수정 방향, 검증 승인)마다 PR 코멘트를 적극 작성해 의사결정 과정을 남긴다.
 
 ## Gitea CLI Formatting Troubleshooting
 
