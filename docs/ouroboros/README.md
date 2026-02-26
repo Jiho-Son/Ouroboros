@@ -20,6 +20,7 @@ Updated: 2026-02-26
 6. 수용 기준/테스트 계획: [40_acceptance_and_test_plan.md](./40_acceptance_and_test_plan.md)
 7. PM 시나리오/이슈 분류: [50_scenario_matrix_and_issue_taxonomy.md](./50_scenario_matrix_and_issue_taxonomy.md)
 8. TPM 제어 프로토콜/수용 매트릭스: [50_tpm_control_protocol.md](./50_tpm_control_protocol.md)
+9. 저장소 강제 설정 체크리스트: [60_repo_enforcement_checklist.md](./60_repo_enforcement_checklist.md)
 
 ## 운영 규칙
 
