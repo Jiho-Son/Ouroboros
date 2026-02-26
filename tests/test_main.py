@@ -27,6 +27,7 @@ from src.main import (
     _start_dashboard_server,
     handle_domestic_pending_orders,
     handle_overseas_pending_orders,
+    process_blackout_recovery_orders,
     run_daily_session,
     safe_float,
     sync_positions_from_broker,
@@ -5189,3 +5190,162 @@ async def test_order_policy_rejection_skips_order_execution() -> None:
         )
 
     broker.send_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_blackout_queues_order_and_skips_submission() -> None:
+    """When blackout is active, order submission is replaced by queueing."""
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    broker = MagicMock()
+    broker.get_current_price = AsyncMock(return_value=(100.0, 0.5, 0.0))
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output1": [],
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "50000",
+                    "pchs_amt_smtl_amt": "50000",
+                }
+            ],
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    settings = MagicMock()
+    settings.POSITION_SIZING_ENABLED = False
+    settings.CONFIDENCE_THRESHOLD = 80
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    blackout_manager = MagicMock()
+    blackout_manager.in_blackout.return_value = True
+    blackout_manager.enqueue.return_value = True
+    blackout_manager.pending_count = 1
+
+    with patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager):
+        await trading_cycle(
+            broker=broker,
+            overseas_broker=MagicMock(),
+            scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_buy_match())),
+            playbook=_make_playbook(),
+            risk=MagicMock(),
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(
+                get_latest_timeframe=MagicMock(return_value=None),
+                set_context=MagicMock(),
+            ),
+            criticality_assessor=MagicMock(
+                assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                get_timeout=MagicMock(return_value=5.0),
+            ),
+            telegram=telegram,
+            market=market,
+            stock_code="005930",
+            scan_candidates={},
+            settings=settings,
+        )
+
+    broker.send_order.assert_not_called()
+    blackout_manager.enqueue.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_process_blackout_recovery_executes_valid_intents() -> None:
+    """Recovery must execute queued intents that pass revalidation."""
+    db_conn = init_db(":memory:")
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    overseas_broker = MagicMock()
+
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    intent = MagicMock()
+    intent.market_code = "KR"
+    intent.stock_code = "005930"
+    intent.order_type = "BUY"
+    intent.quantity = 1
+    intent.price = 100.0
+    intent.source = "test"
+    intent.attempts = 0
+
+    blackout_manager = MagicMock()
+    blackout_manager.pop_recovery_batch.return_value = [intent]
+
+    with (
+        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.main.MARKETS", {"KR": market}),
+        patch("src.main.get_open_position", return_value=None),
+        patch("src.main.validate_order_policy"),
+    ):
+        await process_blackout_recovery_orders(
+            broker=broker,
+            overseas_broker=overseas_broker,
+            db_conn=db_conn,
+        )
+
+    broker.send_order.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_process_blackout_recovery_drops_policy_rejected_intent() -> None:
+    """Policy-rejected queued intents must not be requeued."""
+    db_conn = init_db(":memory:")
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    overseas_broker = MagicMock()
+
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    intent = MagicMock()
+    intent.market_code = "KR"
+    intent.stock_code = "005930"
+    intent.order_type = "BUY"
+    intent.quantity = 1
+    intent.price = 100.0
+    intent.source = "test"
+    intent.attempts = 0
+
+    blackout_manager = MagicMock()
+    blackout_manager.pop_recovery_batch.return_value = [intent]
+
+    with (
+        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.main.MARKETS", {"KR": market}),
+        patch("src.main.get_open_position", return_value=None),
+        patch(
+            "src.main.validate_order_policy",
+            side_effect=OrderPolicyRejected(
+                "blocked",
+                session_id="NXT_AFTER",
+                market_code="KR",
+            ),
+        ),
+    ):
+        await process_blackout_recovery_orders(
+            broker=broker,
+            overseas_broker=overseas_broker,
+            db_conn=db_conn,
+        )
+
+    broker.send_order.assert_not_called()
+    blackout_manager.requeue.assert_not_called()
