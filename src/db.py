@@ -35,6 +35,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
             fx_pnl REAL DEFAULT 0.0,
             market TEXT DEFAULT 'KR',
             exchange_code TEXT DEFAULT 'KRX',
+            session_id TEXT DEFAULT 'UNKNOWN',
             selection_context TEXT,
             decision_id TEXT,
             mode TEXT DEFAULT 'paper'
@@ -56,6 +57,10 @@ def init_db(db_path: str) -> sqlite3.Connection:
         conn.execute("ALTER TABLE trades ADD COLUMN decision_id TEXT")
     if "mode" not in columns:
         conn.execute("ALTER TABLE trades ADD COLUMN mode TEXT DEFAULT 'paper'")
+    session_id_added = False
+    if "session_id" not in columns:
+        conn.execute("ALTER TABLE trades ADD COLUMN session_id TEXT DEFAULT 'UNKNOWN'")
+        session_id_added = True
     if "strategy_pnl" not in columns:
         conn.execute("ALTER TABLE trades ADD COLUMN strategy_pnl REAL DEFAULT 0.0")
     if "fx_pnl" not in columns:
@@ -70,6 +75,14 @@ def init_db(db_path: str) -> sqlite3.Connection:
           AND fx_pnl = 0.0
         """
     )
+    if session_id_added:
+        conn.execute(
+            """
+            UPDATE trades
+            SET session_id = 'UNKNOWN'
+            WHERE session_id IS NULL OR session_id = ''
+            """
+        )
 
     # Context tree tables for multi-layered memory management
     conn.execute(
@@ -192,6 +205,7 @@ def log_trade(
     fx_pnl: float | None = None,
     market: str = "KR",
     exchange_code: str = "KRX",
+    session_id: str | None = None,
     selection_context: dict[str, any] | None = None,
     decision_id: str | None = None,
     mode: str = "paper",
@@ -211,12 +225,14 @@ def log_trade(
         fx_pnl: FX PnL component
         market: Market code
         exchange_code: Exchange code
+        session_id: Session identifier (if omitted, auto-derived from market)
         selection_context: Scanner selection data (RSI, volume_ratio, signal, score)
         decision_id: Unique decision identifier for audit linking
         mode: Trading mode ('paper' or 'live') for data separation
     """
     # Serialize selection context to JSON
     context_json = json.dumps(selection_context) if selection_context else None
+    resolved_session_id = _resolve_session_id(market=market, session_id=session_id)
     if strategy_pnl is None and fx_pnl is None:
         strategy_pnl = pnl
         fx_pnl = 0.0
@@ -232,9 +248,9 @@ def log_trade(
         INSERT INTO trades (
             timestamp, stock_code, action, confidence, rationale,
             quantity, price, pnl, strategy_pnl, fx_pnl,
-            market, exchange_code, selection_context, decision_id, mode
+            market, exchange_code, session_id, selection_context, decision_id, mode
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             datetime.now(UTC).isoformat(),
@@ -249,12 +265,28 @@ def log_trade(
             fx_pnl,
             market,
             exchange_code,
+            resolved_session_id,
             context_json,
             decision_id,
             mode,
         ),
     )
     conn.commit()
+
+
+def _resolve_session_id(*, market: str, session_id: str | None) -> str:
+    if session_id:
+        return session_id
+    try:
+        from src.core.order_policy import classify_session_id
+        from src.markets.schedule import MARKETS
+
+        market_info = MARKETS.get(market)
+        if market_info is not None:
+            return classify_session_id(market_info)
+    except Exception:
+        pass
+    return "UNKNOWN"
 
 
 def get_latest_buy_trade(
