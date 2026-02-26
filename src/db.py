@@ -31,8 +31,11 @@ def init_db(db_path: str) -> sqlite3.Connection:
             quantity INTEGER,
             price REAL,
             pnl REAL DEFAULT 0.0,
+            strategy_pnl REAL DEFAULT 0.0,
+            fx_pnl REAL DEFAULT 0.0,
             market TEXT DEFAULT 'KR',
             exchange_code TEXT DEFAULT 'KRX',
+            selection_context TEXT,
             decision_id TEXT,
             mode TEXT DEFAULT 'paper'
         )
@@ -53,6 +56,20 @@ def init_db(db_path: str) -> sqlite3.Connection:
         conn.execute("ALTER TABLE trades ADD COLUMN decision_id TEXT")
     if "mode" not in columns:
         conn.execute("ALTER TABLE trades ADD COLUMN mode TEXT DEFAULT 'paper'")
+    if "strategy_pnl" not in columns:
+        conn.execute("ALTER TABLE trades ADD COLUMN strategy_pnl REAL DEFAULT 0.0")
+    if "fx_pnl" not in columns:
+        conn.execute("ALTER TABLE trades ADD COLUMN fx_pnl REAL DEFAULT 0.0")
+    # Backfill legacy rows where only pnl existed before split accounting columns.
+    conn.execute(
+        """
+        UPDATE trades
+        SET strategy_pnl = pnl, fx_pnl = 0.0
+        WHERE pnl != 0.0
+          AND strategy_pnl = 0.0
+          AND fx_pnl = 0.0
+        """
+    )
 
     # Context tree tables for multi-layered memory management
     conn.execute(
@@ -171,6 +188,8 @@ def log_trade(
     quantity: int = 0,
     price: float = 0.0,
     pnl: float = 0.0,
+    strategy_pnl: float | None = None,
+    fx_pnl: float | None = None,
     market: str = "KR",
     exchange_code: str = "KRX",
     selection_context: dict[str, any] | None = None,
@@ -187,7 +206,9 @@ def log_trade(
         rationale: AI decision rationale
         quantity: Number of shares
         price: Trade price
-        pnl: Profit/loss
+        pnl: Total profit/loss (backward compatibility)
+        strategy_pnl: Strategy PnL component
+        fx_pnl: FX PnL component
         market: Market code
         exchange_code: Exchange code
         selection_context: Scanner selection data (RSI, volume_ratio, signal, score)
@@ -196,15 +217,24 @@ def log_trade(
     """
     # Serialize selection context to JSON
     context_json = json.dumps(selection_context) if selection_context else None
+    if strategy_pnl is None and fx_pnl is None:
+        strategy_pnl = pnl
+        fx_pnl = 0.0
+    elif strategy_pnl is None:
+        strategy_pnl = pnl - float(fx_pnl or 0.0) if pnl != 0.0 else 0.0
+    elif fx_pnl is None:
+        fx_pnl = pnl - float(strategy_pnl) if pnl != 0.0 else 0.0
+    if pnl == 0.0 and (strategy_pnl or fx_pnl):
+        pnl = float(strategy_pnl) + float(fx_pnl)
 
     conn.execute(
         """
         INSERT INTO trades (
             timestamp, stock_code, action, confidence, rationale,
-            quantity, price, pnl, market, exchange_code, selection_context, decision_id,
-            mode
+            quantity, price, pnl, strategy_pnl, fx_pnl,
+            market, exchange_code, selection_context, decision_id, mode
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             datetime.now(UTC).isoformat(),
@@ -215,6 +245,8 @@ def log_trade(
             quantity,
             price,
             pnl,
+            strategy_pnl,
+            fx_pnl,
             market,
             exchange_code,
             context_json,
