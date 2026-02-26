@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     # KIS VTS overseas balance API returns errors for most accounts.
     # This value is used as a fallback when the balance API returns 0 in paper mode.
     PAPER_OVERSEAS_CASH: float = Field(default=50000.0, ge=0.0)
+    USD_BUFFER_MIN: float = Field(default=1000.0, ge=0.0)
 
     # Trading frequency mode (daily = batch API calls, realtime = per-stock calls)
     TRADE_MODE: str = Field(default="daily", pattern="^(daily|realtime)$")

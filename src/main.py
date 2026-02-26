@@ -429,6 +429,26 @@ def _determine_order_quantity(
     return quantity
 
 
+def _should_block_overseas_buy_for_fx_buffer(
+    *,
+    market: MarketInfo,
+    action: str,
+    total_cash: float,
+    order_amount: float,
+    settings: Settings | None,
+) -> tuple[bool, float, float]:
+    if (
+        market.is_domestic
+        or not market.code.startswith("US")
+        or action != "BUY"
+        or settings is None
+    ):
+        return False, total_cash - order_amount, 0.0
+    remaining = total_cash - order_amount
+    required = settings.USD_BUFFER_MIN
+    return remaining < required, remaining, required
+
+
 async def build_overseas_symbol_universe(
     db_conn: Any,
     overseas_broker: OverseasBroker,
@@ -1292,6 +1312,24 @@ async def trading_cycle(
             )
             return
         order_amount = current_price * quantity
+        fx_blocked, remaining_cash, required_buffer = _should_block_overseas_buy_for_fx_buffer(
+            market=market,
+            action=decision.action,
+            total_cash=total_cash,
+            order_amount=order_amount,
+            settings=settings,
+        )
+        if fx_blocked:
+            logger.warning(
+                "Skip BUY %s (%s): FX buffer guard (remaining=%.2f, required=%.2f, cash=%.2f, order=%.2f)",
+                stock_code,
+                market.name,
+                remaining_cash,
+                required_buffer,
+                total_cash,
+                order_amount,
+            )
+            return
 
         # 4. Check BUY cooldown (set when a prior BUY failed due to insufficient balance)
         if decision.action == "BUY" and buy_cooldown is not None:
@@ -2360,6 +2398,24 @@ async def run_daily_session(
                     )
                     continue
                 order_amount = stock_data["current_price"] * quantity
+                fx_blocked, remaining_cash, required_buffer = _should_block_overseas_buy_for_fx_buffer(
+                    market=market,
+                    action=decision.action,
+                    total_cash=total_cash,
+                    order_amount=order_amount,
+                    settings=settings,
+                )
+                if fx_blocked:
+                    logger.warning(
+                        "Skip BUY %s (%s): FX buffer guard (remaining=%.2f, required=%.2f, cash=%.2f, order=%.2f)",
+                        stock_code,
+                        market.name,
+                        remaining_cash,
+                        required_buffer,
+                        total_cash,
+                        order_amount,
+                    )
+                    continue
 
                 # Check BUY cooldown (insufficient balance)
                 if decision.action == "BUY":

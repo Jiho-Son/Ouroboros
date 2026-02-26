@@ -15,6 +15,7 @@ from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
 from src.main import (
     KILL_SWITCH,
+    _should_block_overseas_buy_for_fx_buffer,
     _trigger_emergency_kill_switch,
     _apply_dashboard_flag,
     _determine_order_quantity,
@@ -3690,6 +3691,81 @@ class TestOverseasBrokerIntegration:
         # DB도 브로커도 보유 없음 → BUY 주문이 실행되어야 함 (회귀 테스트)
         overseas_broker.send_overseas_order.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_overseas_buy_blocked_by_usd_buffer_guard(self) -> None:
+        """Overseas BUY must be blocked when USD buffer would be breached."""
+        db_conn = init_db(":memory:")
+
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "182.50"}}
+        )
+        overseas_broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output1": [],
+                "output2": [
+                    {
+                        "frcr_evlu_tota": "50000.00",
+                        "frcr_buy_amt_smtl": "0.00",
+                    }
+                ],
+            }
+        )
+        overseas_broker.get_overseas_buying_power = AsyncMock(
+            return_value={"output": {"ovrs_ord_psbl_amt": "50000.00"}}
+        )
+        overseas_broker.send_overseas_order = AsyncMock(return_value={"msg1": "주문접수"})
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_buy_match("AAPL"))
+
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+        settings = MagicMock()
+        settings.POSITION_SIZING_ENABLED = False
+        settings.CONFIDENCE_THRESHOLD = 80
+        settings.USD_BUFFER_MIN = 49900.0
+        settings.MODE = "paper"
+        settings.PAPER_OVERSEAS_CASH = 50000.0
+
+        await trading_cycle(
+            broker=MagicMock(),
+            overseas_broker=overseas_broker,
+            scenario_engine=engine,
+            playbook=_make_playbook(market="US"),
+            risk=MagicMock(),
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(
+                get_latest_timeframe=MagicMock(return_value=None),
+                set_context=MagicMock(),
+            ),
+            criticality_assessor=MagicMock(
+                assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                get_timeout=MagicMock(return_value=5.0),
+            ),
+            telegram=telegram,
+            market=market,
+            stock_code="AAPL",
+            scan_candidates={},
+            settings=settings,
+        )
+
+        overseas_broker.send_overseas_order.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # _retry_connection — unit tests (issue #209)
@@ -3723,7 +3799,6 @@ class TestRetryConnection:
         with patch("src.main.asyncio.sleep") as mock_sleep:
             mock_sleep.return_value = None
             result = await _retry_connection(flaky, label="flaky")
-
         assert result == "ok"
         assert call_count == 2
         mock_sleep.assert_called_once()
@@ -3776,6 +3851,48 @@ class TestRetryConnection:
             await _retry_connection(bad_input, label="bad")
 
         assert call_count == 1  # No retry for non-ConnectionError
+
+
+def test_fx_buffer_guard_applies_only_to_us_and_respects_boundary() -> None:
+    settings = MagicMock()
+    settings.USD_BUFFER_MIN = 1000.0
+
+    us_market = MagicMock()
+    us_market.is_domestic = False
+    us_market.code = "US_NASDAQ"
+
+    blocked, remaining, required = _should_block_overseas_buy_for_fx_buffer(
+        market=us_market,
+        action="BUY",
+        total_cash=5000.0,
+        order_amount=4001.0,
+        settings=settings,
+    )
+    assert blocked
+    assert remaining == 999.0
+    assert required == 1000.0
+
+    blocked_eq, _, _ = _should_block_overseas_buy_for_fx_buffer(
+        market=us_market,
+        action="BUY",
+        total_cash=5000.0,
+        order_amount=4000.0,
+        settings=settings,
+    )
+    assert not blocked_eq
+
+    jp_market = MagicMock()
+    jp_market.is_domestic = False
+    jp_market.code = "JP"
+    blocked_jp, _, required_jp = _should_block_overseas_buy_for_fx_buffer(
+        market=jp_market,
+        action="BUY",
+        total_cash=5000.0,
+        order_amount=4500.0,
+        settings=settings,
+    )
+    assert not blocked_jp
+    assert required_jp == 0.0
 
 
 # run_daily_session — daily CB baseline (daily_start_eval) tests (issue #207)
