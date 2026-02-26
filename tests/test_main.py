@@ -8,6 +8,7 @@ import pytest
 from src.config import Settings
 from src.context.layer import ContextLayer
 from src.context.scheduler import ScheduleResult
+from src.core.order_policy import OrderPolicyRejected
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
 from src.db import init_db, log_trade
 from src.evolution.scorecard import DailyScorecard
@@ -5114,5 +5115,77 @@ async def test_kill_switch_block_skips_actionable_order_execution() -> None:
         )
     finally:
         KILL_SWITCH.clear_block()
+
+    broker.send_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_order_policy_rejection_skips_order_execution() -> None:
+    """Order policy rejection must prevent order submission."""
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    broker = MagicMock()
+    broker.get_current_price = AsyncMock(return_value=(100.0, 0.5, 0.0))
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output1": [],
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "50000",
+                    "pchs_amt_smtl_amt": "50000",
+                }
+            ],
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    settings = MagicMock()
+    settings.POSITION_SIZING_ENABLED = False
+    settings.CONFIDENCE_THRESHOLD = 80
+
+    with patch(
+        "src.main.validate_order_policy",
+        side_effect=OrderPolicyRejected(
+            "rejected",
+            session_id="NXT_AFTER",
+            market_code="KR",
+        ),
+    ):
+        await trading_cycle(
+            broker=broker,
+            overseas_broker=MagicMock(),
+            scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_buy_match())),
+            playbook=_make_playbook(),
+            risk=MagicMock(),
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(
+                get_latest_timeframe=MagicMock(return_value=None),
+                set_context=MagicMock(),
+            ),
+            criticality_assessor=MagicMock(
+                assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                get_timeout=MagicMock(return_value=5.0),
+            ),
+            telegram=telegram,
+            market=market,
+            stock_code="005930",
+            scan_candidates={},
+            settings=settings,
+        )
 
     broker.send_order.assert_not_called()
