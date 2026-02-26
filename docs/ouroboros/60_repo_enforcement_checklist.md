@@ -86,3 +86,9 @@ Updated: 2026-02-26
 - Dev가 `REPLAN-REQUEST` 발행 시 TPM 심사 없이는 스코프/일정 변경 금지
 - `REPLAN-REQUEST`는 Main Agent 승인 전 \"제안\" 상태로 유지
 - 승인된 재계획은 `REQ/TASK/TEST` 문서를 동시 갱신해야 유효
+
+## 9) 서버 반영 규칙 (No-Merge by Default)
+
+- 서버 반영은 `브랜치 푸시 + PR 코멘트(리뷰/논의/검증승인)`까지를 기본으로 한다.
+- 기본 규칙에서 `tea pulls merge` 실행은 금지한다.
+- 사용자 명시 승인 시에만 예외적으로 머지를 허용한다(예외 근거를 PR 코멘트에 기록).
