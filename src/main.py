@@ -27,6 +27,7 @@ from src.context.layer import ContextLayer
 from src.context.scheduler import ContextScheduler
 from src.context.store import ContextStore
 from src.core.criticality import CriticalityAssessor
+from src.core.kill_switch import KillSwitchOrchestrator
 from src.core.priority_queue import PriorityTaskQueue
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
 from src.db import (
@@ -43,11 +44,14 @@ from src.logging_config import setup_logging
 from src.markets.schedule import MARKETS, MarketInfo, get_next_market_open, get_open_markets
 from src.notifications.telegram_client import NotificationFilter, TelegramClient, TelegramCommandHandler
 from src.strategy.models import DayPlaybook, MarketOutlook
+from src.strategy.exit_rules import ExitRuleConfig, ExitRuleInput, evaluate_exit
 from src.strategy.playbook_store import PlaybookStore
 from src.strategy.pre_market_planner import PreMarketPlanner
+from src.strategy.position_state_machine import PositionState
 from src.strategy.scenario_engine import ScenarioEngine
 
 logger = logging.getLogger(__name__)
+KILL_SWITCH = KillSwitchOrchestrator()
 
 
 def safe_float(value: str | float | None, default: float = 0.0) -> float:
@@ -784,7 +788,24 @@ async def trading_cycle(
                     stop_loss_threshold = stock_playbook.scenarios[0].stop_loss_pct
                     take_profit_threshold = stock_playbook.scenarios[0].take_profit_pct
 
-                if loss_pct <= stop_loss_threshold:
+                exit_eval = evaluate_exit(
+                    current_state=PositionState.HOLDING,
+                    config=ExitRuleConfig(
+                        hard_stop_pct=stop_loss_threshold,
+                        be_arm_pct=max(0.5, take_profit_threshold * 0.4),
+                        arm_pct=take_profit_threshold,
+                    ),
+                    inp=ExitRuleInput(
+                        current_price=current_price,
+                        entry_price=entry_price,
+                        peak_price=max(entry_price, current_price),
+                        atr_value=0.0,
+                        pred_down_prob=0.0,
+                        liquidity_weak=market_data.get("volume_ratio", 1.0) < 1.0,
+                    ),
+                )
+
+                if exit_eval.reason == "hard_stop":
                     decision = TradeDecision(
                         action="SELL",
                         confidence=95,
@@ -800,7 +821,7 @@ async def trading_cycle(
                         loss_pct,
                         stop_loss_threshold,
                     )
-                elif loss_pct >= take_profit_threshold:
+                elif exit_eval.reason == "arm_take_profit":
                     decision = TradeDecision(
                         action="SELL",
                         confidence=90,
@@ -876,6 +897,15 @@ async def trading_cycle(
     trade_price = current_price
     trade_pnl = 0.0
     if decision.action in ("BUY", "SELL"):
+        if KILL_SWITCH.new_orders_blocked:
+            logger.critical(
+                "KillSwitch block active: skip %s order for %s (%s)",
+                decision.action,
+                stock_code,
+                market.name,
+            )
+            return
+
         broker_held_qty = (
             _extract_held_qty_from_balance(
                 balance_data, stock_code, is_domestic=market.is_domestic
@@ -944,6 +974,25 @@ async def trading_cycle(
             except Exception as notify_exc:
                 logger.warning("Fat finger notification failed: %s", notify_exc)
             raise  # Re-raise to prevent trade
+        except CircuitBreakerTripped as exc:
+            ks_report = await KILL_SWITCH.trigger(
+                reason=f"circuit_breaker:{market.code}:{stock_code}:{exc.pnl_pct:.2f}",
+                snapshot_state=lambda: logger.critical(
+                    "KillSwitch snapshot %s/%s pnl=%.2f threshold=%.2f",
+                    market.code,
+                    stock_code,
+                    exc.pnl_pct,
+                    exc.threshold,
+                ),
+            )
+            if ks_report.errors:
+                logger.critical(
+                    "KillSwitch step errors for %s/%s: %s",
+                    market.code,
+                    stock_code,
+                    "; ".join(ks_report.errors),
+                )
+            raise
 
         # 5. Send order
         order_succeeded = True
@@ -1845,6 +1894,15 @@ async def run_daily_session(
             trade_pnl = 0.0
             order_succeeded = True
             if decision.action in ("BUY", "SELL"):
+                if KILL_SWITCH.new_orders_blocked:
+                    logger.critical(
+                        "KillSwitch block active: skip %s order for %s (%s)",
+                        decision.action,
+                        stock_code,
+                        market.name,
+                    )
+                    continue
+
                 daily_broker_held_qty = (
                     _extract_held_qty_from_balance(
                         balance_data, stock_code, is_domestic=market.is_domestic
@@ -1911,6 +1969,16 @@ async def run_daily_session(
                         logger.warning("Fat finger notification failed: %s", notify_exc)
                     continue  # Skip this order
                 except CircuitBreakerTripped as exc:
+                    ks_report = await KILL_SWITCH.trigger(
+                        reason=f"daily_circuit_breaker:{market.code}:{stock_code}:{exc.pnl_pct:.2f}",
+                        snapshot_state=lambda: logger.critical(
+                            "Daily KillSwitch snapshot %s/%s pnl=%.2f threshold=%.2f",
+                            market.code,
+                            stock_code,
+                            exc.pnl_pct,
+                            exc.threshold,
+                        ),
+                    )
                     logger.critical("Circuit breaker tripped — stopping session")
                     try:
                         await telegram.notify_circuit_breaker(
@@ -1920,6 +1988,13 @@ async def run_daily_session(
                     except Exception as notify_exc:
                         logger.warning(
                             "Circuit breaker notification failed: %s", notify_exc
+                        )
+                    if ks_report.errors:
+                        logger.critical(
+                            "Daily KillSwitch step errors for %s/%s: %s",
+                            market.code,
+                            stock_code,
+                            "; ".join(ks_report.errors),
                         )
                     raise
 

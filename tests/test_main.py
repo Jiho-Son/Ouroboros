@@ -13,6 +13,7 @@ from src.db import init_db, log_trade
 from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
 from src.main import (
+    KILL_SWITCH,
     _apply_dashboard_flag,
     _determine_order_quantity,
     _extract_avg_price_from_balance,
@@ -75,6 +76,14 @@ def _make_sell_match(stock_code: str = "005930") -> ScenarioMatch:
         confidence=90,
         rationale="Test sell",
     )
+
+
+@pytest.fixture(autouse=True)
+def _reset_kill_switch_state() -> None:
+    """Prevent cross-test leakage from global kill-switch state."""
+    KILL_SWITCH.clear_block()
+    yield
+    KILL_SWITCH.clear_block()
 
 
 class TestExtractAvgPriceFromBalance:
@@ -5039,3 +5048,71 @@ class TestOverseasGhostPositionClose:
             and "[ghost-close]" in (c.kwargs.get("rationale") or "")
         ]
         assert not ghost_close_calls, "Ghost-close must NOT be triggered for non-잔고없음 errors"
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_block_skips_actionable_order_execution() -> None:
+    """Active kill-switch must prevent actionable order execution."""
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    broker = MagicMock()
+    broker.get_current_price = AsyncMock(return_value=(100.0, 0.5, 0.0))
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output1": [],
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "50000",
+                    "pchs_amt_smtl_amt": "50000",
+                }
+            ],
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    settings = MagicMock()
+    settings.POSITION_SIZING_ENABLED = False
+    settings.CONFIDENCE_THRESHOLD = 80
+
+    try:
+        KILL_SWITCH.new_orders_blocked = True
+        await trading_cycle(
+            broker=broker,
+            overseas_broker=MagicMock(),
+            scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_buy_match())),
+            playbook=_make_playbook(),
+            risk=MagicMock(),
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(
+                get_latest_timeframe=MagicMock(return_value=None),
+                set_context=MagicMock(),
+            ),
+            criticality_assessor=MagicMock(
+                assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                get_timeout=MagicMock(return_value=5.0),
+            ),
+            telegram=telegram,
+            market=market,
+            stock_code="005930",
+            scan_candidates={},
+            settings=settings,
+        )
+    finally:
+        KILL_SWITCH.clear_block()
+
+    broker.send_order.assert_not_called()
