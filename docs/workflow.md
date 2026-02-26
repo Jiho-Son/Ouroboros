@@ -5,13 +5,23 @@
 **CRITICAL: All code changes MUST follow this workflow. Direct pushes to `main` are ABSOLUTELY PROHIBITED.**
 
 1. **Create Gitea Issue First** — All features, bug fixes, and policy changes require a Gitea issue before any code is written
-2. **Create Feature Branch** — Branch from `main` using format `feature/issue-{N}-{short-description}`
-   - After creating the branch, run `git pull origin main` and rebase to ensure the branch is up to date
-3. **Implement Changes** — Write code, tests, and documentation on the feature branch
-4. **Create Pull Request** — Submit PR to `main` branch referencing the issue number
-5. **Review & Merge** — After approval, merge via PR (squash or merge commit)
+2. **Create Program Feature Branch** — Branch from `main` for the whole development stream
+   - Format: `feature/{epic-or-stream-name}`
+3. **Create Ticket Temp Branch** — Branch from the program feature branch per ticket
+   - Format: `feature/issue-{N}-{short-description}`
+4. **Implement Per Ticket** — Write code, tests, and documentation on the ticket temp branch
+5. **Create Pull Request to Program Feature Branch** — `feature/issue-N-* -> feature/{stream}`
+6. **Review/Verify and Merge into Program Feature Branch** — user approval not required
+7. **Final Integration PR to main** — Only after all ticket stages complete and explicit user approval
 
 **Never commit directly to `main`.** This policy applies to all changes, no exceptions.
+
+## Branch Strategy (Mandatory)
+
+- Team operation default branch is the **program feature branch**, not `main`.
+- Ticket-level development happens only on **ticket temp branches** cut from the program feature branch.
+- Ticket PR merges into program feature branch are allowed after verifier approval.
+- Until final user sign-off, `main` merge is prohibited.
 
 ## Gitea CLI Formatting Troubleshooting
 

@@ -28,6 +28,7 @@ from src.context.scheduler import ContextScheduler
 from src.context.store import ContextStore
 from src.core.criticality import CriticalityAssessor
 from src.core.kill_switch import KillSwitchOrchestrator
+from src.core.order_policy import OrderPolicyRejected, validate_order_policy
 from src.core.priority_queue import PriorityTaskQueue
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
 from src.db import (
@@ -1005,6 +1006,22 @@ async def trading_cycle(
                 order_price = kr_round_down(current_price * 1.002)
             else:
                 order_price = kr_round_down(current_price * 0.998)
+            try:
+                validate_order_policy(
+                    market=market,
+                    order_type=decision.action,
+                    price=float(order_price),
+                )
+            except OrderPolicyRejected as exc:
+                logger.warning(
+                    "Order policy rejected %s %s (%s): %s [session=%s]",
+                    decision.action,
+                    stock_code,
+                    market.name,
+                    exc,
+                    exc.session_id,
+                )
+                return
             result = await broker.send_order(
                 stock_code=stock_code,
                 order_type=decision.action,
@@ -1027,6 +1044,22 @@ async def trading_cycle(
                 overseas_price = round(current_price * 1.002, _price_decimals)
             else:
                 overseas_price = round(current_price * 0.998, _price_decimals)
+            try:
+                validate_order_policy(
+                    market=market,
+                    order_type=decision.action,
+                    price=float(overseas_price),
+                )
+            except OrderPolicyRejected as exc:
+                logger.warning(
+                    "Order policy rejected %s %s (%s): %s [session=%s]",
+                    decision.action,
+                    stock_code,
+                    market.name,
+                    exc,
+                    exc.session_id,
+                )
+                return
             result = await overseas_broker.send_overseas_order(
                 exchange_code=market.exchange_code,
                 stock_code=stock_code,
@@ -1271,6 +1304,11 @@ async def handle_domestic_pending_orders(
                                 f"Invalid price ({last_price}) for {stock_code}"
                             )
                         new_price = kr_round_down(last_price * 0.996)
+                        validate_order_policy(
+                            market=MARKETS["KR"],
+                            order_type="SELL",
+                            price=float(new_price),
+                        )
                         await broker.send_order(
                             stock_code=stock_code,
                             order_type="SELL",
@@ -1444,6 +1482,19 @@ async def handle_overseas_pending_orders(
                                     f"Invalid price ({last_price}) for {stock_code}"
                                 )
                             new_price = round(last_price * 0.996, 4)
+                            market_info = next(
+                                (
+                                    m for m in MARKETS.values()
+                                    if m.exchange_code == order_exchange and not m.is_domestic
+                                ),
+                                None,
+                            )
+                            if market_info is not None:
+                                validate_order_policy(
+                                    market=market_info,
+                                    order_type="SELL",
+                                    price=float(new_price),
+                                )
                             await overseas_broker.send_overseas_order(
                                 exchange_code=order_exchange,
                                 stock_code=stock_code,
@@ -2012,6 +2063,22 @@ async def run_daily_session(
                             order_price = kr_round_down(
                                 stock_data["current_price"] * 0.998
                             )
+                        try:
+                            validate_order_policy(
+                                market=market,
+                                order_type=decision.action,
+                                price=float(order_price),
+                            )
+                        except OrderPolicyRejected as exc:
+                            logger.warning(
+                                "Order policy rejected %s %s (%s): %s [session=%s]",
+                                decision.action,
+                                stock_code,
+                                market.name,
+                                exc,
+                                exc.session_id,
+                            )
+                            continue
                         result = await broker.send_order(
                             stock_code=stock_code,
                             order_type=decision.action,
@@ -2024,6 +2091,22 @@ async def run_daily_session(
                             order_price = round(stock_data["current_price"] * 1.005, 4)
                         else:
                             order_price = stock_data["current_price"]
+                        try:
+                            validate_order_policy(
+                                market=market,
+                                order_type=decision.action,
+                                price=float(order_price),
+                            )
+                        except OrderPolicyRejected as exc:
+                            logger.warning(
+                                "Order policy rejected %s %s (%s): %s [session=%s]",
+                                decision.action,
+                                stock_code,
+                                market.name,
+                                exc,
+                                exc.session_id,
+                            )
+                            continue
                         result = await overseas_broker.send_overseas_order(
                             exchange_code=market.exchange_code,
                             stock_code=stock_code,
