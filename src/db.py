@@ -60,6 +60,16 @@ def init_db(db_path: str) -> sqlite3.Connection:
         conn.execute("ALTER TABLE trades ADD COLUMN strategy_pnl REAL DEFAULT 0.0")
     if "fx_pnl" not in columns:
         conn.execute("ALTER TABLE trades ADD COLUMN fx_pnl REAL DEFAULT 0.0")
+    # Backfill legacy rows where only pnl existed before split accounting columns.
+    conn.execute(
+        """
+        UPDATE trades
+        SET strategy_pnl = pnl, fx_pnl = 0.0
+        WHERE pnl != 0.0
+          AND strategy_pnl = 0.0
+          AND fx_pnl = 0.0
+        """
+    )
 
     # Context tree tables for multi-layered memory management
     conn.execute(
@@ -211,9 +221,9 @@ def log_trade(
         strategy_pnl = pnl
         fx_pnl = 0.0
     elif strategy_pnl is None:
-        strategy_pnl = pnl - float(fx_pnl or 0.0)
+        strategy_pnl = pnl - float(fx_pnl or 0.0) if pnl != 0.0 else 0.0
     elif fx_pnl is None:
-        fx_pnl = pnl - float(strategy_pnl)
+        fx_pnl = pnl - float(strategy_pnl) if pnl != 0.0 else 0.0
     if pnl == 0.0 and (strategy_pnl or fx_pnl):
         pnl = float(strategy_pnl) + float(fx_pnl)
 
