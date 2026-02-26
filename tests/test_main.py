@@ -15,6 +15,7 @@ from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
 from src.main import (
     KILL_SWITCH,
+    _trigger_emergency_kill_switch,
     _apply_dashboard_flag,
     _determine_order_quantity,
     _extract_avg_price_from_balance,
@@ -5349,3 +5350,67 @@ async def test_process_blackout_recovery_drops_policy_rejected_intent() -> None:
 
     broker.send_order.assert_not_called()
     blackout_manager.requeue.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_trigger_emergency_kill_switch_executes_operational_steps() -> None:
+    """Emergency kill switch should execute cancel/refresh/reduce/notify callbacks."""
+    broker = MagicMock()
+    broker.get_domestic_pending_orders = AsyncMock(
+        return_value=[
+            {
+                "pdno": "005930",
+                "orgn_odno": "1",
+                "ord_gno_brno": "01",
+                "psbl_qty": "3",
+            }
+        ]
+    )
+    broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0"})
+    broker.get_balance = AsyncMock(return_value={"output1": [], "output2": []})
+
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[])
+    overseas_broker.get_overseas_balance = AsyncMock(return_value={"output1": [], "output2": []})
+
+    telegram = MagicMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+
+    settings = MagicMock()
+    settings.enabled_market_list = ["KR"]
+
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    with (
+        patch("src.main.MARKETS", {"KR": market}),
+        patch("src.main.BLACKOUT_ORDER_MANAGER.clear", return_value=2),
+    ):
+        report = await _trigger_emergency_kill_switch(
+            reason="test",
+            broker=broker,
+            overseas_broker=overseas_broker,
+            telegram=telegram,
+            settings=settings,
+            current_market=market,
+            stock_code="005930",
+            pnl_pct=-3.2,
+            threshold=-3.0,
+        )
+
+    assert report.steps == [
+        "block_new_orders",
+        "cancel_pending_orders",
+        "refresh_order_state",
+        "reduce_risk",
+        "snapshot_state",
+        "notify",
+    ]
+    broker.cancel_domestic_order.assert_called_once()
+    broker.get_balance.assert_called_once()
+    telegram.notify_circuit_breaker.assert_called_once_with(
+        pnl_pct=-3.2,
+        threshold=-3.0,
+    )

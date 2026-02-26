@@ -98,3 +98,8 @@ class BlackoutOrderManager:
     def requeue(self, intent: QueuedOrderIntent) -> None:
         if len(self._queue) < self._max_queue_size:
             self._queue.append(intent)
+
+    def clear(self) -> int:
+        count = len(self._queue)
+        self._queue.clear()
+        return count
