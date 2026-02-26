@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 
 @dataclass(frozen=True)
@@ -19,7 +20,11 @@ def validate_backtest_cost_model(
     required_sessions: list[str],
 ) -> None:
     """Raise ValueError when required cost assumptions are missing/invalid."""
-    if model.commission_bps is None or model.commission_bps < 0:
+    if (
+        model.commission_bps is None
+        or not math.isfinite(model.commission_bps)
+        or model.commission_bps < 0
+    ):
         raise ValueError("commission_bps must be provided and >= 0")
     if not model.unfavorable_fill_required:
         raise ValueError("unfavorable_fill_required must be True")
@@ -40,8 +45,8 @@ def validate_backtest_cost_model(
         )
 
     for sess, bps in slippage.items():
-        if bps < 0:
+        if not math.isfinite(bps) or bps < 0:
             raise ValueError(f"slippage bps must be >= 0 for session={sess}")
     for sess, rate in failure.items():
-        if rate < 0 or rate > 1:
+        if not math.isfinite(rate) or rate < 0 or rate > 1:
             raise ValueError(f"failure rate must be within [0,1] for session={sess}")

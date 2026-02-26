@@ -57,3 +57,27 @@ def test_unfavorable_fill_requirement_cannot_be_disabled() -> None:
     )
     with pytest.raises(ValueError, match="unfavorable_fill_required must be True"):
         validate_backtest_cost_model(model=model, required_sessions=["KRX_REG"])
+
+
+@pytest.mark.parametrize("bad_commission", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_commission_rejected(bad_commission: float) -> None:
+    model = BacktestCostModel(
+        commission_bps=bad_commission,
+        slippage_bps_by_session={"KRX_REG": 10.0},
+        failure_rate_by_session={"KRX_REG": 0.02},
+        unfavorable_fill_required=True,
+    )
+    with pytest.raises(ValueError, match="commission_bps"):
+        validate_backtest_cost_model(model=model, required_sessions=["KRX_REG"])
+
+
+@pytest.mark.parametrize("bad_slippage", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_slippage_rejected(bad_slippage: float) -> None:
+    model = BacktestCostModel(
+        commission_bps=5.0,
+        slippage_bps_by_session={"KRX_REG": bad_slippage},
+        failure_rate_by_session={"KRX_REG": 0.02},
+        unfavorable_fill_required=True,
+    )
+    with pytest.raises(ValueError, match="slippage bps"):
+        validate_backtest_cost_model(model=model, required_sessions=["KRX_REG"])
