@@ -86,3 +86,9 @@ Updated: 2026-02-26
 - Dev가 `REPLAN-REQUEST` 발행 시 TPM 심사 없이는 스코프/일정 변경 금지
 - `REPLAN-REQUEST`는 Main Agent 승인 전 \"제안\" 상태로 유지
 - 승인된 재계획은 `REQ/TASK/TEST` 문서를 동시 갱신해야 유효
+
+## 9) 세션 예외 규칙 (No-Merge Session)
+
+- 본 세션에서는 검증 승인 이후 `PR 머지`를 실행하지 않는다.
+- 서버 반영은 `브랜치 푸시 + PR 코멘트(리뷰/논의/검증승인)`까지로 제한한다.
+- 사용자 수동 승인 전 `tea pulls merge` 실행 금지.

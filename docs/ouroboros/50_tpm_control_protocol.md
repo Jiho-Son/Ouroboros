@@ -17,10 +17,15 @@ Updated: 2026-02-26
 
 - Main Agent: 최종 취합/우선순위/승인 게이트 오너
 - PM Agent: 시나리오/요구사항/티켓 관리
-- TPM Agent: PM-Dev-검증 간 구현 가능성/달성률 통제
+- TPM Agent: PM-Dev-검증 간 구현 가능성/달성률 통제, 티켓 등록 및 구현 우선순위 지정 오너
 - Dev Agent: 구현 수행, 블로커 발생 시 재계획 요청
 - Verifier Agent: 문서/코드/테스트 산출물 검증
 - Runtime Verifier Agent: 실제 동작 모니터링, 이상 징후 이슈 발행, 수정 후 이슈 클로즈 판정
+
+Main Agent 아이디에이션 책임:
+- 진행 중 신규 구현 아이디어를 별도 문서에 누적 기록한다.
+- 기록 위치: [70_main_agent_ideation.md](./70_main_agent_ideation.md)
+- 각 항목은 `IDEA-*` 식별자, 배경, 기대효과, 리스크, 후속 티켓 후보를 포함해야 한다.
 
 ## Main Decision Checkpoints (Mandatory)
 
@@ -140,6 +145,11 @@ Control checks:
   - Main Agent 승인 없는 재계획은 실행 금지
   - 재계획 반영 시 문서(`REQ/TASK/TEST`) 동시 갱신 필수
 
+TPM 티켓 운영 규칙:
+- TPM은 합의된 변경을 이슈로 등록하고 우선순위(`P0/P1/P2`)를 지정한다.
+- PR 본문에는 TPM이 지정한 우선순위와 범위가 그대로 반영되어야 한다.
+- 우선순위 변경은 TPM 제안 + Main Agent 승인으로만 가능하다.
+
 ## Runtime Verification Protocol
 
 - Runtime Verifier는 테스트 통과 이후 실제 동작(스테이징/실운영)을 모니터링한다.
@@ -149,6 +159,15 @@ Control checks:
 - 이슈 클로즈 규칙:
   - Dev 수정 완료 + Verifier 재검증 통과 + Runtime Verifier 재관측 정상
   - 최종 클로즈 승인자는 Main Agent
+
+## Session Exception: No-Merge Flow (This Session Only)
+
+- 이번 세션에서는 절차상 `PR 머지` 단계만 제외한다.
+- 허용 범위:
+  - 리뷰어 피드백 -> 개발 논의/수정 -> 검증 승인 코멘트 -> 서버 PR 반영
+- 금지 범위:
+  - 검증 승인 후 자동/수동 머지 실행
+- 머지 판단은 사용자 수동 검토 후 결정한다.
 
 ## Acceptance Matrix (PM Scenario -> Dev Tasks -> Verifier Checks)
 
