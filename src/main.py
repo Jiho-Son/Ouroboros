@@ -663,6 +663,7 @@ async def _cancel_pending_orders_for_kill_switch(
     overseas_broker: OverseasBroker,
     markets: list[MarketInfo],
 ) -> None:
+    failures: list[str] = []
     domestic = [m for m in markets if m.is_domestic]
     overseas = [m for m in markets if not m.is_domestic]
 
@@ -673,21 +674,28 @@ async def _cancel_pending_orders_for_kill_switch(
             logger.warning("KillSwitch: failed to fetch domestic pending orders: %s", exc)
             orders = []
         for order in orders:
+            stock_code = str(order.get("pdno", ""))
             try:
-                stock_code = order.get("pdno", "")
                 orgn_odno = order.get("orgn_odno", "")
                 krx_fwdg_ord_orgno = order.get("ord_gno_brno", "")
                 psbl_qty = int(order.get("psbl_qty", "0") or "0")
                 if not stock_code or not orgn_odno or psbl_qty <= 0:
                     continue
-                await broker.cancel_domestic_order(
+                cancel_result = await broker.cancel_domestic_order(
                     stock_code=stock_code,
                     orgn_odno=orgn_odno,
                     krx_fwdg_ord_orgno=krx_fwdg_ord_orgno,
                     qty=psbl_qty,
                 )
+                if cancel_result.get("rt_cd") != "0":
+                    failures.append(
+                        "domestic cancel failed for"
+                        f" {stock_code}: rt_cd={cancel_result.get('rt_cd')}"
+                        f" msg={cancel_result.get('msg1')}"
+                    )
             except Exception as exc:
                 logger.warning("KillSwitch: domestic cancel failed: %s", exc)
+                failures.append(f"domestic cancel exception for {stock_code}: {exc}")
 
     us_exchanges = frozenset({"NASD", "NYSE", "AMEX"})
     exchange_codes: list[str] = []
@@ -712,21 +720,33 @@ async def _cancel_pending_orders_for_kill_switch(
             )
             continue
         for order in orders:
+            stock_code = str(order.get("pdno", ""))
+            order_exchange = str(order.get("ovrs_excg_cd") or exchange_code)
             try:
-                stock_code = order.get("pdno", "")
                 odno = order.get("odno", "")
                 nccs_qty = int(order.get("nccs_qty", "0") or "0")
-                order_exchange = order.get("ovrs_excg_cd") or exchange_code
                 if not stock_code or not odno or nccs_qty <= 0:
                     continue
-                await overseas_broker.cancel_overseas_order(
+                cancel_result = await overseas_broker.cancel_overseas_order(
                     exchange_code=order_exchange,
                     stock_code=stock_code,
                     odno=odno,
                     qty=nccs_qty,
                 )
+                if cancel_result.get("rt_cd") != "0":
+                    failures.append(
+                        "overseas cancel failed for"
+                        f" {order_exchange}/{stock_code}: rt_cd={cancel_result.get('rt_cd')}"
+                        f" msg={cancel_result.get('msg1')}"
+                    )
             except Exception as exc:
                 logger.warning("KillSwitch: overseas cancel failed: %s", exc)
+                failures.append(
+                    f"overseas cancel exception for {order_exchange}/{stock_code}: {exc}"
+                )
+
+    if failures:
+        raise RuntimeError("; ".join(failures[:3]))
 
 
 async def _refresh_order_state_for_kill_switch(

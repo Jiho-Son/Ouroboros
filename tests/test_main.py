@@ -5414,3 +5414,54 @@ async def test_trigger_emergency_kill_switch_executes_operational_steps() -> Non
         pnl_pct=-3.2,
         threshold=-3.0,
     )
+
+
+@pytest.mark.asyncio
+async def test_trigger_emergency_kill_switch_records_cancel_failure() -> None:
+    """Cancel API rejection should be captured in kill switch errors."""
+    broker = MagicMock()
+    broker.get_domestic_pending_orders = AsyncMock(
+        return_value=[
+            {
+                "pdno": "005930",
+                "orgn_odno": "1",
+                "ord_gno_brno": "01",
+                "psbl_qty": "3",
+            }
+        ]
+    )
+    broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "1", "msg1": "fail"})
+    broker.get_balance = AsyncMock(return_value={"output1": [], "output2": []})
+
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[])
+    overseas_broker.get_overseas_balance = AsyncMock(return_value={"output1": [], "output2": []})
+
+    telegram = MagicMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+
+    settings = MagicMock()
+    settings.enabled_market_list = ["KR"]
+
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    with (
+        patch("src.main.MARKETS", {"KR": market}),
+        patch("src.main.BLACKOUT_ORDER_MANAGER.clear", return_value=0),
+    ):
+        report = await _trigger_emergency_kill_switch(
+            reason="test-fail",
+            broker=broker,
+            overseas_broker=overseas_broker,
+            telegram=telegram,
+            settings=settings,
+            current_market=market,
+            stock_code="005930",
+            pnl_pct=-3.2,
+            threshold=-3.0,
+        )
+
+    assert any(err.startswith("cancel_pending_orders:") for err in report.errors)
