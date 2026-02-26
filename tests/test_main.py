@@ -15,6 +15,7 @@ from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
 from src.main import (
     KILL_SWITCH,
+    _should_block_overseas_buy_for_fx_buffer,
     _trigger_emergency_kill_switch,
     _apply_dashboard_flag,
     _determine_order_quantity,
@@ -3798,7 +3799,6 @@ class TestRetryConnection:
         with patch("src.main.asyncio.sleep") as mock_sleep:
             mock_sleep.return_value = None
             result = await _retry_connection(flaky, label="flaky")
-
         assert result == "ok"
         assert call_count == 2
         mock_sleep.assert_called_once()
@@ -3851,6 +3851,48 @@ class TestRetryConnection:
             await _retry_connection(bad_input, label="bad")
 
         assert call_count == 1  # No retry for non-ConnectionError
+
+
+def test_fx_buffer_guard_applies_only_to_us_and_respects_boundary() -> None:
+    settings = MagicMock()
+    settings.USD_BUFFER_MIN = 1000.0
+
+    us_market = MagicMock()
+    us_market.is_domestic = False
+    us_market.code = "US_NASDAQ"
+
+    blocked, remaining, required = _should_block_overseas_buy_for_fx_buffer(
+        market=us_market,
+        action="BUY",
+        total_cash=5000.0,
+        order_amount=4001.0,
+        settings=settings,
+    )
+    assert blocked
+    assert remaining == 999.0
+    assert required == 1000.0
+
+    blocked_eq, _, _ = _should_block_overseas_buy_for_fx_buffer(
+        market=us_market,
+        action="BUY",
+        total_cash=5000.0,
+        order_amount=4000.0,
+        settings=settings,
+    )
+    assert not blocked_eq
+
+    jp_market = MagicMock()
+    jp_market.is_domestic = False
+    jp_market.code = "JP"
+    blocked_jp, _, required_jp = _should_block_overseas_buy_for_fx_buffer(
+        market=jp_market,
+        action="BUY",
+        total_cash=5000.0,
+        order_amount=4500.0,
+        settings=settings,
+    )
+    assert not blocked_jp
+    assert required_jp == 0.0
 
 
 # run_daily_session — daily CB baseline (daily_start_eval) tests (issue #207)

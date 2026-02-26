@@ -437,7 +437,12 @@ def _should_block_overseas_buy_for_fx_buffer(
     order_amount: float,
     settings: Settings | None,
 ) -> tuple[bool, float, float]:
-    if market.is_domestic or action != "BUY" or settings is None:
+    if (
+        market.is_domestic
+        or not market.code.startswith("US")
+        or action != "BUY"
+        or settings is None
+    ):
         return False, total_cash - order_amount, 0.0
     remaining = total_cash - order_amount
     required = settings.USD_BUFFER_MIN
