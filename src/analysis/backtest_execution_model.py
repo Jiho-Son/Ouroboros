@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from random import Random
 from typing import Literal
 
@@ -47,6 +48,15 @@ class BacktestExecutionModel:
             raise ValueError("partial fill ratios must be within (0,1]")
         if assumptions.partial_fill_min_ratio > assumptions.partial_fill_max_ratio:
             raise ValueError("partial_fill_min_ratio must be <= partial_fill_max_ratio")
+        for sess, bps in assumptions.slippage_bps_by_session.items():
+            if not math.isfinite(bps) or bps < 0:
+                raise ValueError(f"slippage_bps must be finite and >= 0 for session={sess}")
+        for sess, rate in assumptions.failure_rate_by_session.items():
+            if not math.isfinite(rate) or rate < 0 or rate > 1:
+                raise ValueError(f"failure_rate must be in [0,1] for session={sess}")
+        for sess, rate in assumptions.partial_fill_rate_by_session.items():
+            if not math.isfinite(rate) or rate < 0 or rate > 1:
+                raise ValueError(f"partial_fill_rate must be in [0,1] for session={sess}")
 
     def simulate(self, request: ExecutionRequest) -> ExecutionResult:
         if request.qty <= 0:

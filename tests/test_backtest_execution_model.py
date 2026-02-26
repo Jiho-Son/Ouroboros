@@ -74,3 +74,35 @@ def test_partial_fill_applies_when_rate_is_one() -> None:
     assert out.status == "PARTIAL"
     assert out.filled_qty == 4
     assert out.avg_price == 100.0
+
+
+@pytest.mark.parametrize("bad_slip", [-1.0, float("nan"), float("inf")])
+def test_invalid_slippage_is_rejected(bad_slip: float) -> None:
+    with pytest.raises(ValueError, match="slippage_bps"):
+        BacktestExecutionModel(
+            ExecutionAssumptions(
+                slippage_bps_by_session={"US_PRE": bad_slip},
+                failure_rate_by_session={"US_PRE": 0.0},
+                partial_fill_rate_by_session={"US_PRE": 0.0},
+            )
+        )
+
+
+@pytest.mark.parametrize("bad_rate", [-0.1, 1.1, float("nan")])
+def test_invalid_failure_or_partial_rates_are_rejected(bad_rate: float) -> None:
+    with pytest.raises(ValueError, match="failure_rate"):
+        BacktestExecutionModel(
+            ExecutionAssumptions(
+                slippage_bps_by_session={"US_PRE": 10.0},
+                failure_rate_by_session={"US_PRE": bad_rate},
+                partial_fill_rate_by_session={"US_PRE": 0.0},
+            )
+        )
+    with pytest.raises(ValueError, match="partial_fill_rate"):
+        BacktestExecutionModel(
+            ExecutionAssumptions(
+                slippage_bps_by_session={"US_PRE": 10.0},
+                failure_rate_by_session={"US_PRE": 0.0},
+                partial_fill_rate_by_session={"US_PRE": bad_rate},
+            )
+        )
