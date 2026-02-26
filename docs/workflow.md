@@ -11,7 +11,7 @@
    - Format: `feature/issue-{N}-{short-description}`
 4. **Implement Per Ticket** — Write code, tests, and documentation on the ticket temp branch
 5. **Create Pull Request to Program Feature Branch** — `feature/issue-N-* -> feature/{stream}`
-6. **Review/Verify and Merge into Program Feature Branch**
+6. **Review/Verify and Merge into Program Feature Branch** — user approval not required
 7. **Final Integration PR to main** — Only after all ticket stages complete and explicit user approval
 
 **Never commit directly to `main`.** This policy applies to all changes, no exceptions.
@@ -20,6 +20,7 @@
 
 - Team operation default branch is the **program feature branch**, not `main`.
 - Ticket-level development happens only on **ticket temp branches** cut from the program feature branch.
+- Ticket PR merges into program feature branch are allowed after verifier approval.
 - Until final user sign-off, `main` merge is prohibited.
 
 ## Gitea CLI Formatting Troubleshooting

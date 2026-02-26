@@ -168,11 +168,11 @@ TPM 티켓 운영 규칙:
   - 모니터링 체크리스트(핵심 경보/주문 경로/예외 로그) 수행
   - 결과를 티켓/PR 코멘트에 증적으로 첨부하지 않으면 완료로 간주하지 않음
 
-## Server Reflection Rule (No-Merge by Default)
+## Server Reflection Rule
 
-- 서버 반영 기본 규칙은 `브랜치 푸시 + PR 생성/코멘트`까지로 제한한다.
-- 기본 흐름에서 검증 승인 후 자동/수동 머지 실행은 금지한다.
-- 예외는 사용자 명시 승인 시에만 허용되며, Main Agent가 예외 근거를 PR에 기록한다.
+- `ticket temp branch -> program feature branch` 머지는 검증 승인 후 자동/수동 진행 가능하다.
+- `program feature branch -> main` 머지는 사용자 명시 승인 시에만 허용한다.
+- Main 병합 시 Main Agent가 승인 근거를 PR 코멘트에 기록한다.
 
 ## Acceptance Matrix (PM Scenario -> Dev Tasks -> Verifier Checks)
 
