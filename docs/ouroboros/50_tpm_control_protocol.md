@@ -150,6 +150,10 @@ TPM 티켓 운영 규칙:
 - PR 본문에는 TPM이 지정한 우선순위와 범위가 그대로 반영되어야 한다.
 - 우선순위 변경은 TPM 제안 + Main Agent 승인으로만 가능하다.
 
+브랜치 운영 규칙:
+- TPM은 각 티켓에 대해 `ticket temp branch -> program feature branch` PR 경로를 지정한다.
+- 티켓 머지 대상은 항상 program feature branch이며, `main`은 최종 통합 단계에서만 사용한다.
+
 ## Runtime Verification Protocol
 
 - Runtime Verifier는 테스트 통과 이후 실제 동작(스테이징/실운영)을 모니터링한다.
@@ -159,6 +163,10 @@ TPM 티켓 운영 규칙:
 - 이슈 클로즈 규칙:
   - Dev 수정 완료 + Verifier 재검증 통과 + Runtime Verifier 재관측 정상
   - 최종 클로즈 승인자는 Main Agent
+- 개발 완료 필수 절차:
+  - 시스템 실제 구동(스테이징/로컬 실운영 모드) 실행
+  - 모니터링 체크리스트(핵심 경보/주문 경로/예외 로그) 수행
+  - 결과를 티켓/PR 코멘트에 증적으로 첨부하지 않으면 완료로 간주하지 않음
 
 ## Server Reflection Rule (No-Merge by Default)
 

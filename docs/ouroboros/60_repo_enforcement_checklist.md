@@ -50,10 +50,12 @@ Updated: 2026-02-26
 - PR 본문에 `REQ-*`, `TASK-*`, `TEST-*` 매핑 표 존재
 - `src/core/risk_manager.py` 변경 없음
 - 주요 의사결정 체크포인트(DCP-01~04) 중 해당 단계 Main Agent 확인 기록 존재
+- 티켓 PR의 base가 `main`이 아닌 program feature branch인지 확인
 
 자동 점검:
 - 문서 검증 스크립트 통과
 - 테스트 통과
+- 개발 완료 시 시스템 구동/모니터링 증적 코멘트 존재
 
 ## 5) 감사 추적
 
@@ -92,3 +94,9 @@ Updated: 2026-02-26
 - 서버 반영은 `브랜치 푸시 + PR 코멘트(리뷰/논의/검증승인)`까지를 기본으로 한다.
 - 기본 규칙에서 `tea pulls merge` 실행은 금지한다.
 - 사용자 명시 승인 시에만 예외적으로 머지를 허용한다(예외 근거를 PR 코멘트에 기록).
+
+## 10) 최종 main 병합 조건
+
+- 모든 티켓이 program feature branch로 병합 완료
+- Runtime Verifier의 구동/모니터링 검증 완료
+- 사용자 최종 승인 코멘트 확인 후에만 `feature -> main` PR 머지 허용
