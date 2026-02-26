@@ -80,11 +80,11 @@ def label_with_triple_barrier(
 
         if up_touch and down_touch:
             if spec.tie_break == "stop_first":
-                touched = "stop_loss" if side == 1 else "take_profit"
-                label = -1 if side == 1 else 1
+                touched = "stop_loss"
+                label = -1
             else:
-                touched = "take_profit" if side == 1 else "stop_loss"
-                label = 1 if side == 1 else -1
+                touched = "take_profit"
+                label = 1
         elif up_touch:
             touched = "take_profit" if side == 1 else "stop_loss"
             label = 1 if side == 1 else -1

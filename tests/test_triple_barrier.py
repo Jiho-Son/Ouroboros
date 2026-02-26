@@ -89,3 +89,43 @@ def test_short_side_inverts_barrier_semantics() -> None:
     )
     assert out.label == 1
     assert out.touched == "take_profit"
+
+
+def test_short_tie_break_modes() -> None:
+    highs = [100, 101.1]
+    lows = [100, 97.9]
+    closes = [100, 100]
+
+    stop_first = TripleBarrierSpec(
+        take_profit_pct=0.02,
+        stop_loss_pct=0.01,
+        max_holding_bars=1,
+        tie_break="stop_first",
+    )
+    out_stop = label_with_triple_barrier(
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        entry_index=0,
+        side=-1,
+        spec=stop_first,
+    )
+    assert out_stop.label == -1
+    assert out_stop.touched == "stop_loss"
+
+    take_first = TripleBarrierSpec(
+        take_profit_pct=0.02,
+        stop_loss_pct=0.01,
+        max_holding_bars=1,
+        tie_break="take_first",
+    )
+    out_take = label_with_triple_barrier(
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        entry_index=0,
+        side=-1,
+        spec=take_first,
+    )
+    assert out_take.label == 1
+    assert out_take.touched == "take_profit"
