@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     TRADE_MODE: str = Field(default="daily", pattern="^(daily|realtime)$")
     DAILY_SESSIONS: int = Field(default=4, ge=1, le=10)
     SESSION_INTERVAL_HOURS: int = Field(default=6, ge=1, le=24)
+    ORDER_BLACKOUT_ENABLED: bool = True
+    ORDER_BLACKOUT_WINDOWS_KST: str = "23:30-00:10"
+    ORDER_BLACKOUT_QUEUE_MAX: int = Field(default=500, ge=10, le=5000)
 
     # Pre-Market Planner
     PRE_MARKET_MINUTES: int = Field(default=30, ge=10, le=120)
