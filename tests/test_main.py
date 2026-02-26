@@ -15,6 +15,7 @@ from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
 from src.main import (
     KILL_SWITCH,
+    _should_force_exit_for_overnight,
     _should_block_overseas_buy_for_fx_buffer,
     _trigger_emergency_kill_switch,
     _apply_dashboard_flag,
@@ -5308,6 +5309,88 @@ async def test_order_policy_rejection_skips_order_execution() -> None:
         )
 
     broker.send_order.assert_not_called()
+
+
+def test_overnight_policy_prioritizes_killswitch_over_exception() -> None:
+    market = MagicMock()
+    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_AFTER")):
+        settings = MagicMock()
+        settings.OVERNIGHT_EXCEPTION_ENABLED = True
+        try:
+            KILL_SWITCH.new_orders_blocked = True
+            assert _should_force_exit_for_overnight(market=market, settings=settings)
+        finally:
+            KILL_SWITCH.clear_block()
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_block_does_not_block_sell_reduction() -> None:
+    """KillSwitch should block BUY entries, but allow SELL risk reduction orders."""
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    broker = MagicMock()
+    broker.get_current_price = AsyncMock(return_value=(100.0, 0.5, 0.0))
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output1": [{"pdno": "005930", "ord_psbl_qty": "3"}],
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "50000",
+                    "pchs_amt_smtl_amt": "50000",
+                }
+            ],
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    settings = MagicMock()
+    settings.POSITION_SIZING_ENABLED = False
+    settings.CONFIDENCE_THRESHOLD = 80
+    settings.OVERNIGHT_EXCEPTION_ENABLED = True
+    settings.MODE = "paper"
+
+    try:
+        KILL_SWITCH.new_orders_blocked = True
+        await trading_cycle(
+            broker=broker,
+            overseas_broker=MagicMock(),
+            scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_sell_match())),
+            playbook=_make_playbook(),
+            risk=MagicMock(),
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(
+                get_latest_timeframe=MagicMock(return_value=None),
+                set_context=MagicMock(),
+            ),
+            criticality_assessor=MagicMock(
+                assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                get_timeout=MagicMock(return_value=5.0),
+            ),
+            telegram=telegram,
+            market=market,
+            stock_code="005930",
+            scan_candidates={},
+            settings=settings,
+        )
+    finally:
+        KILL_SWITCH.clear_block()
+
+    broker.send_order.assert_called_once()
 
 
 @pytest.mark.asyncio
