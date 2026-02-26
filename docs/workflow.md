@@ -13,6 +13,57 @@
 
 **Never commit directly to `main`.** This policy applies to all changes, no exceptions.
 
+## Gitea CLI Formatting Troubleshooting
+
+Issue/PR 본문 작성 시 줄바꿈(`\n`)이 문자열 그대로 저장되는 문제가 반복될 수 있다. 원인은 `-d "...\n..."` 형태에서 쉘/CLI가 이스케이프를 실제 개행으로 해석하지 않기 때문이다.
+
+권장 패턴:
+
+```bash
+ISSUE_BODY=$(cat <<'EOF'
+## Summary
+- 변경 내용 1
+- 변경 내용 2
+
+## Why
+- 배경 1
+- 배경 2
+
+## Scope
+- 포함 범위
+- 제외 범위
+EOF
+)
+
+tea issues create \
+  -t "docs: 제목" \
+  -d "$ISSUE_BODY"
+```
+
+PR도 동일하게 적용:
+
+```bash
+PR_BODY=$(cat <<'EOF'
+## Summary
+- ...
+
+## Validation
+- python3 scripts/validate_ouroboros_docs.py
+EOF
+)
+
+tea pr create \
+  --base main \
+  --head feature/issue-N-something \
+  --title "docs: ... (#N)" \
+  --description "$PR_BODY"
+```
+
+금지 패턴:
+
+- `-d "line1\nline2"` (웹 UI에 `\n` 문자 그대로 노출될 수 있음)
+- 본문에 백틱/괄호를 인라인로 넣고 적절한 quoting 없이 즉시 실행
+
 ## Agent Workflow
 
 **Modern AI development leverages specialized agents for concurrent, efficient task execution.**
