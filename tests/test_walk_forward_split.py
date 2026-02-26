@@ -59,6 +59,22 @@ def test_respects_min_train_size_and_returns_empty_when_impossible() -> None:
     assert folds == []
 
 
+def test_embargo_uses_last_accepted_fold_when_intermediate_fold_skips() -> None:
+    folds = generate_walk_forward_splits(
+        n_samples=30,
+        train_size=5,
+        test_size=3,
+        step_size=5,
+        embargo_size=1,
+        min_train_size=5,
+    )
+    # 1st fold accepted, 2nd skipped by min_train_size, subsequent folds still generated.
+    assert len(folds) == 3
+    assert folds[0].test_indices == [5, 6, 7]
+    assert folds[1].test_indices == [15, 16, 17]
+    assert folds[2].test_indices == [25, 26, 27]
+
+
 @pytest.mark.parametrize(
     ("n_samples", "train_size", "test_size"),
     [

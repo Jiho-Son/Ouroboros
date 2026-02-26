@@ -68,8 +68,7 @@ def generate_walk_forward_splits(
                     test_indices=list(range(test_start, test_end + 1)),
                 )
             )
-
-        prev_test_end = test_end
+            prev_test_end = test_end
         test_start += step
 
     return folds

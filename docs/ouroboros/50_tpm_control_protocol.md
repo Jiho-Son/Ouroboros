@@ -149,6 +149,7 @@ TPM 티켓 운영 규칙:
 - TPM은 합의된 변경을 이슈로 등록하고 우선순위(`P0/P1/P2`)를 지정한다.
 - PR 본문에는 TPM이 지정한 우선순위와 범위가 그대로 반영되어야 한다.
 - 우선순위 변경은 TPM 제안 + Main Agent 승인으로만 가능하다.
+- PM/TPM/Dev/Reviewer/Verifier/Runtime Verifier는 주요 의사결정 시점마다 PR 코멘트를 남겨 결정 근거를 추적 가능 상태로 유지한다.
 
 브랜치 운영 규칙:
 - TPM은 각 티켓에 대해 `ticket temp branch -> program feature branch` PR 경로를 지정한다.
