@@ -160,14 +160,11 @@ TPM 티켓 운영 규칙:
   - Dev 수정 완료 + Verifier 재검증 통과 + Runtime Verifier 재관측 정상
   - 최종 클로즈 승인자는 Main Agent
 
-## Session Exception: No-Merge Flow (This Session Only)
+## Server Reflection Rule (No-Merge by Default)
 
-- 이번 세션에서는 절차상 `PR 머지` 단계만 제외한다.
-- 허용 범위:
-  - 리뷰어 피드백 -> 개발 논의/수정 -> 검증 승인 코멘트 -> 서버 PR 반영
-- 금지 범위:
-  - 검증 승인 후 자동/수동 머지 실행
-- 머지 판단은 사용자 수동 검토 후 결정한다.
+- 서버 반영 기본 규칙은 `브랜치 푸시 + PR 생성/코멘트`까지로 제한한다.
+- 기본 흐름에서 검증 승인 후 자동/수동 머지 실행은 금지한다.
+- 예외는 사용자 명시 승인 시에만 허용되며, Main Agent가 예외 근거를 PR에 기록한다.
 
 ## Acceptance Matrix (PM Scenario -> Dev Tasks -> Verifier Checks)
 
