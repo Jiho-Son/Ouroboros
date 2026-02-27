@@ -355,3 +355,36 @@ Order result: 모의투자 매수주문이 완료 되었습니다.  ✓
    - `TestOverseasGhostPositionClose` 2개: ghost-close 로그 확인, 일반 오류 무시
 
 **이슈/PR:** #235, PR #236
+
+---
+
+## 2026-02-27
+
+### v2 백테스트 파이프라인 통합 (#305)
+
+**배경:**
+- `TripleBarrier`, `WalkForward`, `BacktestCostGuard`는 개별 모듈로 존재했으나,
+  하나의 실행 경로로 연결된 파이프라인이 없어 통합 검증이 불가능했다.
+
+**구현 내용:**
+
+1. `src/analysis/backtest_pipeline.py`
+   - `run_v2_backtest_pipeline()` 추가:
+     - `validate_backtest_cost_model()` 선검증(fail-fast)
+     - `label_with_triple_barrier()`로 entry 라벨 생성
+     - `generate_walk_forward_splits()`로 fold 생성
+     - fold별 baseline(`B0`, `B1`, `M1`) score 산출
+   - 결과 아티팩트 계약 구조(`BacktestPipelineResult`) 정의
+   - leakage 검사 유틸 `fold_has_leakage()` 제공
+
+2. `tests/test_backtest_pipeline_integration.py` 신규
+   - happy path 통합 검증
+   - cost guard 실패 fail-fast 검증
+   - purge/embargo 기반 누수 방지 검증
+   - 동일 입력 재실행 결정성 검증
+
+**검증:**
+- `pytest -q tests/test_backtest_pipeline_integration.py tests/test_triple_barrier.py tests/test_walk_forward_split.py tests/test_backtest_cost_guard.py tests/test_backtest_execution_model.py`
+- `ruff check src/analysis/backtest_pipeline.py tests/test_backtest_pipeline_integration.py`
+
+**이슈/PR:** #305
