@@ -41,3 +41,11 @@
 - next_ticket: #304
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: process-change-first 실행 게이트를 문서+스크립트로 강화
+
+### 2026-02-27 | session=codex-handover-start-2
+- branch: feature/issue-304-runtime-staged-exit-semantics
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #304, #305
+- next_ticket: #304
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: handover 재시작 요청으로 세션 엔트리 추가, 미추적 산출물(AMS/NAS/NYS, DB, lock, xlsx) 커밋 분리 필요
