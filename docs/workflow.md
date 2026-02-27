@@ -30,6 +30,19 @@ Gitea 이슈/PR/코멘트 작업 전에 모든 에이전트는 아래를 먼저 
 - `tea` 실패 시 동일 명령 재시도 전에 원인/수정사항을 PR 코멘트에 남긴다.
 - 필요한 경우에만 Gitea API(`localhost:3000`)를 fallback으로 사용한다.
 
+## Session Handover Gate (Mandatory)
+
+새 세션에서 구현/검증을 시작하기 전에 아래를 선행해야 한다.
+
+1. `docs/workflow.md`, `docs/commands.md`, `docs/agent-constraints.md` 재확인
+2. `workflow/session-handover.md`에 최신 세션 엔트리 추가
+3. `python3 scripts/session_handover_check.py --strict` 통과 확인
+
+강제 규칙:
+- handover check 실패 상태에서 코드 수정/이슈 상태 전이/PR 생성 금지
+- 최신 handover 엔트리는 현재 작업 브랜치를 명시해야 한다
+- 최신 handover 엔트리는 당일(UTC) 날짜를 포함해야 한다
+
 ## Branch Strategy (Mandatory)
 
 - Team operation default branch is the **program feature branch**, not `main`.

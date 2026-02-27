@@ -22,6 +22,10 @@ def main() -> int:
 
     pr_template = Path(".gitea/PULL_REQUEST_TEMPLATE.md")
     issue_template = Path(".gitea/ISSUE_TEMPLATE/runtime_verification.md")
+    workflow_doc = Path("docs/workflow.md")
+    commands_doc = Path("docs/commands.md")
+    handover_script = Path("scripts/session_handover_check.py")
+    handover_log = Path("workflow/session-handover.md")
 
     must_contain(
         pr_template,
@@ -32,6 +36,8 @@ def main() -> int:
             "NOT_OBSERVED",
             "tea",
             "gh",
+            "Session Handover Gate",
+            "session_handover_check.py --strict",
         ],
         errors,
     )
@@ -45,6 +51,35 @@ def main() -> int:
         ],
         errors,
     )
+    must_contain(
+        workflow_doc,
+        [
+            "Session Handover Gate (Mandatory)",
+            "session_handover_check.py --strict",
+        ],
+        errors,
+    )
+    must_contain(
+        commands_doc,
+        [
+            "Session Handover Preflight (Mandatory)",
+            "session_handover_check.py --strict",
+        ],
+        errors,
+    )
+    must_contain(
+        handover_log,
+        [
+            "Session Handover Log",
+            "- branch:",
+            "- docs_checked:",
+            "- open_issues_reviewed:",
+            "- next_ticket:",
+        ],
+        errors,
+    )
+    if not handover_script.exists():
+        errors.append(f"missing file: {handover_script}")
 
     if errors:
         print("[FAIL] governance asset validation failed")
@@ -58,4 +93,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

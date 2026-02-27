@@ -11,6 +11,16 @@
 - 기본 도구는 `tea`이며, `tea` 미지원 케이스만 Gitea API를 fallback으로 사용한다.
 - 실행 전 `docs/workflow.md`의 `Gitea CLI Formatting Troubleshooting`을 반드시 확인한다.
 
+## Session Handover Preflight (Mandatory)
+
+- 세션 시작 직후(코드 변경 전) 아래 명령을 먼저 실행한다.
+
+```bash
+python3 scripts/session_handover_check.py --strict
+```
+
+- 실패 시 `workflow/session-handover.md` 최신 엔트리를 보강한 뒤 재실행한다.
+
 ### tea CLI (Gitea Command Line Tool)
 
 #### ❌ TTY Error - Interactive Confirmation Fails
@@ -149,6 +159,9 @@ python -m src.main --mode=paper --dashboard
 
 # Runtime verification monitor (NOT_OBSERVED detection)
 bash scripts/runtime_verify_monitor.sh
+
+# Session handover gate (must pass before implementation)
+python3 scripts/session_handover_check.py --strict
 
 # Follow runtime verification log
 tail -f data/overnight/runtime_verify_*.log

@@ -35,6 +35,12 @@
 - [ ] `docs/commands.md`와 `docs/workflow.md` 트러블슈팅 선확인
 - [ ] `tea` 사용 (`gh` 미사용)
 
+## Session Handover Gate
+
+- [ ] `python3 scripts/session_handover_check.py --strict` 통과
+- [ ] `workflow/session-handover.md` 최신 엔트리가 현재 브랜치/당일(UTC) 기준으로 갱신됨
+- 최신 handover 엔트리 heading:
+
 ## Runtime Evidence
 
 - 시스템 실제 구동 커맨드:
