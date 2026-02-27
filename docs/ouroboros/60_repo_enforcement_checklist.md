@@ -3,7 +3,7 @@ Doc-ID: DOC-OPS-002
 Version: 1.0.0
 Status: active
 Owner: tpm
-Updated: 2026-02-26
+Updated: 2026-02-27
 -->
 
 # 저장소 강제 설정 체크리스트
@@ -58,6 +58,7 @@ Updated: 2026-02-26
 자동 점검:
 - 문서 검증 스크립트 통과
 - 테스트 통과
+- `python3 scripts/session_handover_check.py --strict` 통과
 - 개발 완료 시 시스템 구동/모니터링 증적 코멘트 존재
 - 이슈/PR 조작 전에 `docs/commands.md` 및 `docs/workflow.md` 트러블슈팅 확인 코멘트 존재
 - `gh` CLI 미사용, `tea` 사용 증적 존재

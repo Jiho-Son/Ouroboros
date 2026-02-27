@@ -32,6 +32,11 @@ It is distinct from `docs/requirements-log.md`, which records **project/product 
      (or in a dedicated policy doc) and reference it when working.
    - Keep entries short and concrete, with dates.
 
+5. **Session start handover gate**
+   - Before implementation/verification work, run `python3 scripts/session_handover_check.py --strict`.
+   - Keep `workflow/session-handover.md` updated with a same-day entry for the active branch.
+   - If the check fails, stop and fix handover artifacts first.
+
 ## Change Control
 
 - Changes to this file follow the same workflow as code changes.
@@ -50,3 +55,4 @@ It is distinct from `docs/requirements-log.md`, which records **project/product 
 
 - All agents must pre-read `docs/commands.md` and `docs/workflow.md` troubleshooting before running Gitea issue/PR/comment commands.
 - `gh` CLI is prohibited for repository ticket/PR operations; use `tea` (or documented Gitea API fallback only).
+- Session start must pass `python3 scripts/session_handover_check.py --strict`, with branch-matched entry in `workflow/session-handover.md`.
