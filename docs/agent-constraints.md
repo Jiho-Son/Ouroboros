@@ -37,6 +37,11 @@ It is distinct from `docs/requirements-log.md`, which records **project/product 
    - Keep `workflow/session-handover.md` updated with a same-day entry for the active branch.
    - If the check fails, stop and fix handover artifacts first.
 
+6. **Process-change-first execution gate**
+   - If process/governance change is required, merge the process ticket to the feature branch first.
+   - Do not start code/test edits for implementation tickets until process merge evidence is confirmed.
+   - Subagents must be constrained to read-only exploration until the process gate is satisfied.
+
 ## Change Control
 
 - Changes to this file follow the same workflow as code changes.
@@ -56,3 +61,9 @@ It is distinct from `docs/requirements-log.md`, which records **project/product 
 - All agents must pre-read `docs/commands.md` and `docs/workflow.md` troubleshooting before running Gitea issue/PR/comment commands.
 - `gh` CLI is prohibited for repository ticket/PR operations; use `tea` (or documented Gitea API fallback only).
 - Session start must pass `python3 scripts/session_handover_check.py --strict`, with branch-matched entry in `workflow/session-handover.md`.
+
+### 2026-02-27
+
+- Apply process-change-first as an execution gate: process ticket must be merged before implementation ticket coding.
+- Handover entry must record concrete `next_ticket` and `process_gate_checked`; placeholders are not allowed in strict gate.
+- Before process merge confirmation, all subagent tasks must remain read-only (analysis only).

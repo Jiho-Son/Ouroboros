@@ -188,6 +188,19 @@ Use `run_in_background=True` for independent tasks that don't block subsequent w
 - process ticket 미반영 상태에서 기능 티켓 코딩/머지 금지
 - 세션 전환 시에도 동일 규칙 유지
 
+### Implementation Start Gate (Mandatory)
+
+구현 티켓을 시작하기 전에 아래 3개를 모두 만족해야 한다.
+
+1. `process ticket merge` 증적 확인 (feature branch 반영 커밋/PR)
+2. `workflow/session-handover.md` 최신 엔트리에 `next_ticket`과 `process_gate_checked` 기록
+3. `python3 scripts/session_handover_check.py --strict` 통과
+
+강제 규칙:
+- 위 3개 중 하나라도 불충족이면 코드/테스트 수정 금지
+- 서브에이전트 지시도 동일하게 제한한다 (`process merged 확인 전 read-only 탐색만 허용`)
+- 성급 착수 발견 시 구현 작업을 즉시 중단하고 handover/proces gate부터 복구한다
+
 ### Ticket Maturity Stages (Mandatory)
 
 모든 티켓은 아래 4단계를 순서대로 통과해야 한다.
