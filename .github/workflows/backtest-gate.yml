@@ -1,0 +1,66 @@
+name: Backtest Gate
+
+on:
+  pull_request:
+    branches: ["**"]
+  push:
+    branches:
+      - "feature/**"
+  schedule:
+    # Daily scheduled gate (KST 01:20)
+    - cron: "20 16 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "backtest mode (auto|smoke|full)"
+        required: false
+        default: "auto"
+      base_ref:
+        description: "git base ref for changed-file diff"
+        required: false
+        default: "origin/main"
+
+jobs:
+  backtest-gate:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: backtest-gate-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install ".[dev]"
+
+      - name: Resolve base ref
+        id: base
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "ref=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.base_ref }}" ]; then
+            echo "ref=${{ github.event.inputs.base_ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=origin/main" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run backtest gate
+        env:
+          BASE_REF: ${{ steps.base.outputs.ref }}
+          BACKTEST_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.mode || 'auto' }}
+          FORCE_FULL_BACKTEST: ${{ github.event_name == 'schedule' && 'true' || 'false' }}
+        run: bash scripts/backtest_gate.sh
+
+      - name: Upload backtest logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-gate-logs
+          path: data/backtest-gate/*.log

@@ -65,3 +65,19 @@
 - next_ticket: #305
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: 티켓 브랜치 분기 후 strict gate 재통과를 위한 엔트리 추가
+
+### 2026-02-27 | session=codex-backtest-gate-automation
+- branch: feature/v3-session-policy-stream
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #304, #305
+- next_ticket: (create) backtest automation gate
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: 백테스트 자동화 누락 재발 방지 위해 이슈/티켓 브랜치/PR 절차로 즉시 정규화
+
+### 2026-02-27 | session=codex-issue314-ticket-branch
+- branch: feature/issue-314-backtest-gate-automation
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #314
+- next_ticket: #314
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: 백테스트 자동 게이트 도입 티켓 브랜치 strict gate 통과용 엔트리

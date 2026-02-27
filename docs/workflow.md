@@ -51,6 +51,21 @@ Gitea 이슈/PR/코멘트 작업 전에 모든 에이전트는 아래를 먼저 
 - Until final user sign-off, `main` merge is prohibited.
 - 각 에이전트는 주요 의사결정(리뷰 지적, 수정 방향, 검증 승인)마다 PR 코멘트를 적극 작성해 의사결정 과정을 남긴다.
 
+## Backtest Gate Policy (Mandatory)
+
+사람 의존도를 줄이기 위해 백테스트 검증은 자동 게이트를 기본으로 한다.
+
+- 워크플로우: `.github/workflows/backtest-gate.yml`
+- 실행 스크립트: `scripts/backtest_gate.sh`
+- 기본 모드: `auto` (변경 파일 기반 실행/skip 판정)
+- 정기 스케줄: daily `full` 강제 실행
+- 수동 재실행: workflow dispatch + `mode` 지정
+
+강제 규칙:
+- 백테스트 민감 변경(PR/feature push)에서 게이트 실패 시 머지 금지
+- 스케줄 게이트 실패 시 이슈 등록 후 원인/복구 계획 기록
+- `python` 대신 `python3` 기준으로 실행한다
+
 ## Gitea CLI Formatting Troubleshooting
 
 Issue/PR 본문 작성 시 줄바꿈(`\n`)이 문자열 그대로 저장되는 문제가 반복될 수 있다. 원인은 `-d "...\n..."` 형태에서 쉘/CLI가 이스케이프를 실제 개행으로 해석하지 않기 때문이다.
