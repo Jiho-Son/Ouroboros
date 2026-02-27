@@ -181,6 +181,29 @@ pytest -v --cov=src --cov-report=term-missing
 
 **Note:** `main.py` has lower coverage as it contains the main loop which is tested via integration/manual testing.
 
+## Backtest Automation Gate
+
+백테스트 관련 검증은 `scripts/backtest_gate.sh`와 `.github/workflows/backtest-gate.yml`로 자동 실행된다.
+
+- PR: 변경 파일 기준 `auto` 모드
+- `feature/**` push: 변경 파일 기준 `auto` 모드
+- Daily schedule: `full` 강제 실행
+- Manual dispatch: `mode`(`auto|smoke|full`) 지정 가능
+
+실행 기준:
+- `src/analysis/`, `src/strategy/`, `src/strategies/`, `src/main.py`, `src/markets/`, `src/broker/`
+- 백테스트 핵심 테스트 파일 변경
+- `docs/ouroboros/` 변경
+
+`auto` 모드에서 백테스트 민감 영역 변경이 없으면 게이트는 `skip` 처리되며 실패로 간주하지 않는다.
+
+로컬 수동 실행:
+```bash
+bash scripts/backtest_gate.sh
+BACKTEST_MODE=full bash scripts/backtest_gate.sh
+BASE_REF=origin/feature/v3-session-policy-stream BACKTEST_MODE=auto bash scripts/backtest_gate.sh
+```
+
 ## Test Configuration
 
 ### `pyproject.toml`
