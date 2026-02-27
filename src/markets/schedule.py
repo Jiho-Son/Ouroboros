@@ -1,7 +1,7 @@
 """Market schedule management with timezone support."""
 
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 
@@ -181,7 +181,10 @@ def is_market_open(market: MarketInfo, now: datetime | None = None) -> bool:
 
 
 def get_open_markets(
-    enabled_markets: list[str] | None = None, now: datetime | None = None
+    enabled_markets: list[str] | None = None,
+    now: datetime | None = None,
+    *,
+    include_extended_sessions: bool = False,
 ) -> list[MarketInfo]:
     """
     Get list of currently open markets.
@@ -196,17 +199,31 @@ def get_open_markets(
     if enabled_markets is None:
         enabled_markets = list(MARKETS.keys())
 
+    def is_available(market: MarketInfo) -> bool:
+        if not include_extended_sessions:
+            return is_market_open(market, now)
+        if market.code == "KR" or market.code.startswith("US"):
+            # Import lazily to avoid module cycle at import-time.
+            from src.core.order_policy import classify_session_id
+
+            session_id = classify_session_id(market, now)
+            return session_id not in {"KR_OFF", "US_OFF"}
+        return is_market_open(market, now)
+
     open_markets = [
         MARKETS[code]
         for code in enabled_markets
-        if code in MARKETS and is_market_open(MARKETS[code], now)
+        if code in MARKETS and is_available(MARKETS[code])
     ]
 
     return sorted(open_markets, key=lambda m: m.code)
 
 
 def get_next_market_open(
-    enabled_markets: list[str] | None = None, now: datetime | None = None
+    enabled_markets: list[str] | None = None,
+    now: datetime | None = None,
+    *,
+    include_extended_sessions: bool = False,
 ) -> tuple[MarketInfo, datetime]:
     """
     Find the next market that will open and when.
@@ -233,12 +250,34 @@ def get_next_market_open(
     next_open_time: datetime | None = None
     next_market: MarketInfo | None = None
 
+    def first_extended_open_after(market: MarketInfo, start_utc: datetime) -> datetime | None:
+        # Search minute-by-minute for KR/US session transition into active window.
+        # Bounded to 7 days to match existing behavior.
+        from src.core.order_policy import classify_session_id
+
+        ts = start_utc.astimezone(ZoneInfo("UTC")).replace(second=0, microsecond=0)
+        prev_active = classify_session_id(market, ts) not in {"KR_OFF", "US_OFF"}
+        for _ in range(7 * 24 * 60):
+            ts = ts + timedelta(minutes=1)
+            active = classify_session_id(market, ts) not in {"KR_OFF", "US_OFF"}
+            if active and not prev_active:
+                return ts
+            prev_active = active
+        return None
+
     for code in enabled_markets:
         if code not in MARKETS:
             continue
 
         market = MARKETS[code]
         market_now = now.astimezone(market.timezone)
+
+        if include_extended_sessions and (market.code == "KR" or market.code.startswith("US")):
+            ext_open = first_extended_open_after(market, now.astimezone(UTC))
+            if ext_open and (next_open_time is None or ext_open < next_open_time):
+                next_open_time = ext_open
+                next_market = market
+            continue
 
         # Calculate next open time for this market
         for days_ahead in range(7):  # Check next 7 days

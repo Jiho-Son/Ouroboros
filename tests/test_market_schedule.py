@@ -147,6 +147,24 @@ class TestGetOpenMarkets:
         codes = [m.code for m in open_markets]
         assert codes == sorted(codes)
 
+    def test_get_open_markets_us_pre_extended_session(self) -> None:
+        """US premarket should be considered open when extended sessions enabled."""
+        # Monday 2026-02-02 08:30 EST = 13:30 UTC (premarket window)
+        test_time = datetime(2026, 2, 2, 13, 30, tzinfo=ZoneInfo("UTC"))
+
+        regular = get_open_markets(
+            enabled_markets=["US_NASDAQ", "US_NYSE", "US_AMEX"],
+            now=test_time,
+        )
+        assert regular == []
+
+        extended = get_open_markets(
+            enabled_markets=["US_NASDAQ", "US_NYSE", "US_AMEX"],
+            now=test_time,
+            include_extended_sessions=True,
+        )
+        assert {m.code for m in extended} == {"US_NASDAQ", "US_NYSE", "US_AMEX"}
+
 
 class TestGetNextMarketOpen:
     """Test get_next_market_open function."""
@@ -200,6 +218,20 @@ class TestGetNextMarketOpen:
             enabled_markets=["INVALID", "KR"], now=test_time
         )
         assert market.code == "KR"
+
+    def test_get_next_market_open_prefers_extended_session(self) -> None:
+        """Extended lookup should return premarket open time before regular open."""
+        # Monday 2026-02-02 07:00 EST = 12:00 UTC
+        # By v3 KST session rules, US is OFF only in KST 07:00-10:00 (UTC 22:00-01:00).
+        # At 12:00 UTC market is active, so next OFF->ON transition is 01:00 UTC next day.
+        test_time = datetime(2026, 2, 2, 12, 0, tzinfo=ZoneInfo("UTC"))
+        market, next_open = get_next_market_open(
+            enabled_markets=["US_NASDAQ"],
+            now=test_time,
+            include_extended_sessions=True,
+        )
+        assert market.code == "US_NASDAQ"
+        assert next_open == datetime(2026, 2, 3, 1, 0, tzinfo=ZoneInfo("UTC"))
 
 
 class TestExpandMarketCodes:

@@ -3408,7 +3408,10 @@ async def run(settings: Settings) -> None:
                 _run_context_scheduler(context_scheduler, now=datetime.now(UTC))
 
                 # Get currently open markets
-                open_markets = get_open_markets(settings.enabled_market_list)
+                open_markets = get_open_markets(
+                    settings.enabled_market_list,
+                    include_extended_sessions=True,
+                )
 
                 if not open_markets:
                     # Notify market close for any markets that were open
@@ -3437,7 +3440,8 @@ async def run(settings: Settings) -> None:
                     # No markets open — wait until next market opens
                     try:
                         next_market, next_open_time = get_next_market_open(
-                            settings.enabled_market_list
+                            settings.enabled_market_list,
+                            include_extended_sessions=True,
                         )
                         now = datetime.now(UTC)
                         wait_seconds = (next_open_time - now).total_seconds()
@@ -3458,6 +3462,14 @@ async def run(settings: Settings) -> None:
                 for market in open_markets:
                     if shutdown.is_set():
                         break
+
+                    session_info = get_session_info(market)
+                    logger.info(
+                        "Market session active: %s (%s) session=%s",
+                        market.code,
+                        market.name,
+                        session_info.session_id,
+                    )
 
                     await process_blackout_recovery_orders(
                         broker=broker,
