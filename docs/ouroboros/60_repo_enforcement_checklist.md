@@ -48,6 +48,7 @@ Updated: 2026-02-26
 병합 전 체크리스트:
 - 이슈 연결(`Closes #N`) 존재
 - PR 본문에 `REQ-*`, `TASK-*`, `TEST-*` 매핑 표 존재
+- Main -> Verifier Directive Contract(범위/방법/합격/실패/미관측/증적 형식) 기재
 - `src/core/risk_manager.py` 변경 없음
 - 주요 의사결정 체크포인트(DCP-01~04) 중 해당 단계 Main Agent 확인 기록 존재
 - 주요 의사결정(리뷰 지적/수정 합의/검증 승인)에 대한 에이전트 PR 코멘트 존재
@@ -57,6 +58,10 @@ Updated: 2026-02-26
 - 문서 검증 스크립트 통과
 - 테스트 통과
 - 개발 완료 시 시스템 구동/모니터링 증적 코멘트 존재
+- 이슈/PR 조작 전에 `docs/commands.md` 및 `docs/workflow.md` 트러블슈팅 확인 코멘트 존재
+- `gh` CLI 미사용, `tea` 사용 증적 존재
+- Verifier `Coverage Matrix` 첨부(PASS/FAIL/NOT_OBSERVED)
+- `NOT_OBSERVED` 항목 0 확인(0이 아니면 머지 금지)
 
 ## 5) 감사 추적
 

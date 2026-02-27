@@ -16,6 +16,20 @@
 
 **Never commit directly to `main`.** This policy applies to all changes, no exceptions.
 
+## Agent Gitea Preflight (Mandatory)
+
+Gitea 이슈/PR/코멘트 작업 전에 모든 에이전트는 아래를 먼저 확인해야 한다.
+
+1. `docs/commands.md`의 `tea CLI` 실패 사례/해결 패턴 확인
+2. 본 문서의 `Gitea CLI Formatting Troubleshooting` 확인
+3. 명령 실행 전 `gh`(GitHub CLI) 사용 금지 확인
+
+강제 규칙:
+- 이 저장소 협업 명령은 `tea`를 기본으로 사용한다.
+- `gh issue`, `gh pr` 등 GitHub CLI 명령은 사용 금지다.
+- `tea` 실패 시 동일 명령 재시도 전에 원인/수정사항을 PR 코멘트에 남긴다.
+- 필요한 경우에만 Gitea API(`localhost:3000`)를 fallback으로 사용한다.
+
 ## Branch Strategy (Mandatory)
 
 - Team operation default branch is the **program feature branch**, not `main`.
@@ -137,6 +151,22 @@ task_tool(
 
 Use `run_in_background=True` for independent tasks that don't block subsequent work.
 
+### Main -> Verifier Directive Contract (Mandatory)
+
+메인 에이전트가 검증 에이전트에 작업을 위임할 때, 아래 6개를 누락하면 지시가 무효다.
+
+1. 검증 대상 범위: `REQ-*`, `TASK-*`, 코드/로그 경로
+2. 검증 방법: 실행 커맨드와 관측 포인트(예: 세션별 로그 키워드)
+3. 합격 기준: PASS 조건을 수치/문구로 명시
+4. 실패 기준: FAIL 조건을 수치/문구로 명시
+5. 미관측 기준: `NOT_OBSERVED` 조건과 즉시 에스컬레이션 규칙
+6. 증적 형식: PR 코멘트에 `Coverage Matrix` 표로 제출
+
+`NOT_OBSERVED` 처리 규칙:
+- 요구사항 항목이 관측되지 않았으면 PASS로 간주 금지
+- `NOT_OBSERVED`는 운영상 `FAIL`과 동일하게 처리
+- `NOT_OBSERVED`가 하나라도 있으면 승인/머지 금지
+
 ## Code Review Checklist
 
 **CRITICAL: Every PR review MUST verify plan-implementation consistency.**
@@ -170,3 +200,7 @@ Before approving any PR, the reviewer (human or agent) must check ALL of the fol
 - [ ] PR references the Gitea issue number
 - [ ] Feature branch follows naming convention (`feature/issue-N-description`)
 - [ ] Commit messages are clear and descriptive
+- [ ] 이슈/PR 작업 전에 `docs/commands.md`와 본 문서 트러블슈팅 섹션을 확인했다
+- [ ] `gh` 명령을 사용하지 않고 `tea`(또는 허용된 Gitea API fallback)만 사용했다
+- [ ] Main -> Verifier 지시가 Directive Contract 6개 항목을 모두 포함한다
+- [ ] Verifier 결과에 `Coverage Matrix`(PASS/FAIL/NOT_OBSERVED)가 있고, `NOT_OBSERVED=0`이다
