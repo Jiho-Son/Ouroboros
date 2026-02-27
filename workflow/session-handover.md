@@ -49,3 +49,19 @@
 - next_ticket: #304
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: handover 재시작 요청으로 세션 엔트리 추가, 미추적 산출물(AMS/NAS/NYS, DB, lock, xlsx) 커밋 분리 필요
+
+### 2026-02-27 | session=codex-issue305-start
+- branch: feature/v3-session-policy-stream
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #305
+- next_ticket: #305
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: #305 구현을 위해 분석/백테스트 모듈 통합 경로 점검 시작
+
+### 2026-02-27 | session=codex-issue305-ticket-branch
+- branch: feature/issue-305-backtest-pipeline-integration
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #305
+- next_ticket: #305
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: 티켓 브랜치 분기 후 strict gate 재통과를 위한 엔트리 추가
