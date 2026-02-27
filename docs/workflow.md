@@ -167,6 +167,28 @@ Use `run_in_background=True` for independent tasks that don't block subsequent w
 - `NOT_OBSERVED`는 운영상 `FAIL`과 동일하게 처리
 - `NOT_OBSERVED`가 하나라도 있으면 승인/머지 금지
 
+### Process-Change-First Rule (Mandatory)
+
+재발 방지/운영 규칙 변경이 결정되면, 기능 구현 티켓보다 먼저 서버(feature branch)에 반영해야 한다.
+
+- 순서: `process ticket merge` -> `implementation ticket start`
+- process ticket 미반영 상태에서 기능 티켓 코딩/머지 금지
+- 세션 전환 시에도 동일 규칙 유지
+
+### Ticket Maturity Stages (Mandatory)
+
+모든 티켓은 아래 4단계를 순서대로 통과해야 한다.
+
+1. `Implemented`: 코드/문서 변경 완료
+2. `Integrated`: 호출 경로/파이프라인 연결 완료
+3. `Observed`: 런타임/실행 증적 확보 완료
+4. `Accepted`: 정적 Verifier + Runtime Verifier 승인 완료
+
+강제 규칙:
+- 단계 점프 금지 (예: Implemented -> Accepted 금지)
+- `Observed` 전에는 완료 선언 금지
+- `Accepted` 전에는 머지 금지
+
 ## Code Review Checklist
 
 **CRITICAL: Every PR review MUST verify plan-implementation consistency.**
@@ -204,3 +226,6 @@ Before approving any PR, the reviewer (human or agent) must check ALL of the fol
 - [ ] `gh` 명령을 사용하지 않고 `tea`(또는 허용된 Gitea API fallback)만 사용했다
 - [ ] Main -> Verifier 지시가 Directive Contract 6개 항목을 모두 포함한다
 - [ ] Verifier 결과에 `Coverage Matrix`(PASS/FAIL/NOT_OBSERVED)가 있고, `NOT_OBSERVED=0`이다
+- [ ] Process-change-first 대상이면 해당 process PR이 먼저 머지되었다
+- [ ] 티켓 단계가 `Implemented -> Integrated -> Observed -> Accepted` 순서로 기록되었다
+- [ ] 정적 Verifier와 Runtime Verifier 승인 코멘트가 모두 존재한다

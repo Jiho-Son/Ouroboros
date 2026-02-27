@@ -121,6 +121,7 @@ Control checks:
 - Verifier가 `Coverage Matrix`(`REQ/TASK/TEST` x `PASS/FAIL/NOT_OBSERVED`) 첨부
 - `NOT_OBSERVED` 항목 수가 0인지 확인(0이 아니면 Gate 실패)
 - Runtime Verifier가 스테이징/실운영 모니터링 계획 승인
+- 정적 Verifier 승인 + Runtime Verifier 승인 2개 모두 확인
 - 산출물: 수용 승인 레코드
 
 ### Phase 5: Release and Post-Release Control
@@ -160,6 +161,15 @@ TPM 티켓 운영 규칙:
 - PM/TPM/Dev/Reviewer/Verifier/Runtime Verifier는 주요 의사결정 시점마다 PR 코멘트를 남겨 결정 근거를 추적 가능 상태로 유지한다.
 - PM/TPM/Dev/Reviewer/Verifier/Runtime Verifier는 이슈/PR/코멘트 조작 전에 `docs/commands.md`와 `docs/workflow.md`의 Gitea 트러블슈팅 섹션을 선참조해야 한다.
 - 저장소 협업에서 GitHub CLI(`gh`) 사용은 금지하며, Gitea 작업은 `tea`(필요 시 문서화된 API fallback)만 허용한다.
+- 재발 방지/운영 규칙 변경이 합의되면, 기능 구현 이전에 process 티켓을 먼저 생성/머지해야 한다.
+- process 티켓 미반영 상태에서 구현 티켓 진행 시 TPM이 즉시 `BLOCKED` 처리한다.
+
+티켓 성숙도 단계 (Mandatory):
+- `Implemented`: 코드/문서 변경 완료
+- `Integrated`: 호출 경로/파이프라인 연결 확인
+- `Observed`: 런타임/실행 증적 확보
+- `Accepted`: Verifier + Runtime Verifier 승인 완료
+- 단계는 순차 전진만 허용되며, 단계 점프는 허용되지 않는다.
 
 브랜치 운영 규칙:
 - TPM은 각 티켓에 대해 `ticket temp branch -> program feature branch` PR 경로를 지정한다.

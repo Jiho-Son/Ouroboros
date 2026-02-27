@@ -49,6 +49,7 @@ Updated: 2026-02-26
 - 이슈 연결(`Closes #N`) 존재
 - PR 본문에 `REQ-*`, `TASK-*`, `TEST-*` 매핑 표 존재
 - Main -> Verifier Directive Contract(범위/방법/합격/실패/미관측/증적 형식) 기재
+- process-change-first 대상이면 process 티켓 PR이 선머지됨
 - `src/core/risk_manager.py` 변경 없음
 - 주요 의사결정 체크포인트(DCP-01~04) 중 해당 단계 Main Agent 확인 기록 존재
 - 주요 의사결정(리뷰 지적/수정 합의/검증 승인)에 대한 에이전트 PR 코멘트 존재
@@ -62,6 +63,8 @@ Updated: 2026-02-26
 - `gh` CLI 미사용, `tea` 사용 증적 존재
 - Verifier `Coverage Matrix` 첨부(PASS/FAIL/NOT_OBSERVED)
 - `NOT_OBSERVED` 항목 0 확인(0이 아니면 머지 금지)
+- 티켓 단계 기록(`Implemented` -> `Integrated` -> `Observed` -> `Accepted`) 존재
+- 정적 Verifier 승인 + Runtime Verifier 승인 2개 확인
 
 ## 5) 감사 추적
 
