@@ -68,6 +68,8 @@ BLACKOUT_ORDER_MANAGER = BlackoutOrderManager(
     max_queue_size=500,
 )
 _SESSION_CLOSE_WINDOWS = {"NXT_AFTER", "US_AFTER"}
+_RUNTIME_EXIT_STATES: dict[str, PositionState] = {}
+_RUNTIME_EXIT_PEAKS: dict[str, float] = {}
 
 
 def safe_float(value: str | float | None, default: float = 0.0) -> float:
@@ -467,6 +469,118 @@ def _should_force_exit_for_overnight(
     if settings is None:
         return False
     return not settings.OVERNIGHT_EXCEPTION_ENABLED
+
+
+def _build_runtime_position_key(
+    *,
+    market_code: str,
+    stock_code: str,
+    open_position: dict[str, Any],
+) -> str:
+    decision_id = str(open_position.get("decision_id") or "")
+    timestamp = str(open_position.get("timestamp") or "")
+    return f"{market_code}:{stock_code}:{decision_id}:{timestamp}"
+
+
+def _clear_runtime_exit_cache_for_symbol(*, market_code: str, stock_code: str) -> None:
+    prefix = f"{market_code}:{stock_code}:"
+    stale_keys = [key for key in _RUNTIME_EXIT_STATES if key.startswith(prefix)]
+    for key in stale_keys:
+        _RUNTIME_EXIT_STATES.pop(key, None)
+        _RUNTIME_EXIT_PEAKS.pop(key, None)
+
+
+def _apply_staged_exit_override_for_hold(
+    *,
+    decision: TradeDecision,
+    market: MarketInfo,
+    stock_code: str,
+    open_position: dict[str, Any] | None,
+    market_data: dict[str, Any],
+    stock_playbook: Any | None,
+) -> TradeDecision:
+    """Apply v2 staged exit semantics for HOLD positions using runtime state."""
+    if decision.action != "HOLD" or not open_position:
+        return decision
+
+    entry_price = safe_float(open_position.get("price"), 0.0)
+    current_price = safe_float(market_data.get("current_price"), 0.0)
+    if entry_price <= 0 or current_price <= 0:
+        return decision
+
+    stop_loss_threshold = -2.0
+    take_profit_threshold = 3.0
+    if stock_playbook and stock_playbook.scenarios:
+        stop_loss_threshold = stock_playbook.scenarios[0].stop_loss_pct
+        take_profit_threshold = stock_playbook.scenarios[0].take_profit_pct
+
+    runtime_key = _build_runtime_position_key(
+        market_code=market.code,
+        stock_code=stock_code,
+        open_position=open_position,
+    )
+    current_state = _RUNTIME_EXIT_STATES.get(runtime_key, PositionState.HOLDING)
+    prev_peak = _RUNTIME_EXIT_PEAKS.get(runtime_key, 0.0)
+    peak_hint = max(
+        safe_float(market_data.get("peak_price"), 0.0),
+        safe_float(market_data.get("session_high_price"), 0.0),
+    )
+    peak_price = max(entry_price, current_price, prev_peak, peak_hint)
+
+    exit_eval = evaluate_exit(
+        current_state=current_state,
+        config=ExitRuleConfig(
+            hard_stop_pct=stop_loss_threshold,
+            be_arm_pct=max(0.5, take_profit_threshold * 0.4),
+            arm_pct=take_profit_threshold,
+        ),
+        inp=ExitRuleInput(
+            current_price=current_price,
+            entry_price=entry_price,
+            peak_price=peak_price,
+            atr_value=safe_float(market_data.get("atr_value"), 0.0),
+            pred_down_prob=safe_float(market_data.get("pred_down_prob"), 0.0),
+            liquidity_weak=safe_float(market_data.get("volume_ratio"), 1.0) < 1.0,
+        ),
+    )
+    _RUNTIME_EXIT_STATES[runtime_key] = exit_eval.state
+    _RUNTIME_EXIT_PEAKS[runtime_key] = peak_price
+
+    if not exit_eval.should_exit:
+        return decision
+
+    pnl_pct = (current_price - entry_price) / entry_price * 100.0
+    if exit_eval.reason == "hard_stop":
+        rationale = (
+            f"Stop-loss triggered ({pnl_pct:.2f}% <= "
+            f"{stop_loss_threshold:.2f}%)"
+        )
+    elif exit_eval.reason == "arm_take_profit":
+        rationale = (
+            f"Take-profit triggered ({pnl_pct:.2f}% >= "
+            f"{take_profit_threshold:.2f}%)"
+        )
+    elif exit_eval.reason == "atr_trailing_stop":
+        rationale = "ATR trailing-stop triggered"
+    elif exit_eval.reason == "be_lock_threat":
+        rationale = "Break-even lock threat detected"
+    elif exit_eval.reason == "model_liquidity_exit":
+        rationale = "Model/liquidity exit triggered"
+    else:
+        rationale = f"Exit rule triggered ({exit_eval.reason})"
+
+    logger.info(
+        "Staged exit override for %s (%s): HOLD -> SELL (reason=%s, state=%s)",
+        stock_code,
+        market.name,
+        exit_eval.reason,
+        exit_eval.state.value,
+    )
+    return TradeDecision(
+        action="SELL",
+        confidence=max(decision.confidence, 90),
+        rationale=rationale,
+    )
 
 
 async def build_overseas_symbol_universe(
@@ -977,6 +1091,11 @@ async def trading_cycle(
         "foreigner_net": foreigner_net,
         "price_change_pct": price_change_pct,
     }
+    session_high_price = safe_float(
+        price_output.get("high") or price_output.get("ovrs_hgpr") or price_output.get("stck_hgpr")
+    )
+    if session_high_price > 0:
+        market_data["session_high_price"] = session_high_price
 
     # Enrich market_data with scanner metrics for scenario engine
     market_candidates = scan_candidates.get(market.code, {})
@@ -1175,82 +1294,36 @@ async def trading_cycle(
 
     if decision.action == "HOLD":
         open_position = get_open_position(db_conn, stock_code, market.code)
-        if open_position:
-            entry_price = safe_float(open_position.get("price"), 0.0)
-            if entry_price > 0 and current_price > 0:
-                loss_pct = (current_price - entry_price) / entry_price * 100
-                stop_loss_threshold = -2.0
-                take_profit_threshold = 3.0
-                if stock_playbook and stock_playbook.scenarios:
-                    stop_loss_threshold = stock_playbook.scenarios[0].stop_loss_pct
-                    take_profit_threshold = stock_playbook.scenarios[0].take_profit_pct
-
-                exit_eval = evaluate_exit(
-                    current_state=PositionState.HOLDING,
-                    config=ExitRuleConfig(
-                        hard_stop_pct=stop_loss_threshold,
-                        be_arm_pct=max(0.5, take_profit_threshold * 0.4),
-                        arm_pct=take_profit_threshold,
-                    ),
-                    inp=ExitRuleInput(
-                        current_price=current_price,
-                        entry_price=entry_price,
-                        peak_price=max(entry_price, current_price),
-                        atr_value=0.0,
-                        pred_down_prob=0.0,
-                        liquidity_weak=market_data.get("volume_ratio", 1.0) < 1.0,
-                    ),
-                )
-
-                if exit_eval.reason == "hard_stop":
-                    decision = TradeDecision(
-                        action="SELL",
-                        confidence=95,
-                        rationale=(
-                            f"Stop-loss triggered ({loss_pct:.2f}% <= "
-                            f"{stop_loss_threshold:.2f}%)"
-                        ),
-                    )
-                    logger.info(
-                        "Stop-loss override for %s (%s): %.2f%% <= %.2f%%",
-                        stock_code,
-                        market.name,
-                        loss_pct,
-                        stop_loss_threshold,
-                    )
-                elif exit_eval.reason == "arm_take_profit":
-                    decision = TradeDecision(
-                        action="SELL",
-                        confidence=90,
-                        rationale=(
-                            f"Take-profit triggered ({loss_pct:.2f}% >= "
-                            f"{take_profit_threshold:.2f}%)"
-                        ),
-                    )
-                    logger.info(
-                        "Take-profit override for %s (%s): %.2f%% >= %.2f%%",
-                        stock_code,
-                        market.name,
-                        loss_pct,
-                        take_profit_threshold,
-                    )
-            if decision.action == "HOLD" and _should_force_exit_for_overnight(
+        if not open_position:
+            _clear_runtime_exit_cache_for_symbol(
+                market_code=market.code,
+                stock_code=stock_code,
+            )
+        decision = _apply_staged_exit_override_for_hold(
+            decision=decision,
+            market=market,
+            stock_code=stock_code,
+            open_position=open_position,
+            market_data=market_data,
+            stock_playbook=stock_playbook,
+        )
+        if open_position and decision.action == "HOLD" and _should_force_exit_for_overnight(
                 market=market,
                 settings=settings,
-            ):
-                decision = TradeDecision(
-                    action="SELL",
-                    confidence=max(decision.confidence, 85),
-                    rationale=(
-                        "Forced exit by overnight policy"
-                        " (session close window / kill switch priority)"
-                    ),
-                )
-                logger.info(
-                    "Overnight policy override for %s (%s): HOLD -> SELL",
-                    stock_code,
-                    market.name,
-                )
+        ):
+            decision = TradeDecision(
+                action="SELL",
+                confidence=max(decision.confidence, 85),
+                rationale=(
+                    "Forced exit by overnight policy"
+                    " (session close window / kill switch priority)"
+                ),
+            )
+            logger.info(
+                "Overnight policy override for %s (%s): HOLD -> SELL",
+                stock_code,
+                market.name,
+            )
     logger.info(
         "Decision for %s (%s): %s (confidence=%d)",
         stock_code,
@@ -2190,6 +2263,14 @@ async def run_daily_session(
                     "foreigner_net": foreigner_net,
                     "price_change_pct": price_change_pct,
                 }
+                if not market.is_domestic:
+                    session_high_price = safe_float(
+                        price_data.get("output", {}).get("high")
+                        or price_data.get("output", {}).get("ovrs_hgpr")
+                        or price_data.get("output", {}).get("stck_hgpr")
+                    )
+                    if session_high_price > 0:
+                        stock_data["session_high_price"] = session_high_price
                 # Enrich with scanner metrics
                 cand = candidate_map.get(stock_code)
                 if cand:
@@ -2317,6 +2398,7 @@ async def run_daily_session(
         )
         for stock_data in stocks_data:
             stock_code = stock_data["stock_code"]
+            stock_playbook = playbook.get_stock_playbook(stock_code)
             match = scenario_engine.evaluate(
                 playbook, stock_code, stock_data, portfolio_data,
             )
@@ -2362,7 +2444,20 @@ async def run_daily_session(
                     )
             if decision.action == "HOLD":
                 daily_open = get_open_position(db_conn, stock_code, market.code)
-                if daily_open and _should_force_exit_for_overnight(
+                if not daily_open:
+                    _clear_runtime_exit_cache_for_symbol(
+                        market_code=market.code,
+                        stock_code=stock_code,
+                    )
+                decision = _apply_staged_exit_override_for_hold(
+                    decision=decision,
+                    market=market,
+                    stock_code=stock_code,
+                    open_position=daily_open,
+                    market_data=stock_data,
+                    stock_playbook=stock_playbook,
+                )
+                if daily_open and decision.action == "HOLD" and _should_force_exit_for_overnight(
                     market=market,
                     settings=settings,
                 ):

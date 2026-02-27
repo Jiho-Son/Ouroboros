@@ -15,6 +15,8 @@ from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
 from src.main import (
     KILL_SWITCH,
+    _RUNTIME_EXIT_PEAKS,
+    _RUNTIME_EXIT_STATES,
     _should_force_exit_for_overnight,
     _should_block_overseas_buy_for_fx_buffer,
     _trigger_emergency_kill_switch,
@@ -42,6 +44,7 @@ from src.strategy.models import (
     StockCondition,
     StockScenario,
 )
+from src.strategy.position_state_machine import PositionState
 from src.strategy.scenario_engine import ScenarioEngine, ScenarioMatch
 
 
@@ -87,8 +90,12 @@ def _make_sell_match(stock_code: str = "005930") -> ScenarioMatch:
 def _reset_kill_switch_state() -> None:
     """Prevent cross-test leakage from global kill-switch state."""
     KILL_SWITCH.clear_block()
+    _RUNTIME_EXIT_STATES.clear()
+    _RUNTIME_EXIT_PEAKS.clear()
     yield
     KILL_SWITCH.clear_block()
+    _RUNTIME_EXIT_STATES.clear()
+    _RUNTIME_EXIT_PEAKS.clear()
 
 
 class TestExtractAvgPriceFromBalance:
@@ -2338,6 +2345,218 @@ async def test_hold_not_overridden_when_between_stop_loss_and_take_profit() -> N
 
 
 @pytest.mark.asyncio
+async def test_hold_overridden_to_sell_on_be_lock_threat_after_state_arms() -> None:
+    """Staged exit must use runtime state (BE_LOCK -> be_lock_threat -> SELL)."""
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    buy_decision_id = decision_logger.log_decision(
+        stock_code="005930",
+        market="KR",
+        exchange_code="KRX",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        context_snapshot={},
+        input_data={},
+    )
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        quantity=1,
+        price=100.0,
+        market="KR",
+        exchange_code="KRX",
+        decision_id=buy_decision_id,
+    )
+
+    broker = MagicMock()
+    broker.get_current_price = AsyncMock(side_effect=[(102.0, 2.0, 0.0), (99.0, -1.0, 0.0)])
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output1": [{"pdno": "005930", "ord_psbl_qty": "1"}],
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "10000",
+                    "pchs_amt_smtl_amt": "90000",
+                }
+            ],
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    scenario = StockScenario(
+        condition=StockCondition(rsi_below=30),
+        action=ScenarioAction.BUY,
+        confidence=88,
+        stop_loss_pct=-5.0,
+        take_profit_pct=3.0,
+        rationale="staged exit policy",
+    )
+    playbook = DayPlaybook(
+        date=date(2026, 2, 8),
+        market="KR",
+        stock_playbooks=[
+            {"stock_code": "005930", "stock_name": "Samsung", "scenarios": [scenario]}
+        ],
+    )
+    engine = MagicMock(spec=ScenarioEngine)
+    engine.evaluate = MagicMock(return_value=_make_hold_match())
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    for _ in range(2):
+        await trading_cycle(
+            broker=broker,
+            overseas_broker=MagicMock(),
+            scenario_engine=engine,
+            playbook=playbook,
+            risk=MagicMock(),
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(
+                get_latest_timeframe=MagicMock(return_value=None),
+                set_context=MagicMock(),
+            ),
+            criticality_assessor=MagicMock(
+                assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                get_timeout=MagicMock(return_value=5.0),
+            ),
+            telegram=telegram,
+            market=market,
+            stock_code="005930",
+            scan_candidates={},
+        )
+
+    broker.send_order.assert_called_once()
+    assert broker.send_order.call_args.kwargs["order_type"] == "SELL"
+
+
+@pytest.mark.asyncio
+async def test_runtime_exit_cache_cleared_when_position_closed() -> None:
+    """Runtime staged-exit cache must be cleared when no open position exists."""
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    buy_decision_id = decision_logger.log_decision(
+        stock_code="005930",
+        market="KR",
+        exchange_code="KRX",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        context_snapshot={},
+        input_data={},
+    )
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        quantity=1,
+        price=100.0,
+        market="KR",
+        exchange_code="KRX",
+        decision_id=buy_decision_id,
+    )
+
+    broker = MagicMock()
+    broker.get_current_price = AsyncMock(return_value=(100.0, 0.0, 0.0))
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output1": [{"pdno": "005930", "ord_psbl_qty": "1"}],
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "10000",
+                    "pchs_amt_smtl_amt": "90000",
+                }
+            ],
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    _RUNTIME_EXIT_STATES[f"{market.code}:005930:{buy_decision_id}:dummy-ts"] = PositionState.BE_LOCK
+    _RUNTIME_EXIT_PEAKS[f"{market.code}:005930:{buy_decision_id}:dummy-ts"] = 120.0
+
+    # Close position first so trading_cycle observes no open position.
+    sell_decision_id = decision_logger.log_decision(
+        stock_code="005930",
+        market="KR",
+        exchange_code="KRX",
+        action="SELL",
+        confidence=90,
+        rationale="manual close",
+        context_snapshot={},
+        input_data={},
+    )
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="SELL",
+        confidence=90,
+        rationale="manual close",
+        quantity=1,
+        price=100.0,
+        market="KR",
+        exchange_code="KRX",
+        decision_id=sell_decision_id,
+    )
+
+    await trading_cycle(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_hold_match())),
+        playbook=_make_playbook(),
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        context_store=MagicMock(
+            get_latest_timeframe=MagicMock(return_value=None),
+            set_context=MagicMock(),
+        ),
+        criticality_assessor=MagicMock(
+            assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+            get_timeout=MagicMock(return_value=5.0),
+        ),
+        telegram=telegram,
+        market=market,
+        stock_code="005930",
+        scan_candidates={},
+    )
+
+    assert not [k for k in _RUNTIME_EXIT_STATES if k.startswith("KR:005930:")]
+    assert not [k for k in _RUNTIME_EXIT_PEAKS if k.startswith("KR:005930:")]
+
+
+@pytest.mark.asyncio
 async def test_stop_loss_not_triggered_when_current_price_is_zero() -> None:
     """HOLD must stay HOLD when current_price=0 even if entry_price is set (issue #251).
 
@@ -4133,6 +4352,130 @@ class TestDailyCBBaseline:
 
         # Must return the original baseline, NOT the new total_eval (58000)
         assert result == 55000.0
+
+
+@pytest.mark.asyncio
+async def test_run_daily_session_applies_staged_exit_override_on_hold() -> None:
+    """run_daily_session must apply HOLD staged exit semantics (issue #304)."""
+    from src.analysis.smart_scanner import ScanCandidate
+
+    db_conn = init_db(":memory:")
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        quantity=1,
+        price=100.0,
+        market="KR",
+        exchange_code="KRX",
+        decision_id="buy-d1",
+    )
+
+    settings = Settings(
+        KIS_APP_KEY="k",
+        KIS_APP_SECRET="s",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="g",
+        MODE="paper",
+    )
+
+    broker = MagicMock()
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output1": [{"pdno": "005930", "ord_psbl_qty": "1"}],
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "10000",
+                    "pchs_amt_smtl_amt": "90000",
+                }
+            ],
+        }
+    )
+    broker.get_current_price = AsyncMock(return_value=(95.0, -5.0, 0.0))
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+    market.timezone = __import__("zoneinfo").ZoneInfo("Asia/Seoul")
+
+    scenario = StockScenario(
+        condition=StockCondition(rsi_below=30),
+        action=ScenarioAction.BUY,
+        confidence=88,
+        stop_loss_pct=-2.0,
+        take_profit_pct=3.0,
+        rationale="stop loss policy",
+    )
+    playbook = DayPlaybook(
+        date=date(2026, 2, 8),
+        market="KR",
+        stock_playbooks=[
+            {"stock_code": "005930", "stock_name": "Samsung", "scenarios": [scenario]}
+        ],
+    )
+    playbook_store = MagicMock()
+    playbook_store.load = MagicMock(return_value=playbook)
+
+    smart_scanner = MagicMock()
+    smart_scanner.scan = AsyncMock(
+        return_value=[
+            ScanCandidate(
+                stock_code="005930",
+                name="Samsung",
+                price=95.0,
+                volume=1_000_000.0,
+                volume_ratio=2.0,
+                rsi=42.0,
+                signal="momentum",
+                score=80.0,
+            )
+        ]
+    )
+
+    scenario_engine = MagicMock(spec=ScenarioEngine)
+    scenario_engine.evaluate = MagicMock(return_value=_make_hold_match("005930"))
+
+    risk = MagicMock()
+    risk.check_circuit_breaker = MagicMock()
+    risk.validate_order = MagicMock()
+
+    decision_logger = MagicMock()
+    decision_logger.log_decision = MagicMock(return_value="d1")
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    async def _passthrough(fn, *a, label: str = "", **kw):  # type: ignore[override]
+        return await fn(*a, **kw)
+
+    with patch("src.main.get_open_markets", return_value=[market]), \
+         patch("src.main._retry_connection", new=_passthrough):
+        await run_daily_session(
+            broker=broker,
+            overseas_broker=MagicMock(),
+            scenario_engine=scenario_engine,
+            playbook_store=playbook_store,
+            pre_market_planner=MagicMock(),
+            risk=risk,
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(),
+            criticality_assessor=MagicMock(),
+            telegram=telegram,
+            settings=settings,
+            smart_scanner=smart_scanner,
+            daily_start_eval=0.0,
+        )
+
+    broker.send_order.assert_called_once()
+    assert broker.send_order.call_args.kwargs["order_type"] == "SELL"
 
 
 # ---------------------------------------------------------------------------
