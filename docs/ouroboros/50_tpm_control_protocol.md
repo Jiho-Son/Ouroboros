@@ -34,6 +34,12 @@ Main Agent 아이디에이션 책임:
 - DCP-03 구현 착수: Phase 2 종료 전 Main Agent 승인 필수
 - DCP-04 배포 승인: Phase 4 종료 후 Main Agent 최종 승인 필수
 
+Main/Verifier 사고 재발 방지 규칙:
+- Main Agent는 검증 위임 시 `Directive Contract`를 충족하지 않으면 검증 착수 금지
+- Verifier Agent는 지시 누락/모호성 발견 시 즉시 `BLOCKED`를 선언하고 보완 요청
+- Verifier Agent는 `미관측(NOT_OBSERVED)` 항목을 PASS로 보고할 수 없다
+- Runtime 검증에서 요구 세션 증적이 없으면 "정상"이 아니라 `미검증 이상`으로 이슈화한다
+
 ## Phase Control Gates
 
 ### Phase 0: Scenario Intake and Scope Lock
@@ -112,6 +118,8 @@ Exit criteria:
 
 Control checks:
 - Verifier가 테스트 증적(로그/리포트/실행 커맨드) 첨부
+- Verifier가 `Coverage Matrix`(`REQ/TASK/TEST` x `PASS/FAIL/NOT_OBSERVED`) 첨부
+- `NOT_OBSERVED` 항목 수가 0인지 확인(0이 아니면 Gate 실패)
 - Runtime Verifier가 스테이징/실운영 모니터링 계획 승인
 - 산출물: 수용 승인 레코드
 
@@ -150,6 +158,8 @@ TPM 티켓 운영 규칙:
 - PR 본문에는 TPM이 지정한 우선순위와 범위가 그대로 반영되어야 한다.
 - 우선순위 변경은 TPM 제안 + Main Agent 승인으로만 가능하다.
 - PM/TPM/Dev/Reviewer/Verifier/Runtime Verifier는 주요 의사결정 시점마다 PR 코멘트를 남겨 결정 근거를 추적 가능 상태로 유지한다.
+- PM/TPM/Dev/Reviewer/Verifier/Runtime Verifier는 이슈/PR/코멘트 조작 전에 `docs/commands.md`와 `docs/workflow.md`의 Gitea 트러블슈팅 섹션을 선참조해야 한다.
+- 저장소 협업에서 GitHub CLI(`gh`) 사용은 금지하며, Gitea 작업은 `tea`(필요 시 문서화된 API fallback)만 허용한다.
 
 브랜치 운영 규칙:
 - TPM은 각 티켓에 대해 `ticket temp branch -> program feature branch` PR 경로를 지정한다.
@@ -168,6 +178,8 @@ TPM 티켓 운영 규칙:
   - 시스템 실제 구동(스테이징/로컬 실운영 모드) 실행
   - 모니터링 체크리스트(핵심 경보/주문 경로/예외 로그) 수행
   - 결과를 티켓/PR 코멘트에 증적으로 첨부하지 않으면 완료로 간주하지 않음
+  - 세션별 필수 관측 포인트(`NXT`, `US_PRE`, `US_DAY`, `US_AFTER` 등) 중 미관측 항목은 `NOT_OBSERVED`로 기록
+  - `NOT_OBSERVED` 존재 시 승인 금지 + Runtime 이슈 발행
 
 ## Server Reflection Rule
 

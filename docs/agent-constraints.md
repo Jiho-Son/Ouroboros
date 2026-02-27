@@ -12,6 +12,8 @@ It is distinct from `docs/requirements-log.md`, which records **project/product 
 
 1. **Workflow enforcement**
    - Follow `docs/workflow.md` for all changes.
+   - Before any Gitea issue/PR/comment operation, read `docs/commands.md` and `docs/workflow.md` troubleshooting section.
+   - Use `tea` for Gitea operations; do not use GitHub CLI (`gh`) in this repository workflow.
    - Create a Gitea issue before any code or documentation change.
    - Work on a feature branch `feature/issue-{N}-{short-description}` and open a PR.
    - Never commit directly to `main`.
@@ -43,3 +45,8 @@ It is distinct from `docs/requirements-log.md`, which records **project/product 
 - When work requires guidance, consult the relevant `docs/` policies first.
 - Any code change must be accompanied by relevant documentation updates.
 - Persist user constraints across sessions by recording them in this document.
+
+### 2026-02-27
+
+- All agents must pre-read `docs/commands.md` and `docs/workflow.md` troubleshooting before running Gitea issue/PR/comment commands.
+- `gh` CLI is prohibited for repository ticket/PR operations; use `tea` (or documented Gitea API fallback only).

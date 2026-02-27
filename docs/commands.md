@@ -4,6 +4,13 @@
 
 **Critical: Learn from failures. Never repeat the same failed command without modification.**
 
+## Repository VCS Rule (Mandatory)
+
+- 이 저장소의 티켓/PR/코멘트 작업은 Gitea 기준으로 수행한다.
+- `gh`(GitHub CLI) 명령 사용은 금지한다.
+- 기본 도구는 `tea`이며, `tea` 미지원 케이스만 Gitea API를 fallback으로 사용한다.
+- 실행 전 `docs/workflow.md`의 `Gitea CLI Formatting Troubleshooting`을 반드시 확인한다.
+
 ### tea CLI (Gitea Command Line Tool)
 
 #### ❌ TTY Error - Interactive Confirmation Fails
@@ -139,6 +146,12 @@ python -m src.main --mode=paper
 
 # Run with dashboard enabled
 python -m src.main --mode=paper --dashboard
+
+# Runtime verification monitor (NOT_OBSERVED detection)
+bash scripts/runtime_verify_monitor.sh
+
+# Follow runtime verification log
+tail -f data/overnight/runtime_verify_*.log
 
 # Docker
 docker compose up -d ouroboros          # Run agent

@@ -21,6 +21,12 @@ jobs:
       - name: Install dependencies
         run: pip install ".[dev]"
 
+      - name: Validate governance assets
+        run: python3 scripts/validate_governance_assets.py
+
+      - name: Validate Ouroboros docs
+        run: python3 scripts/validate_ouroboros_docs.py
+
       - name: Lint
         run: ruff check src/ tests/
 
