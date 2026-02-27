@@ -8,6 +8,11 @@
 - TASK: `TASK-...`
 - TEST: `TEST-...`
 
+## Ticket Stage
+
+- Current stage: `Implemented` / `Integrated` / `Observed` / `Accepted`
+- Previous stage evidence link:
+
 ## Main -> Verifier Directive Contract
 
 - Scope: 대상 요구사항/코드/로그 경로
@@ -36,3 +41,7 @@
 - 모니터링 로그 경로:
 - 이상 징후/이슈 링크:
 
+## Approval Gate
+
+- [ ] Static Verifier approval comment linked
+- [ ] Runtime Verifier approval comment linked
