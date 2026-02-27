@@ -81,6 +81,7 @@ def _check_handover_entry(
         "- docs_checked:",
         "- open_issues_reviewed:",
         "- next_ticket:",
+        "- process_gate_checked:",
     )
     for token in required_tokens:
         if token not in latest:
@@ -97,6 +98,13 @@ def _check_handover_entry(
             errors.append(
                 "latest handover entry must target current branch "
                 f"({branch_token})"
+            )
+        if "- next_ticket: #TBD" in latest:
+            errors.append("latest handover entry must not use placeholder next_ticket (#TBD)")
+        if "merged_to_feature_branch=no" in latest:
+            errors.append(
+                "process gate indicates not merged; implementation must stay blocked "
+                "(merged_to_feature_branch=no)"
             )
 
 
