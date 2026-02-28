@@ -157,8 +157,11 @@ python -m src.main --mode=paper
 # Run with dashboard enabled
 python -m src.main --mode=paper --dashboard
 
-# Runtime verification monitor (NOT_OBSERVED detection)
+# Runtime verification monitor (coverage + forbidden invariants)
 bash scripts/runtime_verify_monitor.sh
+
+# Runtime monitor with explicit policy timezone (example: KST)
+POLICY_TZ=Asia/Seoul bash scripts/runtime_verify_monitor.sh
 
 # Session handover gate (must pass before implementation)
 python3 scripts/session_handover_check.py --strict

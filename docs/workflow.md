@@ -195,6 +195,11 @@ Use `run_in_background=True` for independent tasks that don't block subsequent w
 - `NOT_OBSERVED`는 운영상 `FAIL`과 동일하게 처리
 - `NOT_OBSERVED`가 하나라도 있으면 승인/머지 금지
 
+`FORBIDDEN` 처리 규칙:
+- 정책 위반 신호(예: 주말 `session=KRX_REG`)는 `FORBIDDEN=HIT`으로 별도 기록한다
+- `FORBIDDEN=HIT`은 즉시 `P0 FAIL`로 간주하고 모니터링 승인 불가
+- 실시간 모니터는 `alive`만으로 정상 판정하지 않는다(정책 불변식 통과가 필수)
+
 ### Process-Change-First Rule (Mandatory)
 
 재발 방지/운영 규칙 변경이 결정되면, 기능 구현 티켓보다 먼저 서버(feature branch)에 반영해야 한다.

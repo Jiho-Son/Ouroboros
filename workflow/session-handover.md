@@ -81,3 +81,11 @@
 - next_ticket: #314
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: 백테스트 자동 게이트 도입 티켓 브랜치 strict gate 통과용 엔트리
+
+### 2026-02-28 | session=codex-issue316-forbidden-monitor
+- branch: feature/issue-316-weekend-forbidden-monitor
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #316
+- next_ticket: #316
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: 모니터 판정을 liveness 중심에서 policy invariant(FORBIDDEN) 중심으로 전환
