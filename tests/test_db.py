@@ -329,3 +329,53 @@ def test_log_trade_unknown_market_falls_back_to_unknown_session() -> None:
     row = conn.execute("SELECT session_id FROM trades ORDER BY id DESC LIMIT 1").fetchone()
     assert row is not None
     assert row[0] == "UNKNOWN"
+
+
+def test_decision_logs_session_id_migration_backfills_unknown() -> None:
+    import sqlite3
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+    try:
+        old_conn = sqlite3.connect(db_path)
+        old_conn.execute(
+            """
+            CREATE TABLE decision_logs (
+                decision_id TEXT PRIMARY KEY,
+                timestamp TEXT NOT NULL,
+                stock_code TEXT NOT NULL,
+                market TEXT NOT NULL,
+                exchange_code TEXT NOT NULL,
+                action TEXT NOT NULL,
+                confidence INTEGER NOT NULL,
+                rationale TEXT NOT NULL,
+                context_snapshot TEXT NOT NULL,
+                input_data TEXT NOT NULL
+            )
+            """
+        )
+        old_conn.execute(
+            """
+            INSERT INTO decision_logs (
+                decision_id, timestamp, stock_code, market, exchange_code,
+                action, confidence, rationale, context_snapshot, input_data
+            ) VALUES (
+                'd1', '2026-01-01T00:00:00+00:00', 'AAPL', 'US_NASDAQ', 'NASD',
+                'BUY', 80, 'legacy row', '{}', '{}'
+            )
+            """
+        )
+        old_conn.commit()
+        old_conn.close()
+
+        conn = init_db(db_path)
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(decision_logs)").fetchall()}
+        assert "session_id" in columns
+        row = conn.execute(
+            "SELECT session_id FROM decision_logs WHERE decision_id='d1'"
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "UNKNOWN"
+        conn.close()
+    finally:
+        os.unlink(db_path)

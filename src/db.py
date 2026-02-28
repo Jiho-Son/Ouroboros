@@ -109,6 +109,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
             stock_code TEXT NOT NULL,
             market TEXT NOT NULL,
             exchange_code TEXT NOT NULL,
+            session_id TEXT DEFAULT 'UNKNOWN',
             action TEXT NOT NULL,
             confidence INTEGER NOT NULL,
             rationale TEXT NOT NULL,
@@ -121,6 +122,27 @@ def init_db(db_path: str) -> sqlite3.Connection:
         )
         """
     )
+    decision_columns = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(decision_logs)").fetchall()
+    }
+    if "session_id" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN session_id TEXT DEFAULT 'UNKNOWN'")
+        conn.execute(
+            """
+            UPDATE decision_logs
+            SET session_id = 'UNKNOWN'
+            WHERE session_id IS NULL OR session_id = ''
+            """
+        )
+    if "outcome_pnl" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN outcome_pnl REAL")
+    if "outcome_accuracy" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN outcome_accuracy INTEGER")
+    if "reviewed" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN reviewed INTEGER DEFAULT 0")
+    if "review_notes" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN review_notes TEXT")
 
     conn.execute(
         """
