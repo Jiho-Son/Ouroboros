@@ -9,6 +9,7 @@ This module:
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
 import sqlite3
@@ -28,24 +29,24 @@ from src.logging.decision_logger import DecisionLogger
 logger = logging.getLogger(__name__)
 
 STRATEGIES_DIR = Path("src/strategies")
-STRATEGY_TEMPLATE = textwrap.dedent("""\
-    \"\"\"Auto-generated strategy: {name}
+STRATEGY_TEMPLATE = """\
+\"\"\"Auto-generated strategy: {name}
 
-    Generated at: {timestamp}
-    Rationale: {rationale}
-    \"\"\"
+Generated at: {timestamp}
+Rationale: {rationale}
+\"\"\"
 
-    from __future__ import annotations
-    from typing import Any
-    from src.strategies.base import BaseStrategy
+from __future__ import annotations
+from typing import Any
+from src.strategies.base import BaseStrategy
 
 
-    class {class_name}(BaseStrategy):
-        \"\"\"Strategy: {name}\"\"\"
+class {class_name}(BaseStrategy):
+    \"\"\"Strategy: {name}\"\"\"
 
-        def evaluate(self, market_data: dict[str, Any]) -> dict[str, Any]:
-            {body}
-""")
+    def evaluate(self, market_data: dict[str, Any]) -> dict[str, Any]:
+{body}
+"""
 
 
 class EvolutionOptimizer:
@@ -235,7 +236,8 @@ class EvolutionOptimizer:
         file_path = STRATEGIES_DIR / file_name
 
         # Indent the body for the class method
-        indented_body = textwrap.indent(body, "            ")
+        normalized_body = textwrap.dedent(body).strip()
+        indented_body = textwrap.indent(normalized_body, "            ")
 
         # Generate rationale from patterns
         rationale = f"Auto-evolved from {len(failures)} failures. "
@@ -247,8 +249,15 @@ class EvolutionOptimizer:
             timestamp=datetime.now(UTC).isoformat(),
             rationale=rationale,
             class_name=class_name,
-            body=indented_body.strip(),
+            body=indented_body.rstrip(),
         )
+
+        try:
+            parsed = ast.parse(content, filename=str(file_path))
+            compile(parsed, filename=str(file_path), mode="exec")
+        except SyntaxError as exc:
+            logger.warning("Generated strategy failed syntax validation: %s", exc)
+            return None
 
         file_path.write_text(content)
         logger.info("Generated strategy file: %s", file_path)
