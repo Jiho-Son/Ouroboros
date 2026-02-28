@@ -246,6 +246,52 @@ async def test_generate_strategy_creates_file(optimizer: EvolutionOptimizer, tmp
 
 
 @pytest.mark.asyncio
+async def test_generate_strategy_saves_valid_python_code(
+    optimizer: EvolutionOptimizer, tmp_path: Path,
+) -> None:
+    """Test that syntactically valid generated code is saved."""
+    failures = [{"decision_id": "1", "timestamp": "2024-01-15T09:30:00+00:00"}]
+
+    mock_response = Mock()
+    mock_response.text = (
+        'price = market_data.get("current_price", 0)\n'
+        'if price > 0:\n'
+        '    return {"action": "BUY", "confidence": 80, "rationale": "Positive price"}\n'
+        'return {"action": "HOLD", "confidence": 50, "rationale": "No signal"}\n'
+    )
+
+    with patch.object(optimizer._client.aio.models, "generate_content", new=AsyncMock(return_value=mock_response)):
+        with patch("src.evolution.optimizer.STRATEGIES_DIR", tmp_path):
+            strategy_path = await optimizer.generate_strategy(failures)
+
+    assert strategy_path is not None
+    assert strategy_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_generate_strategy_blocks_invalid_python_code(
+    optimizer: EvolutionOptimizer, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that syntactically invalid generated code is not saved."""
+    failures = [{"decision_id": "1", "timestamp": "2024-01-15T09:30:00+00:00"}]
+
+    mock_response = Mock()
+    mock_response.text = (
+        'if market_data.get("current_price", 0) > 0\n'
+        '    return {"action": "BUY", "confidence": 80, "rationale": "broken"}\n'
+    )
+
+    with patch.object(optimizer._client.aio.models, "generate_content", new=AsyncMock(return_value=mock_response)):
+        with patch("src.evolution.optimizer.STRATEGIES_DIR", tmp_path):
+            with caplog.at_level("WARNING"):
+                strategy_path = await optimizer.generate_strategy(failures)
+
+    assert strategy_path is None
+    assert list(tmp_path.glob("*.py")) == []
+    assert "failed syntax validation" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_generate_strategy_handles_api_error(optimizer: EvolutionOptimizer) -> None:
     """Test that generate_strategy handles Gemini API errors gracefully."""
     failures = [{"decision_id": "1", "timestamp": "2024-01-15T09:30:00+00:00"}]
