@@ -1658,8 +1658,8 @@ async def trading_cycle(
             buy_trade = get_latest_buy_trade(db_conn, stock_code, market.code)
             if buy_trade and buy_trade.get("price") is not None:
                 buy_price = float(buy_trade["price"])
-                buy_qty = int(buy_trade.get("quantity") or 1)
-                trade_pnl = (trade_price - buy_price) * buy_qty
+                sell_qty = int(quantity or 0)
+                trade_pnl = (trade_price - buy_price) * sell_qty
                 decision_logger.update_outcome(
                     decision_id=buy_trade["decision_id"],
                     pnl=trade_pnl,
@@ -2755,8 +2755,8 @@ async def run_daily_session(
                     buy_trade = get_latest_buy_trade(db_conn, stock_code, market.code)
                     if buy_trade and buy_trade.get("price") is not None:
                         buy_price = float(buy_trade["price"])
-                        buy_qty = int(buy_trade.get("quantity") or 1)
-                        trade_pnl = (trade_price - buy_price) * buy_qty
+                        sell_qty = int(quantity or 0)
+                        trade_pnl = (trade_price - buy_price) * sell_qty
                         decision_logger.update_outcome(
                             decision_id=buy_trade["decision_id"],
                             pnl=trade_pnl,

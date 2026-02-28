@@ -2750,6 +2750,9 @@ async def test_sell_order_uses_broker_balance_qty_not_db() -> None:
     assert call_kwargs["order_type"] == "SELL"
     # Must use broker-confirmed qty (5), NOT DB-recorded ordered qty (10)
     assert call_kwargs["quantity"] == 5
+    updated_buy = decision_logger.get_decision_by_id(buy_decision_id)
+    assert updated_buy is not None
+    assert updated_buy.outcome_pnl == -25.0
 
 
 @pytest.mark.asyncio
