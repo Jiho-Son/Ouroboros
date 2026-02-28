@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
 from src.analysis.triple_barrier import TripleBarrierSpec, label_with_triple_barrier
 
 
@@ -129,3 +133,52 @@ def test_short_tie_break_modes() -> None:
     )
     assert out_take.label == 1
     assert out_take.touched == "take_profit"
+
+
+def test_minutes_time_barrier_consistent_across_sampling() -> None:
+    base = datetime(2026, 2, 28, 9, 0, tzinfo=UTC)
+    highs = [100.0, 100.5, 100.6, 100.4]
+    lows = [100.0, 99.6, 99.4, 99.5]
+    closes = [100.0, 100.1, 100.0, 100.0]
+    spec = TripleBarrierSpec(
+        take_profit_pct=0.02,
+        stop_loss_pct=0.02,
+        max_holding_minutes=5,
+    )
+
+    out_1m = label_with_triple_barrier(
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        timestamps=[base + timedelta(minutes=i) for i in range(4)],
+        entry_index=0,
+        side=1,
+        spec=spec,
+    )
+    out_5m = label_with_triple_barrier(
+        highs=highs,
+        lows=lows,
+        closes=closes,
+        timestamps=[base + timedelta(minutes=5 * i) for i in range(4)],
+        entry_index=0,
+        side=1,
+        spec=spec,
+    )
+    assert out_1m.touch_bar == 3
+    assert out_5m.touch_bar == 1
+
+
+def test_bars_mode_emits_deprecation_warning() -> None:
+    highs = [100, 101, 103]
+    lows = [100, 99.6, 100]
+    closes = [100, 100, 102]
+    spec = TripleBarrierSpec(take_profit_pct=0.02, stop_loss_pct=0.01, max_holding_bars=3)
+    with pytest.deprecated_call(match="max_holding_bars is deprecated"):
+        label_with_triple_barrier(
+            highs=highs,
+            lows=lows,
+            closes=closes,
+            entry_index=0,
+            side=1,
+            spec=spec,
+        )
