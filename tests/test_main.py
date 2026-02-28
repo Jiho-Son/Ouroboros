@@ -5853,6 +5853,7 @@ async def test_process_blackout_recovery_executes_valid_intents() -> None:
         patch("src.main.MARKETS", {"KR": market}),
         patch("src.main.get_open_position", return_value=None),
         patch("src.main.validate_order_policy"),
+        patch("src.main.get_session_info", return_value=MagicMock(session_id="KRX_REG")),
     ):
         await process_blackout_recovery_orders(
             broker=broker,
@@ -5861,6 +5862,19 @@ async def test_process_blackout_recovery_executes_valid_intents() -> None:
         )
 
     broker.send_order.assert_called_once()
+    row = db_conn.execute(
+        """
+        SELECT action, quantity, session_id, rationale
+        FROM trades
+        WHERE stock_code = '005930'
+        ORDER BY id DESC LIMIT 1
+        """
+    ).fetchone()
+    assert row is not None
+    assert row[0] == "BUY"
+    assert row[1] == 1
+    assert row[2] == "KRX_REG"
+    assert row[3].startswith("[blackout-recovery]")
 
 
 @pytest.mark.asyncio
