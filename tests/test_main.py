@@ -15,6 +15,7 @@ from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
 from src.main import (
     KILL_SWITCH,
+    _STOPLOSS_REENTRY_COOLDOWN_UNTIL,
     _RUNTIME_EXIT_PEAKS,
     _RUNTIME_EXIT_STATES,
     _should_force_exit_for_overnight,
@@ -93,10 +94,12 @@ def _reset_kill_switch_state() -> None:
     KILL_SWITCH.clear_block()
     _RUNTIME_EXIT_STATES.clear()
     _RUNTIME_EXIT_PEAKS.clear()
+    _STOPLOSS_REENTRY_COOLDOWN_UNTIL.clear()
     yield
     KILL_SWITCH.clear_block()
     _RUNTIME_EXIT_STATES.clear()
     _RUNTIME_EXIT_PEAKS.clear()
+    _STOPLOSS_REENTRY_COOLDOWN_UNTIL.clear()
 
 
 class TestExtractAvgPriceFromBalance:
@@ -2053,6 +2056,105 @@ async def test_sell_updates_original_buy_decision_outcome() -> None:
     assert updated_buy is not None
     assert updated_buy.outcome_pnl == 20.0
     assert updated_buy.outcome_accuracy == 1
+    assert "KR:005930" not in _STOPLOSS_REENTRY_COOLDOWN_UNTIL
+
+
+@pytest.mark.asyncio
+async def test_stoploss_reentry_cooldown_blocks_buy_when_active() -> None:
+    _STOPLOSS_REENTRY_COOLDOWN_UNTIL["KR:005930"] = datetime.now(UTC).timestamp() + 300
+    db_conn = init_db(":memory:")
+
+    broker = MagicMock()
+    broker.get_current_price = AsyncMock(return_value=(100.0, 0.0, 0.0))
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output1": [],
+            "output2": [{"tot_evlu_amt": "100000", "dnca_tot_amt": "50000", "pchs_amt_smtl_amt": "50000"}],
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    await trading_cycle(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_buy_match("005930"))),
+        playbook=_make_playbook(),
+        risk=MagicMock(validate_order=MagicMock(), check_circuit_breaker=MagicMock()),
+        db_conn=db_conn,
+        decision_logger=DecisionLogger(db_conn),
+        context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None), set_context=MagicMock()),
+        criticality_assessor=MagicMock(
+            assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+            get_timeout=MagicMock(return_value=5.0),
+        ),
+        telegram=MagicMock(
+            notify_trade_execution=AsyncMock(),
+            notify_fat_finger=AsyncMock(),
+            notify_circuit_breaker=AsyncMock(),
+            notify_scenario_matched=AsyncMock(),
+        ),
+        market=market,
+        stock_code="005930",
+        scan_candidates={},
+        settings=MagicMock(POSITION_SIZING_ENABLED=False, CONFIDENCE_THRESHOLD=80, MODE="paper"),
+    )
+
+    broker.send_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stoploss_reentry_cooldown_allows_buy_after_expiry() -> None:
+    _STOPLOSS_REENTRY_COOLDOWN_UNTIL["KR:005930"] = datetime.now(UTC).timestamp() - 10
+    db_conn = init_db(":memory:")
+
+    broker = MagicMock()
+    broker.get_current_price = AsyncMock(return_value=(100.0, 0.0, 0.0))
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output1": [],
+            "output2": [{"tot_evlu_amt": "100000", "dnca_tot_amt": "50000", "pchs_amt_smtl_amt": "50000"}],
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    await trading_cycle(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_buy_match("005930"))),
+        playbook=_make_playbook(),
+        risk=MagicMock(validate_order=MagicMock(), check_circuit_breaker=MagicMock()),
+        db_conn=db_conn,
+        decision_logger=DecisionLogger(db_conn),
+        context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None), set_context=MagicMock()),
+        criticality_assessor=MagicMock(
+            assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+            get_timeout=MagicMock(return_value=5.0),
+        ),
+        telegram=MagicMock(
+            notify_trade_execution=AsyncMock(),
+            notify_fat_finger=AsyncMock(),
+            notify_circuit_breaker=AsyncMock(),
+            notify_scenario_matched=AsyncMock(),
+        ),
+        market=market,
+        stock_code="005930",
+        scan_candidates={},
+        settings=MagicMock(POSITION_SIZING_ENABLED=False, CONFIDENCE_THRESHOLD=80, MODE="paper"),
+    )
+
+    broker.send_order.assert_called_once()
 
 
 @pytest.mark.asyncio
