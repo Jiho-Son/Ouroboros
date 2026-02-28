@@ -312,22 +312,47 @@ def _resolve_session_id(*, market: str, session_id: str | None) -> str:
 
 
 def get_latest_buy_trade(
-    conn: sqlite3.Connection, stock_code: str, market: str
+    conn: sqlite3.Connection,
+    stock_code: str,
+    market: str,
+    exchange_code: str | None = None,
 ) -> dict[str, Any] | None:
     """Fetch the most recent BUY trade for a stock and market."""
-    cursor = conn.execute(
-        """
-        SELECT decision_id, price, quantity
-        FROM trades
-        WHERE stock_code = ?
-          AND market = ?
-          AND action = 'BUY'
-          AND decision_id IS NOT NULL
-        ORDER BY timestamp DESC
-        LIMIT 1
-        """,
-        (stock_code, market),
-    )
+    if exchange_code:
+        cursor = conn.execute(
+            """
+            SELECT decision_id, price, quantity
+            FROM trades
+            WHERE stock_code = ?
+              AND market = ?
+              AND action = 'BUY'
+              AND decision_id IS NOT NULL
+              AND (
+                  exchange_code = ?
+                  OR exchange_code IS NULL
+                  OR exchange_code = ''
+              )
+            ORDER BY
+              CASE WHEN exchange_code = ? THEN 0 ELSE 1 END,
+              timestamp DESC
+            LIMIT 1
+            """,
+            (stock_code, market, exchange_code, exchange_code),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            SELECT decision_id, price, quantity
+            FROM trades
+            WHERE stock_code = ?
+              AND market = ?
+              AND action = 'BUY'
+              AND decision_id IS NOT NULL
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (stock_code, market),
+        )
     row = cursor.fetchone()
     if not row:
         return None

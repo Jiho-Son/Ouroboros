@@ -3,7 +3,7 @@
 import tempfile
 import os
 
-from src.db import get_open_position, init_db, log_trade
+from src.db import get_latest_buy_trade, get_open_position, init_db, log_trade
 
 
 def test_get_open_position_returns_latest_buy() -> None:
@@ -329,6 +329,42 @@ def test_log_trade_unknown_market_falls_back_to_unknown_session() -> None:
     row = conn.execute("SELECT session_id FROM trades ORDER BY id DESC LIMIT 1").fetchone()
     assert row is not None
     assert row[0] == "UNKNOWN"
+
+
+def test_get_latest_buy_trade_prefers_exchange_code_match() -> None:
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="BUY",
+        confidence=80,
+        rationale="legacy",
+        quantity=10,
+        price=120.0,
+        market="US_NASDAQ",
+        exchange_code="",
+        decision_id="legacy-buy",
+    )
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="BUY",
+        confidence=85,
+        rationale="matched",
+        quantity=5,
+        price=125.0,
+        market="US_NASDAQ",
+        exchange_code="NASD",
+        decision_id="matched-buy",
+    )
+    matched = get_latest_buy_trade(
+        conn,
+        stock_code="AAPL",
+        market="US_NASDAQ",
+        exchange_code="NASD",
+    )
+    assert matched is not None
+    assert matched["decision_id"] == "matched-buy"
 
 
 def test_decision_logs_session_id_migration_backfills_unknown() -> None:
