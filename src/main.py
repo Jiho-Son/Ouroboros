@@ -217,6 +217,7 @@ async def sync_positions_from_broker(
                 price=avg_price,
                 market=log_market,
                 exchange_code=market.exchange_code,
+                session_id=get_session_info(market).session_id,
                 mode=settings.MODE,
             )
             logger.info(
@@ -1368,10 +1369,12 @@ async def trading_cycle(
         "pnl_pct": pnl_pct,
     }
 
+    runtime_session_id = get_session_info(market).session_id
     decision_id = decision_logger.log_decision(
         stock_code=stock_code,
         market=market.code,
         exchange_code=market.exchange_code,
+        session_id=runtime_session_id,
         action=decision.action,
         confidence=decision.confidence,
         rationale=decision.rationale,
@@ -1636,6 +1639,7 @@ async def trading_cycle(
                         pnl=0.0,
                         market=market.code,
                         exchange_code=market.exchange_code,
+                        session_id=runtime_session_id,
                         mode=settings.MODE if settings else "paper",
                     )
         logger.info("Order result: %s", result.get("msg1", "OK"))
@@ -1690,6 +1694,7 @@ async def trading_cycle(
         pnl=trade_pnl,
         market=market.code,
         exchange_code=market.exchange_code,
+        session_id=runtime_session_id,
         selection_context=selection_context,
         decision_id=decision_id,
         mode=settings.MODE if settings else "paper",
@@ -2497,10 +2502,12 @@ async def run_daily_session(
                 "pnl_pct": pnl_pct,
             }
 
+            runtime_session_id = get_session_info(market).session_id
             decision_id = decision_logger.log_decision(
                 stock_code=stock_code,
                 market=market.code,
                 exchange_code=market.exchange_code,
+                session_id=runtime_session_id,
                 action=decision.action,
                 confidence=decision.confidence,
                 rationale=decision.rationale,
@@ -2777,6 +2784,7 @@ async def run_daily_session(
                 pnl=trade_pnl,
                 market=market.code,
                 exchange_code=market.exchange_code,
+                session_id=runtime_session_id,
                 decision_id=decision_id,
                 mode=settings.MODE,
             )
