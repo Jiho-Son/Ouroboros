@@ -750,6 +750,20 @@ async def process_blackout_recovery_orders(
 
             accepted = result.get("rt_cd", "0") == "0"
             if accepted:
+                runtime_session_id = get_session_info(market).session_id
+                log_trade(
+                    conn=db_conn,
+                    stock_code=intent.stock_code,
+                    action=intent.order_type,
+                    confidence=0,
+                    rationale=f"[blackout-recovery] {intent.source}",
+                    quantity=intent.quantity,
+                    price=float(intent.price),
+                    pnl=0.0,
+                    market=market.code,
+                    exchange_code=market.exchange_code,
+                    session_id=runtime_session_id,
+                )
                 logger.info(
                     "Recovered queued order executed: %s %s (%s) qty=%d price=%.4f source=%s",
                     intent.order_type,
