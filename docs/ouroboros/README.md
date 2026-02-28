@@ -23,6 +23,7 @@ Updated: 2026-02-26
 9. 저장소 강제 설정 체크리스트: [60_repo_enforcement_checklist.md](./60_repo_enforcement_checklist.md)
 10. 메인 에이전트 아이디에이션 백로그: [70_main_agent_ideation.md](./70_main_agent_ideation.md)
 11. v2/v3 구현 감사 및 수익률 분석: [80_implementation_audit.md](./80_implementation_audit.md)
+12. 손실 복구 실행 계획: [85_loss_recovery_action_plan.md](./85_loss_recovery_action_plan.md)
 
 ## 운영 규칙
 

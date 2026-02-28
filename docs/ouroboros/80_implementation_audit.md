@@ -112,14 +112,13 @@ Updated: 2026-02-28
 
 ### 3.2 일별 손익
 
-> 주의: 아래 초기 집계 건수는 DB 실측치와 일부 불일치 (02-26: 문서 10건 vs DB 14건, 02-27: 문서 21건 vs DB 22건).
-> 정확한 재현은 3.8 표준 집계 SQL 참조.
-
-| 날짜 | 매도 수 (초기 집계) | 승 | 패 | 일간 손익 |
-|------|---------------------|----|----|-----------|
+| 날짜 | 매도 수 | 승 | 패 | 일간 손익 |
+|------|---------|----|----|-----------|
 | 02-25 | 9 | 8 | 1 | +63.21 (USD, 미세 수익) |
-| 02-26 | 10 | 5 | 5 | **-32,083.40** (KR 대량 손실) |
-| 02-27 | 21 | 5 | 16 | **-20,461.11** (고빈도 매매, 대부분 손실) |
+| 02-26 | 14 | 5 | 5 | **-32,083.40** (KR 대량 손실) |
+| 02-27 | 22 | 5 | 16 | **-20,461.11** (고빈도 매매, 대부분 손실) |
+
+> 정확한 재현: `scripts/audit_queries.sql` 참조.
 
 ### 3.3 시장별 손익
 
@@ -185,208 +184,21 @@ Updated: 2026-02-28
 결론적으로 USD 구간의 플러스 성과는 실질적으로 `CRCA` 이상치 1건 영향이 지배적이며,
 해당 거래를 무결성 필터로 제외하면 USD 성과는 손실 구간으로 전환된다.
 
-### 3.7 데이터 품질 이슈 및 집계 정의
+### 3.7 데이터 품질 이슈 요약
 
-#### 3.7.1 기간/건수 표기 (반영 완료)
-
-- 3.1에 UTC 기준 기간 명시 + SELL 45건(기간 외 1건 제외) 주석 추가.
-- 3.2 일별 표에 DB 실측치 불일치 주의 문구 추가. 정확한 재현은 3.8 SQL 참조.
-
-#### 3.7.2 승률 정의 (반영 완료)
-
-- 종합 승률 39.1%(18/46): 0손익 포함 기준 — 3.1에 명시.
-- KR 시장 승률 38.5%(5/13): 0손익 제외 기준 — 3.3에 명시.
-
-#### 3.7.3 startup-sync 중복 기록
-
-- `BUY + [startup-sync]`가 76건 기록됨(동일 종목 반복 동기화 다수).
-- `BUY price=0`도 38건 존재해, PnL 매칭 시 원가 기준이 흔들릴 여지가 큼.
-- 성과 집계 시 `startup-sync`는 별도 레이어(초기 포지션 인식 이벤트)로 분리 저장 권장.
-- 3.5에서 startup-sync 분리 집계 제공.
-
-#### 3.7.4 티커-거래소 드리프트 (ROOT-7 반영 완료)
-
-- 예: `CCUP/CRCA/FIGS/LLY` 등 동일 티커가 `US_AMEX/US_NASDAQ/US_NYSE`에 혼재 기록.
-- 포지션 키를 `(ticker)`로만 쓰면 오매칭 위험 → ROOT-7으로 등재.
-
-#### 3.7.5 FX PnL 분리 항목 미활성 (1.2 반영 완료)
-
-- 스키마상 `strategy_pnl`, `fx_pnl` 컬럼이 있으나 SELL 전체 기준 `fx_pnl`은 전부 0.
-- 1.2에서 REQ-V3-007 상태를 "⚠️ 코드 완료 / 운영 미반영"으로 변경.
+- **startup-sync 중복**: BUY 76건 반복 동기화, price=0 38건 → PnL 매칭 왜곡 가능. 분리 집계는 3.5 참조.
+- **티커-거래소 드리프트**: 동일 티커가 다중 거래소에 혼재 기록 → ROOT-7 참조.
+- **FX PnL 미활성**: 스키마 존재, 운영 데이터 전부 0 → REQ-V3-007 참조.
 
 ### 3.8 표준 집계 SQL (재현용)
 
-아래 SQL을 기준 쿼리로 고정하면, 성과표를 항상 같은 규칙으로 재생산할 수 있다.
+성과표 재현을 위한 기준 쿼리는 [`scripts/audit_queries.sql`](../../scripts/audit_queries.sql)에 분리되어 있다.
 
-```sql
--- Base: 기간 + LIVE + SELL + 직전 BUY 메타 매칭
-WITH base AS (
-  SELECT *
-  FROM trades
-  WHERE mode='live'
-    AND action='SELL'
-    AND timestamp >= '2026-02-25T00:00:00+00:00'
-    AND timestamp <  '2026-02-28T00:00:00+00:00'
-),
-labeled AS (
-  SELECT
-    s.id,
-    s.timestamp,
-    s.stock_code,
-    s.market,
-    s.exchange_code,
-    s.quantity AS sell_qty,
-    s.price AS sell_price,
-    s.pnl,
-    COALESCE((
-      SELECT b.rationale
-      FROM trades b
-      WHERE b.mode='live'
-        AND b.action='BUY'
-        AND b.stock_code=s.stock_code
-        AND b.market=s.market
-        AND b.timestamp < s.timestamp
-      ORDER BY b.timestamp DESC, b.id DESC
-      LIMIT 1
-    ), '') AS prev_buy_rationale,
-    (
-      SELECT b.quantity
-      FROM trades b
-      WHERE b.mode='live'
-        AND b.action='BUY'
-        AND b.stock_code=s.stock_code
-        AND b.market=s.market
-        AND b.timestamp < s.timestamp
-      ORDER BY b.timestamp DESC, b.id DESC
-      LIMIT 1
-    ) AS prev_buy_qty
-  FROM base s
-)
-SELECT * FROM labeled;
-```
-
-```sql
--- Q1) 통화 분리 손익 (혼합 금지)
-WITH base AS (
-  SELECT * FROM trades
-  WHERE mode='live' AND action='SELL'
-    AND timestamp >= '2026-02-25T00:00:00+00:00'
-    AND timestamp <  '2026-02-28T00:00:00+00:00'
-),
-labeled AS (
-  SELECT s.*,
-         s.quantity AS sell_qty,
-         COALESCE((SELECT b.rationale FROM trades b
-                   WHERE b.mode='live' AND b.action='BUY'
-                     AND b.stock_code=s.stock_code AND b.market=s.market
-                     AND b.timestamp < s.timestamp
-                   ORDER BY b.timestamp DESC, b.id DESC LIMIT 1), '') AS prev_buy_rationale,
-         (SELECT b.quantity FROM trades b
-          WHERE b.mode='live' AND b.action='BUY'
-            AND b.stock_code=s.stock_code AND b.market=s.market
-            AND b.timestamp < s.timestamp
-          ORDER BY b.timestamp DESC, b.id DESC LIMIT 1) AS prev_buy_qty
-  FROM base s
-)
-SELECT
-  CASE WHEN market='KR' THEN 'KRW' ELSE 'USD' END AS ccy,
-  COUNT(*) AS sells,
-  ROUND(SUM(pnl),2) AS pnl_sum
-FROM labeled
-GROUP BY ccy
-ORDER BY ccy;
-```
-
-```sql
--- Q2) 기존 보유(startup-sync) 제외 성과
-WITH base AS (
-  SELECT * FROM trades
-  WHERE mode='live' AND action='SELL'
-    AND timestamp >= '2026-02-25T00:00:00+00:00'
-    AND timestamp <  '2026-02-28T00:00:00+00:00'
-),
-labeled AS (
-  SELECT s.*,
-         s.quantity AS sell_qty,
-         COALESCE((SELECT b.rationale FROM trades b
-                   WHERE b.mode='live' AND b.action='BUY'
-                     AND b.stock_code=s.stock_code AND b.market=s.market
-                     AND b.timestamp < s.timestamp
-                   ORDER BY b.timestamp DESC, b.id DESC LIMIT 1), '') AS prev_buy_rationale,
-         (SELECT b.quantity FROM trades b
-          WHERE b.mode='live' AND b.action='BUY'
-            AND b.stock_code=s.stock_code AND b.market=s.market
-            AND b.timestamp < s.timestamp
-          ORDER BY b.timestamp DESC, b.id DESC LIMIT 1) AS prev_buy_qty
-  FROM base s
-)
-SELECT
-  CASE WHEN market='KR' THEN 'KRW' ELSE 'USD' END AS ccy,
-  COUNT(*) AS sells,
-  ROUND(SUM(pnl),2) AS pnl_sum
-FROM labeled
-WHERE prev_buy_rationale NOT LIKE '[startup-sync]%'
-GROUP BY ccy
-ORDER BY ccy;
-```
-
-```sql
--- Q3) 수량 일치 체결만 포함(무결성 필터)
-WITH base AS (
-  SELECT * FROM trades
-  WHERE mode='live' AND action='SELL'
-    AND timestamp >= '2026-02-25T00:00:00+00:00'
-    AND timestamp <  '2026-02-28T00:00:00+00:00'
-),
-labeled AS (
-  SELECT s.*,
-         s.quantity AS sell_qty,
-         COALESCE((SELECT b.rationale FROM trades b
-                   WHERE b.mode='live' AND b.action='BUY'
-                     AND b.stock_code=s.stock_code AND b.market=s.market
-                     AND b.timestamp < s.timestamp
-                   ORDER BY b.timestamp DESC, b.id DESC LIMIT 1), '') AS prev_buy_rationale,
-         (SELECT b.quantity FROM trades b
-          WHERE b.mode='live' AND b.action='BUY'
-            AND b.stock_code=s.stock_code AND b.market=s.market
-            AND b.timestamp < s.timestamp
-          ORDER BY b.timestamp DESC, b.id DESC LIMIT 1) AS prev_buy_qty
-  FROM base s
-)
-SELECT
-  CASE WHEN market='KR' THEN 'KRW' ELSE 'USD' END AS ccy,
-  COUNT(*) AS sells,
-  ROUND(SUM(pnl),2) AS pnl_sum
-FROM labeled
-WHERE prev_buy_qty = sell_qty
-GROUP BY ccy
-ORDER BY ccy;
-```
-
-```sql
--- Q4) 이상치 목록 (수량 불일치)
-WITH base AS (
-  SELECT * FROM trades
-  WHERE mode='live' AND action='SELL'
-    AND timestamp >= '2026-02-25T00:00:00+00:00'
-    AND timestamp <  '2026-02-28T00:00:00+00:00'
-),
-labeled AS (
-  SELECT s.id, s.timestamp, s.stock_code, s.market, s.quantity AS sell_qty, s.pnl,
-         (SELECT b.quantity FROM trades b
-          WHERE b.mode='live' AND b.action='BUY'
-            AND b.stock_code=s.stock_code AND b.market=s.market
-            AND b.timestamp < s.timestamp
-          ORDER BY b.timestamp DESC, b.id DESC LIMIT 1) AS prev_buy_qty
-  FROM base s
-)
-SELECT
-  id, timestamp, stock_code, market, sell_qty, prev_buy_qty, ROUND(pnl,2) AS pnl
-FROM labeled
-WHERE prev_buy_qty IS NOT NULL
-  AND prev_buy_qty != sell_qty
-ORDER BY ABS(pnl) DESC;
-```
+- **Base**: 기간 + LIVE + SELL + 직전 BUY 메타 매칭
+- **Q1**: 통화 분리 손익 (KRW/USD 혼합 금지)
+- **Q2**: 기존 보유(startup-sync) 제외 성과
+- **Q3**: 수량 일치 체결만 포함 (무결성 필터)
+- **Q4**: 이상치 목록 (수량 불일치)
 
 ---
 
@@ -519,6 +331,8 @@ Phase 3 (중기): v3 세션 최적화
 - ✅ 블랙아웃 관리 (`test_blackout_manager.py`)
 - ✅ 주문 정책 저유동 거부 (`test_order_policy.py`)
 - ✅ FX 손익 분리 (`test_db.py`)
+- ✅ 블랙아웃 복구 후 유효 intent 실행 (`tests/test_main.py:5811`)
+- ✅ 블랙아웃 복구 후 정책 거부 intent 드롭 (`tests/test_main.py:5851`)
 
 ### 테스트 미존재
 
@@ -529,35 +343,12 @@ Phase 3 (중기): v3 세션 최적화
 - ❌ 블랙아웃 복구 주문의 DB 기록 검증
 - ❌ SELL PnL 계산 시 수량 불일치 케이스
 
-### 테스트 존재 (재점검으로 확인)
+---
 
-- ✅ 블랙아웃 복구 후 유효 intent 실행 (`tests/test_main.py:5811`)
-- ✅ 블랙아웃 복구 후 정책 거부 intent 드롭 (`tests/test_main.py:5851`)
+## 7. 후속 문서
 
-### 6.1 재점검 반영 이력 (2026-02-28)
-
-아래 코멘트들은 코드 대조 검증 후 본문에 반영 완료됨:
-
-1. ROOT-5: “완전 미통합” → “부분 통합 + 실효성 부족”으로 정정 (본문 반영)
-2. GAP-4: “재검증 없음” → “부분 해소 + DB 기록 미구현”으로 정정 (본문 반영)
-3. 블랙아웃 복구 DB 미기록: GAP-4에 통합 + 개선 방안 5.2에 P0 추가
-4. SELL PnL buy_qty 버그: ROOT-6으로 신규 등재 (CRITICAL)
-5. BUY 매칭 exchange_code 누락: ROOT-7로 신규 등재 (HIGH)
-6. 경로 표기: `main.py` → `src/main.py`로 정규화 완료
-7. 테스트 섹션: 블랙아웃 복구 테스트 존재 확인, “테스트 존재 (재점검)” 항목으로 이동
-
-### 6.2 정밀 검토 반영 이력 (2026-02-28)
-
-아래 코멘트들은 검증 후 본문에 반영 완료됨:
-
-1. 기간 기준 통일: 3.1에 UTC 기준 명시 + SELL 45건(기간 외 1건 제외) 주석 추가
-2. ROOT-1 ↔ ROOT-5 정합성: ROOT-1 문구를 “staged exit 호출되나 hard_stop 편향”으로 정정
-3. REQ-V3-007 2단 표기: “⚠️ 코드 완료 / 운영 미반영”으로 상태 변경
-4. ROOT-7 톤 조정: “잠재 오매칭 리스크”로 표현 변경, 확정 버그 → 구조 리스크로 재분류
-5. 3.6 USD 손익 표에 환산 KRW(가정 환율 1,450) + KRW 합산 참고값 병기
-6. 3.2 일별 표에 DB 실측치 불일치 주의 문구 추가
-7. 3.3 KR 승률에 “0손익 제외” 기준 명시
-8. 3.7 코멘트들을 세부 항목(3.7.1~3.7.5)으로 정리, 각 항목에 반영 상태 표기
+- **실행 계획**: [85_loss_recovery_action_plan.md](./85_loss_recovery_action_plan.md) — ROOT/GAP 해소를 위한 Phase별 작업 분해 및 Gitea 이슈 연결
+- **표준 집계 SQL**: [scripts/audit_queries.sql](../../scripts/audit_queries.sql)
 
 ---
 
