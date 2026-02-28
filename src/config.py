@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     PAPER_OVERSEAS_CASH: float = Field(default=50000.0, ge=0.0)
     USD_BUFFER_MIN: float = Field(default=1000.0, ge=0.0)
     US_MIN_PRICE: float = Field(default=5.0, ge=0.0)
+    STOPLOSS_REENTRY_COOLDOWN_MINUTES: int = Field(default=120, ge=1, le=1440)
     OVERNIGHT_EXCEPTION_ENABLED: bool = True
 
     # Trading frequency mode (daily = batch API calls, realtime = per-stock calls)
