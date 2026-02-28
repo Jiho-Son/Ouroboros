@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     USD_BUFFER_MIN: float = Field(default=1000.0, ge=0.0)
     US_MIN_PRICE: float = Field(default=5.0, ge=0.0)
     STOPLOSS_REENTRY_COOLDOWN_MINUTES: int = Field(default=120, ge=1, le=1440)
+    KR_ATR_STOP_MULTIPLIER_K: float = Field(default=2.0, ge=0.1, le=10.0)
+    KR_ATR_STOP_MIN_PCT: float = Field(default=-2.0, le=0.0)
+    KR_ATR_STOP_MAX_PCT: float = Field(default=-7.0, le=0.0)
     OVERNIGHT_EXCEPTION_ENABLED: bool = True
 
     # Trading frequency mode (daily = batch API calls, realtime = per-stock calls)

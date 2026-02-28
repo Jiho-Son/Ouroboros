@@ -32,6 +32,7 @@ from src.main import (
     _run_context_scheduler,
     _run_evolution_loop,
     _start_dashboard_server,
+    _compute_kr_dynamic_stop_loss_pct,
     handle_domestic_pending_orders,
     handle_overseas_pending_orders,
     process_blackout_recovery_orders,
@@ -134,6 +135,51 @@ def test_resolve_sell_qty_for_pnl_uses_buy_qty_fallback_when_sell_qty_missing() 
 
 def test_resolve_sell_qty_for_pnl_returns_zero_when_both_missing() -> None:
     assert _resolve_sell_qty_for_pnl(sell_qty=None, buy_qty=None) == 0
+
+
+def test_compute_kr_dynamic_stop_loss_pct_falls_back_without_atr() -> None:
+    out = _compute_kr_dynamic_stop_loss_pct(
+        entry_price=100.0,
+        atr_value=0.0,
+        fallback_stop_loss_pct=-2.0,
+        settings=None,
+    )
+    assert out == -2.0
+
+
+def test_compute_kr_dynamic_stop_loss_pct_clamps_to_min_and_max() -> None:
+    # Small ATR -> clamp to min (-2%)
+    out_small = _compute_kr_dynamic_stop_loss_pct(
+        entry_price=100.0,
+        atr_value=0.2,
+        fallback_stop_loss_pct=-2.0,
+        settings=None,
+    )
+    assert out_small == -2.0
+
+    # Large ATR -> clamp to max (-7%)
+    out_large = _compute_kr_dynamic_stop_loss_pct(
+        entry_price=100.0,
+        atr_value=10.0,
+        fallback_stop_loss_pct=-2.0,
+        settings=None,
+    )
+    assert out_large == -7.0
+
+
+def test_compute_kr_dynamic_stop_loss_pct_uses_settings_values() -> None:
+    settings = MagicMock(
+        KR_ATR_STOP_MULTIPLIER_K=3.0,
+        KR_ATR_STOP_MIN_PCT=-1.5,
+        KR_ATR_STOP_MAX_PCT=-6.0,
+    )
+    out = _compute_kr_dynamic_stop_loss_pct(
+        entry_price=100.0,
+        atr_value=1.0,
+        fallback_stop_loss_pct=-2.0,
+        settings=settings,
+    )
+    assert out == -3.0
 
     def test_returns_zero_when_field_empty_string(self) -> None:
         """Returns 0.0 when pchs_avg_pric is an empty string."""

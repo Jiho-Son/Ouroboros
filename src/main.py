@@ -119,6 +119,27 @@ def _resolve_sell_qty_for_pnl(*, sell_qty: int | None, buy_qty: int | None) -> i
     return max(0, int(buy_qty or 0))
 
 
+def _compute_kr_dynamic_stop_loss_pct(
+    *,
+    entry_price: float,
+    atr_value: float,
+    fallback_stop_loss_pct: float,
+    settings: Settings | None,
+) -> float:
+    """Compute KR dynamic hard-stop threshold in percent."""
+    if entry_price <= 0 or atr_value <= 0:
+        return fallback_stop_loss_pct
+
+    k = float(getattr(settings, "KR_ATR_STOP_MULTIPLIER_K", 2.0) if settings else 2.0)
+    min_pct = float(getattr(settings, "KR_ATR_STOP_MIN_PCT", -2.0) if settings else -2.0)
+    max_pct = float(getattr(settings, "KR_ATR_STOP_MAX_PCT", -7.0) if settings else -7.0)
+    if max_pct > min_pct:
+        min_pct, max_pct = max_pct, min_pct
+
+    dynamic_stop_pct = -((k * atr_value) / entry_price) * 100.0
+    return max(max_pct, min(min_pct, dynamic_stop_pct))
+
+
 def _stoploss_cooldown_key(*, market: MarketInfo, stock_code: str) -> str:
     return f"{market.code}:{stock_code}"
 
@@ -518,6 +539,7 @@ def _apply_staged_exit_override_for_hold(
     open_position: dict[str, Any] | None,
     market_data: dict[str, Any],
     stock_playbook: Any | None,
+    settings: Settings | None = None,
 ) -> TradeDecision:
     """Apply v2 staged exit semantics for HOLD positions using runtime state."""
     if decision.action != "HOLD" or not open_position:
@@ -533,6 +555,14 @@ def _apply_staged_exit_override_for_hold(
     if stock_playbook and stock_playbook.scenarios:
         stop_loss_threshold = stock_playbook.scenarios[0].stop_loss_pct
         take_profit_threshold = stock_playbook.scenarios[0].take_profit_pct
+    atr_value = safe_float(market_data.get("atr_value"), 0.0)
+    if market.code == "KR":
+        stop_loss_threshold = _compute_kr_dynamic_stop_loss_pct(
+            entry_price=entry_price,
+            atr_value=atr_value,
+            fallback_stop_loss_pct=stop_loss_threshold,
+            settings=settings,
+        )
 
     runtime_key = _build_runtime_position_key(
         market_code=market.code,
@@ -558,7 +588,7 @@ def _apply_staged_exit_override_for_hold(
             current_price=current_price,
             entry_price=entry_price,
             peak_price=peak_price,
-            atr_value=safe_float(market_data.get("atr_value"), 0.0),
+            atr_value=atr_value,
             pred_down_prob=safe_float(market_data.get("pred_down_prob"), 0.0),
             liquidity_weak=safe_float(market_data.get("volume_ratio"), 1.0) < 1.0,
         ),
@@ -1375,6 +1405,7 @@ async def trading_cycle(
             open_position=open_position,
             market_data=market_data,
             stock_playbook=stock_playbook,
+            settings=settings,
         )
         if open_position and decision.action == "HOLD" and _should_force_exit_for_overnight(
                 market=market,
@@ -2582,6 +2613,7 @@ async def run_daily_session(
                     open_position=daily_open,
                     market_data=stock_data,
                     stock_playbook=stock_playbook,
+                    settings=settings,
                 )
                 if daily_open and decision.action == "HOLD" and _should_force_exit_for_overnight(
                     market=market,
