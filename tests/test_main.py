@@ -16,6 +16,10 @@ from src.logging.decision_logger import DecisionLogger
 from src.main import (
     KILL_SWITCH,
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL,
+    _apply_staged_exit_override_for_hold,
+    _compute_kr_atr_value,
+    _estimate_pred_down_prob_from_rsi,
+    _inject_staged_exit_features,
     _RUNTIME_EXIT_PEAKS,
     _RUNTIME_EXIT_STATES,
     _should_force_exit_for_overnight,
@@ -180,6 +184,99 @@ def test_compute_kr_dynamic_stop_loss_pct_uses_settings_values() -> None:
         settings=settings,
     )
     assert out == -3.0
+
+
+def test_estimate_pred_down_prob_from_rsi_uses_linear_mapping() -> None:
+    assert _estimate_pred_down_prob_from_rsi(None) == 0.5
+    assert _estimate_pred_down_prob_from_rsi(0.0) == 0.0
+    assert _estimate_pred_down_prob_from_rsi(50.0) == 0.5
+    assert _estimate_pred_down_prob_from_rsi(100.0) == 1.0
+
+
+@pytest.mark.asyncio
+async def test_compute_kr_atr_value_returns_zero_on_short_series() -> None:
+    broker = MagicMock()
+    broker.get_daily_prices = AsyncMock(
+        return_value=[{"high": 101.0, "low": 99.0, "close": 100.0}] * 10
+    )
+
+    atr = await _compute_kr_atr_value(broker=broker, stock_code="005930")
+    assert atr == 0.0
+
+
+@pytest.mark.asyncio
+async def test_inject_staged_exit_features_sets_pred_down_prob_and_atr_for_kr() -> None:
+    market = MagicMock()
+    market.is_domestic = True
+    stock_data: dict[str, float] = {"rsi": 65.0}
+
+    broker = MagicMock()
+    broker.get_daily_prices = AsyncMock(
+        return_value=[
+            {"high": 102.0 + i, "low": 98.0 + i, "close": 100.0 + i}
+            for i in range(40)
+        ]
+    )
+
+    await _inject_staged_exit_features(
+        market=market,
+        stock_code="005930",
+        open_position={"price": 100.0, "quantity": 1},
+        market_data=stock_data,
+        broker=broker,
+    )
+
+    assert stock_data["pred_down_prob"] == pytest.approx(0.65)
+    assert stock_data["atr_value"] > 0.0
+
+
+def test_apply_staged_exit_uses_independent_arm_threshold_settings() -> None:
+    market = MagicMock()
+    market.code = "KR"
+    market.name = "Korea"
+
+    decision = MagicMock()
+    decision.action = "HOLD"
+    decision.confidence = 70
+    decision.rationale = "hold"
+
+    settings = Settings(
+        KIS_APP_KEY="k",
+        KIS_APP_SECRET="s",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="g",
+        STAGED_EXIT_BE_ARM_PCT=2.2,
+        STAGED_EXIT_ARM_PCT=5.4,
+    )
+
+    captured: dict[str, float] = {}
+
+    def _fake_eval(**kwargs):  # type: ignore[no-untyped-def]
+        cfg = kwargs["config"]
+        captured["be_arm_pct"] = cfg.be_arm_pct
+        captured["arm_pct"] = cfg.arm_pct
+
+        class _Out:
+            should_exit = False
+            reason = "none"
+            state = PositionState.HOLDING
+
+        return _Out()
+
+    with patch("src.main.evaluate_exit", side_effect=_fake_eval):
+        out = _apply_staged_exit_override_for_hold(
+            decision=decision,
+            market=market,
+            stock_code="005930",
+            open_position={"price": 100.0, "quantity": 1, "decision_id": "d1", "timestamp": "t1"},
+            market_data={"current_price": 101.0, "rsi": 60.0, "pred_down_prob": 0.6},
+            stock_playbook=None,
+            settings=settings,
+        )
+
+    assert out is decision
+    assert captured["be_arm_pct"] == pytest.approx(2.2)
+    assert captured["arm_pct"] == pytest.approx(5.4)
 
     def test_returns_zero_when_field_empty_string(self) -> None:
         """Returns 0.0 when pchs_avg_pric is an empty string."""

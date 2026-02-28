@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     PAPER_OVERSEAS_CASH: float = Field(default=50000.0, ge=0.0)
     USD_BUFFER_MIN: float = Field(default=1000.0, ge=0.0)
     US_MIN_PRICE: float = Field(default=5.0, ge=0.0)
+    STAGED_EXIT_BE_ARM_PCT: float = Field(default=1.2, gt=0.0, le=30.0)
+    STAGED_EXIT_ARM_PCT: float = Field(default=3.0, gt=0.0, le=100.0)
     STOPLOSS_REENTRY_COOLDOWN_MINUTES: int = Field(default=120, ge=1, le=1440)
     KR_ATR_STOP_MULTIPLIER_K: float = Field(default=2.0, ge=0.1, le=10.0)
     KR_ATR_STOP_MIN_PCT: float = Field(default=-2.0, le=0.0)
