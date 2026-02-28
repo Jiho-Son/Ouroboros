@@ -1314,6 +1314,24 @@ async def trading_cycle(
                 stock_code,
                 market.name,
             )
+        elif market.code.startswith("US"):
+            min_price = float(getattr(settings, "US_MIN_PRICE", 5.0) if settings else 5.0)
+            if current_price <= min_price:
+                decision = TradeDecision(
+                    action="HOLD",
+                    confidence=decision.confidence,
+                    rationale=(
+                        f"US minimum price filter blocked BUY "
+                        f"(price={current_price:.4f} <= {min_price:.4f})"
+                    ),
+                )
+                logger.info(
+                    "BUY suppressed for %s (%s): US min price filter %.4f <= %.4f",
+                    stock_code,
+                    market.name,
+                    current_price,
+                    min_price,
+                )
 
     if decision.action == "HOLD":
         open_position = get_open_position(db_conn, stock_code, market.code)
@@ -2475,6 +2493,24 @@ async def run_daily_session(
                         stock_code,
                         market.name,
                     )
+                elif market.code.startswith("US"):
+                    min_price = float(getattr(settings, "US_MIN_PRICE", 5.0))
+                    if stock_data["current_price"] <= min_price:
+                        decision = TradeDecision(
+                            action="HOLD",
+                            confidence=decision.confidence,
+                            rationale=(
+                                f"US minimum price filter blocked BUY "
+                                f"(price={stock_data['current_price']:.4f} <= {min_price:.4f})"
+                            ),
+                        )
+                        logger.info(
+                            "BUY suppressed for %s (%s): US min price filter %.4f <= %.4f",
+                            stock_code,
+                            market.name,
+                            stock_data["current_price"],
+                            min_price,
+                        )
             if decision.action == "HOLD":
                 daily_open = get_open_position(db_conn, stock_code, market.code)
                 if not daily_open:
