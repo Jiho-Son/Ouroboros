@@ -70,6 +70,7 @@ BLACKOUT_ORDER_MANAGER = BlackoutOrderManager(
 _SESSION_CLOSE_WINDOWS = {"NXT_AFTER", "US_AFTER"}
 _RUNTIME_EXIT_STATES: dict[str, PositionState] = {}
 _RUNTIME_EXIT_PEAKS: dict[str, float] = {}
+_STOPLOSS_REENTRY_COOLDOWN_UNTIL: dict[str, float] = {}
 
 
 def safe_float(value: str | float | None, default: float = 0.0) -> float:
@@ -116,6 +117,16 @@ def _resolve_sell_qty_for_pnl(*, sell_qty: int | None, buy_qty: int | None) -> i
     if resolved_sell > 0:
         return resolved_sell
     return max(0, int(buy_qty or 0))
+
+
+def _stoploss_cooldown_key(*, market: MarketInfo, stock_code: str) -> str:
+    return f"{market.code}:{stock_code}"
+
+
+def _stoploss_cooldown_minutes(settings: Settings | None) -> int:
+    if settings is None:
+        return 120
+    return max(1, int(getattr(settings, "STOPLOSS_REENTRY_COOLDOWN_MINUTES", 120)))
 
 
 async def _retry_connection(coro_factory: Any, *args: Any, label: str = "", **kwargs: Any) -> Any:
@@ -1332,6 +1343,23 @@ async def trading_cycle(
                     current_price,
                     min_price,
                 )
+        if decision.action == "BUY":
+            cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
+            now_epoch = datetime.now(UTC).timestamp()
+            cooldown_until = _STOPLOSS_REENTRY_COOLDOWN_UNTIL.get(cooldown_key, 0.0)
+            if now_epoch < cooldown_until:
+                remaining = int(cooldown_until - now_epoch)
+                decision = TradeDecision(
+                    action="HOLD",
+                    confidence=decision.confidence,
+                    rationale=f"Stop-loss reentry cooldown active ({remaining}s remaining)",
+                )
+                logger.info(
+                    "BUY suppressed for %s (%s): stop-loss cooldown active (%ds remaining)",
+                    stock_code,
+                    market.name,
+                    remaining,
+                )
 
     if decision.action == "HOLD":
         open_position = get_open_position(db_conn, stock_code, market.code)
@@ -1715,6 +1743,18 @@ async def trading_cycle(
                     pnl=trade_pnl,
                     accuracy=1 if trade_pnl > 0 else 0,
                 )
+                if trade_pnl < 0:
+                    cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
+                    cooldown_minutes = _stoploss_cooldown_minutes(settings)
+                    _STOPLOSS_REENTRY_COOLDOWN_UNTIL[cooldown_key] = (
+                        datetime.now(UTC).timestamp() + cooldown_minutes * 60
+                    )
+                    logger.info(
+                        "Stop-loss cooldown set for %s (%s): %d minutes",
+                        stock_code,
+                        market.name,
+                        cooldown_minutes,
+                    )
 
     # 6. Log trade with selection context (skip if order was rejected)
     if decision.action in ("BUY", "SELL") and not order_succeeded:
@@ -2511,6 +2551,23 @@ async def run_daily_session(
                             stock_data["current_price"],
                             min_price,
                         )
+                if decision.action == "BUY":
+                    cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
+                    now_epoch = datetime.now(UTC).timestamp()
+                    cooldown_until = _STOPLOSS_REENTRY_COOLDOWN_UNTIL.get(cooldown_key, 0.0)
+                    if now_epoch < cooldown_until:
+                        remaining = int(cooldown_until - now_epoch)
+                        decision = TradeDecision(
+                            action="HOLD",
+                            confidence=decision.confidence,
+                            rationale=f"Stop-loss reentry cooldown active ({remaining}s remaining)",
+                        )
+                        logger.info(
+                            "BUY suppressed for %s (%s): stop-loss cooldown active (%ds remaining)",
+                            stock_code,
+                            market.name,
+                            remaining,
+                        )
             if decision.action == "HOLD":
                 daily_open = get_open_position(db_conn, stock_code, market.code)
                 if not daily_open:
@@ -2842,6 +2899,18 @@ async def run_daily_session(
                             pnl=trade_pnl,
                             accuracy=1 if trade_pnl > 0 else 0,
                         )
+                        if trade_pnl < 0:
+                            cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
+                            cooldown_minutes = _stoploss_cooldown_minutes(settings)
+                            _STOPLOSS_REENTRY_COOLDOWN_UNTIL[cooldown_key] = (
+                                datetime.now(UTC).timestamp() + cooldown_minutes * 60
+                            )
+                            logger.info(
+                                "Stop-loss cooldown set for %s (%s): %d minutes",
+                                stock_code,
+                                market.name,
+                                cooldown_minutes,
+                            )
 
             # Log trade (skip if order was rejected by API)
             if decision.action in ("BUY", "SELL") and not order_succeeded:
