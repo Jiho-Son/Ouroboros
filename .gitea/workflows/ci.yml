@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,7 +28,18 @@ jobs:
         run: python3 scripts/session_handover_check.py --strict
 
       - name: Validate governance assets
-        run: python3 scripts/validate_governance_assets.py
+        run: |
+          RANGE=""
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}...${{ github.sha }}"
+          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="${{ github.event.before }}...${{ github.sha }}"
+          fi
+          if [ -n "$RANGE" ]; then
+            python3 scripts/validate_governance_assets.py "$RANGE"
+          else
+            python3 scripts/validate_governance_assets.py
+          fi
 
       - name: Validate Ouroboros docs
         run: python3 scripts/validate_ouroboros_docs.py
