@@ -5654,6 +5654,149 @@ async def test_order_policy_rejection_skips_order_execution() -> None:
     broker.send_order.assert_not_called()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("price", "should_block"),
+    [
+        (4.99, True),
+        (5.00, True),
+        (5.01, False),
+    ],
+)
+async def test_us_min_price_filter_boundary(price: float, should_block: bool) -> None:
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    broker = MagicMock()
+    broker.get_balance = AsyncMock(return_value={"output1": [], "output2": [{}]})
+
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_price = AsyncMock(
+        return_value={"output": {"last": str(price), "rate": "0.0"}}
+    )
+    overseas_broker.get_overseas_balance = AsyncMock(
+        return_value={"output1": [], "output2": [{"frcr_evlu_tota": "10000", "frcr_buy_amt_smtl": "0"}]}
+    )
+    overseas_broker.get_overseas_buying_power = AsyncMock(
+        return_value={"output": {"ovrs_ord_psbl_amt": "10000"}}
+    )
+    overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "NASDAQ"
+    market.code = "US_NASDAQ"
+    market.exchange_code = "NASD"
+    market.is_domestic = False
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    settings = MagicMock()
+    settings.POSITION_SIZING_ENABLED = False
+    settings.CONFIDENCE_THRESHOLD = 80
+    settings.MODE = "paper"
+    settings.PAPER_OVERSEAS_CASH = 50000
+    settings.US_MIN_PRICE = 5.0
+    settings.USD_BUFFER_MIN = 1000.0
+
+    await trading_cycle(
+        broker=broker,
+        overseas_broker=overseas_broker,
+        scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_buy_match("AAPL"))),
+        playbook=_make_playbook("US_NASDAQ"),
+        risk=MagicMock(validate_order=MagicMock(), check_circuit_breaker=MagicMock()),
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        context_store=MagicMock(
+            get_latest_timeframe=MagicMock(return_value=None),
+            set_context=MagicMock(),
+        ),
+        criticality_assessor=MagicMock(
+            assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+            get_timeout=MagicMock(return_value=5.0),
+        ),
+        telegram=telegram,
+        market=market,
+        stock_code="AAPL",
+        scan_candidates={},
+        settings=settings,
+    )
+
+    if should_block:
+        overseas_broker.send_overseas_order.assert_not_called()
+    else:
+        overseas_broker.send_overseas_order.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_us_min_price_filter_not_applied_to_kr_market() -> None:
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    broker = MagicMock()
+    broker.get_current_price = AsyncMock(return_value=(4.0, 0.0, 0.0))
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output1": [],
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "50000",
+                    "pchs_amt_smtl_amt": "50000",
+                }
+            ],
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    settings = MagicMock()
+    settings.POSITION_SIZING_ENABLED = False
+    settings.CONFIDENCE_THRESHOLD = 80
+    settings.MODE = "paper"
+    settings.US_MIN_PRICE = 5.0
+    settings.USD_BUFFER_MIN = 1000.0
+
+    await trading_cycle(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_buy_match("005930"))),
+        playbook=_make_playbook(),
+        risk=MagicMock(validate_order=MagicMock(), check_circuit_breaker=MagicMock()),
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        context_store=MagicMock(
+            get_latest_timeframe=MagicMock(return_value=None),
+            set_context=MagicMock(),
+        ),
+        criticality_assessor=MagicMock(
+            assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+            get_timeout=MagicMock(return_value=5.0),
+        ),
+        telegram=telegram,
+        market=market,
+        stock_code="005930",
+        scan_candidates={},
+        settings=settings,
+    )
+
+    broker.send_order.assert_called_once()
+
+
 def test_overnight_policy_prioritizes_killswitch_over_exception() -> None:
     market = MagicMock()
     with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_AFTER")):
