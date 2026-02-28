@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runtime verification monitor with NOT_OBSERVED detection.
+# Runtime verification monitor with coverage + forbidden invariant checks.
 
 set -euo pipefail
 
@@ -7,6 +7,7 @@ ROOT_DIR="${ROOT_DIR:-/home/agentson/repos/The-Ouroboros}"
 LOG_DIR="${LOG_DIR:-$ROOT_DIR/data/overnight}"
 INTERVAL_SEC="${INTERVAL_SEC:-60}"
 MAX_HOURS="${MAX_HOURS:-24}"
+POLICY_TZ="${POLICY_TZ:-Asia/Seoul}"
 
 cd "$ROOT_DIR"
 
@@ -30,7 +31,20 @@ check_signal() {
   return 1
 }
 
-log "[INFO] runtime verify monitor started interval=${INTERVAL_SEC}s max_hours=${MAX_HOURS}"
+check_forbidden() {
+  local name="$1"
+  local pattern="$2"
+  local run_log="$3"
+
+  if rg -q "$pattern" "$run_log"; then
+    log "[FORBIDDEN] ${name}=HIT pattern=${pattern}"
+    return 1
+  fi
+  log "[FORBIDDEN] ${name}=CLEAR pattern=${pattern}"
+  return 0
+}
+
+log "[INFO] runtime verify monitor started interval=${INTERVAL_SEC}s max_hours=${MAX_HOURS} policy_tz=${POLICY_TZ}"
 
 while true; do
   now=$(date +%s)
@@ -73,6 +87,28 @@ while true; do
     log "[OK] coverage complete (NOT_OBSERVED=0)"
   fi
 
+  # Forbidden invariants: must never happen under given policy context.
+  forbidden_hits=0
+  policy_dow="$(TZ="$POLICY_TZ" date +%u)" # 1..7 (Mon..Sun)
+  is_weekend=0
+  if [ "$policy_dow" -ge 6 ]; then
+    is_weekend=1
+  fi
+
+  if [ "$is_weekend" -eq 1 ]; then
+    # Weekend policy: KR regular session loop must never appear.
+    check_forbidden "WEEKEND_KR_SESSION_ACTIVE" \
+      "Market session active: KR|session=KRX_REG|Processing market: Korea Exchange" \
+      "$latest_run" || forbidden_hits=$((forbidden_hits+1))
+  else
+    log "[FORBIDDEN] WEEKEND_KR_SESSION_ACTIVE=SKIP reason=weekday"
+  fi
+
+  if [ "$forbidden_hits" -gt 0 ]; then
+    log "[P0] forbidden_invariant_hits=$forbidden_hits (treat as immediate FAIL)"
+  else
+    log "[OK] forbidden invariants clear"
+  fi
+
   sleep "$INTERVAL_SEC"
 done
-
