@@ -1659,7 +1659,12 @@ async def trading_cycle(
                 logger.warning("Telegram notification failed: %s", exc)
 
         if decision.action == "SELL" and order_succeeded:
-            buy_trade = get_latest_buy_trade(db_conn, stock_code, market.code)
+            buy_trade = get_latest_buy_trade(
+                db_conn,
+                stock_code,
+                market.code,
+                exchange_code=market.exchange_code,
+            )
             if buy_trade and buy_trade.get("price") is not None:
                 buy_price = float(buy_trade["price"])
                 buy_qty = int(buy_trade.get("quantity") or 1)
@@ -2759,7 +2764,12 @@ async def run_daily_session(
                     continue
 
                 if decision.action == "SELL" and order_succeeded:
-                    buy_trade = get_latest_buy_trade(db_conn, stock_code, market.code)
+                    buy_trade = get_latest_buy_trade(
+                        db_conn,
+                        stock_code,
+                        market.code,
+                        exchange_code=market.exchange_code,
+                    )
                     if buy_trade and buy_trade.get("price") is not None:
                         buy_price = float(buy_trade["price"])
                         buy_qty = int(buy_trade.get("quantity") or 1)
