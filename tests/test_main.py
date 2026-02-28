@@ -27,6 +27,7 @@ from src.main import (
     _extract_held_qty_from_balance,
     _handle_market_close,
     _retry_connection,
+    _resolve_sell_qty_for_pnl,
     _run_context_scheduler,
     _run_evolution_loop,
     _start_dashboard_server,
@@ -118,6 +119,18 @@ class TestExtractAvgPriceFromBalance:
         balance = {"output1": [{"pdno": "005930", "ord_psbl_qty": "5"}]}
         result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
         assert result == 0.0
+
+
+def test_resolve_sell_qty_for_pnl_prefers_sell_qty() -> None:
+    assert _resolve_sell_qty_for_pnl(sell_qty=30, buy_qty=100) == 30
+
+
+def test_resolve_sell_qty_for_pnl_uses_buy_qty_fallback_when_sell_qty_missing() -> None:
+    assert _resolve_sell_qty_for_pnl(sell_qty=None, buy_qty=12) == 12
+
+
+def test_resolve_sell_qty_for_pnl_returns_zero_when_both_missing() -> None:
+    assert _resolve_sell_qty_for_pnl(sell_qty=None, buy_qty=None) == 0
 
     def test_returns_zero_when_field_empty_string(self) -> None:
         """Returns 0.0 when pchs_avg_pric is an empty string."""

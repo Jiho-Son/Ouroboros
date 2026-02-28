@@ -110,6 +110,14 @@ DAILY_TRADE_SESSIONS = 4  # Number of trading sessions per day
 TRADE_SESSION_INTERVAL_HOURS = 6  # Hours between sessions
 
 
+def _resolve_sell_qty_for_pnl(*, sell_qty: int | None, buy_qty: int | None) -> int:
+    """Choose quantity basis for SELL outcome PnL with safe fallback."""
+    resolved_sell = int(sell_qty or 0)
+    if resolved_sell > 0:
+        return resolved_sell
+    return max(0, int(buy_qty or 0))
+
+
 async def _retry_connection(coro_factory: Any, *args: Any, label: str = "", **kwargs: Any) -> Any:
     """Call an async function retrying on ConnectionError with exponential backoff.
 
@@ -1658,7 +1666,8 @@ async def trading_cycle(
             buy_trade = get_latest_buy_trade(db_conn, stock_code, market.code)
             if buy_trade and buy_trade.get("price") is not None:
                 buy_price = float(buy_trade["price"])
-                sell_qty = int(quantity or 0)
+                buy_qty = int(buy_trade.get("quantity") or 0)
+                sell_qty = _resolve_sell_qty_for_pnl(sell_qty=quantity, buy_qty=buy_qty)
                 trade_pnl = (trade_price - buy_price) * sell_qty
                 decision_logger.update_outcome(
                     decision_id=buy_trade["decision_id"],
@@ -2755,7 +2764,11 @@ async def run_daily_session(
                     buy_trade = get_latest_buy_trade(db_conn, stock_code, market.code)
                     if buy_trade and buy_trade.get("price") is not None:
                         buy_price = float(buy_trade["price"])
-                        sell_qty = int(quantity or 0)
+                        buy_qty = int(buy_trade.get("quantity") or 0)
+                        sell_qty = _resolve_sell_qty_for_pnl(
+                            sell_qty=quantity,
+                            buy_qty=buy_qty,
+                        )
                         trade_pnl = (trade_price - buy_price) * sell_qty
                         decision_logger.update_outcome(
                             decision_id=buy_trade["decision_id"],
