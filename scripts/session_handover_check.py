@@ -134,7 +134,7 @@ def main() -> int:
     branch = _current_branch()
     if not branch:
         errors.append("cannot resolve current git branch")
-    elif branch in {"main", "master"}:
+    elif not args.ci and branch in {"main", "master"}:
         errors.append(f"working branch must not be {branch}")
 
     _check_handover_entry(
