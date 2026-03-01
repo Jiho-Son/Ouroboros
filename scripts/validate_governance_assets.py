@@ -17,6 +17,7 @@ TASK_ID_IN_TEXT = re.compile(r"\bTASK-[A-Z0-9-]+-\d{3}\b")
 TEST_ID_IN_TEXT = re.compile(r"\bTEST-[A-Z0-9-]+-\d{3}\b")
 READ_ONLY_FILES = {"src/core/risk_manager.py"}
 PLACEHOLDER_VALUES = {"", "tbd", "n/a", "na", "none", "<link>", "<required>"}
+TIMEZONE_TOKEN_PATTERN = re.compile(r"\b(?:KST|UTC)\b")
 
 
 def must_contain(path: Path, required: list[str], errors: list[str]) -> None:
@@ -105,7 +106,43 @@ def validate_task_req_mapping(errors: list[str], *, task_doc: Path | None = None
         errors.append(f"{path}: no TASK definitions found")
 
 
-def validate_pr_traceability(warnings: list[str]) -> None:
+def validate_task_test_pairing(errors: list[str], *, task_doc: Path | None = None) -> None:
+    """Fail when TASK definitions are not linked to at least one TEST id."""
+    path = task_doc or Path(TASK_WORK_ORDERS_DOC)
+    if not path.exists():
+        errors.append(f"missing file: {path}")
+        return
+
+    text = path.read_text(encoding="utf-8")
+    found_task = False
+    for line in text.splitlines():
+        m = TASK_DEF_LINE.match(line.strip())
+        if not m:
+            continue
+        found_task = True
+        if not TEST_ID_IN_TEXT.search(m.group("body")):
+            errors.append(f"{path}: TASK without TEST mapping -> {m.group('task_id')}")
+    if not found_task:
+        errors.append(f"{path}: no TASK definitions found")
+
+
+def validate_timezone_policy_tokens(errors: list[str]) -> None:
+    """Fail-fast check for REQ-OPS-001 governance tokens."""
+    required_docs = [
+        Path("docs/ouroboros/01_requirements_registry.md"),
+        Path("docs/ouroboros/30_code_level_work_orders.md"),
+        Path("docs/workflow.md"),
+    ]
+    for path in required_docs:
+        if not path.exists():
+            errors.append(f"missing file: {path}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if not TIMEZONE_TOKEN_PATTERN.search(text):
+            errors.append(f"{path}: missing timezone policy token (KST/UTC)")
+
+
+def validate_pr_traceability(errors: list[str]) -> None:
     title = os.getenv("GOVERNANCE_PR_TITLE", "").strip()
     body = os.getenv("GOVERNANCE_PR_BODY", "").strip()
     if not title and not body:
@@ -113,11 +150,11 @@ def validate_pr_traceability(warnings: list[str]) -> None:
 
     text = f"{title}\n{body}"
     if not REQ_ID_IN_LINE.search(text):
-        warnings.append("PR text missing REQ-ID reference")
+        errors.append("PR text missing REQ-ID reference")
     if not TASK_ID_IN_TEXT.search(text):
-        warnings.append("PR text missing TASK-ID reference")
+        errors.append("PR text missing TASK-ID reference")
     if not TEST_ID_IN_TEXT.search(text):
-        warnings.append("PR text missing TEST-ID reference")
+        errors.append("PR text missing TEST-ID reference")
 
 
 def _parse_pr_evidence_line(text: str, field: str) -> str | None:
@@ -145,8 +182,8 @@ def validate_read_only_approval(
 
     body = os.getenv("GOVERNANCE_PR_BODY", "").strip()
     if not body:
-        warnings.append(
-            "READ-ONLY file changed but PR body is unavailable; approval evidence check skipped"
+        errors.append(
+            "READ-ONLY file changed but PR body is unavailable; approval evidence is required"
         )
         return
 
@@ -245,7 +282,9 @@ def main() -> int:
 
     validate_registry_sync(changed_files, errors)
     validate_task_req_mapping(errors)
-    validate_pr_traceability(warnings)
+    validate_task_test_pairing(errors)
+    validate_timezone_policy_tokens(errors)
+    validate_pr_traceability(errors)
     validate_read_only_approval(changed_files, errors, warnings)
 
     if errors:
