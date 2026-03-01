@@ -1031,19 +1031,10 @@ def _maybe_queue_order_intent(
     price: float,
     source: str,
 ) -> bool:
-    def _coerce_nonnegative_int(value: Any) -> int:
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            return 0
-        return max(0, parsed)
-
     if not BLACKOUT_ORDER_MANAGER.in_blackout():
         return False
 
-    before_overflow_drops = _coerce_nonnegative_int(
-        getattr(BLACKOUT_ORDER_MANAGER, "overflow_drop_count", 0)
-    )
+    before_overflow_drops = BLACKOUT_ORDER_MANAGER.overflow_drop_count
     queued = BLACKOUT_ORDER_MANAGER.enqueue(
         _build_queued_order_intent(
             market=market,
@@ -1055,9 +1046,7 @@ def _maybe_queue_order_intent(
         )
     )
     if queued:
-        after_overflow_drops = _coerce_nonnegative_int(
-            getattr(BLACKOUT_ORDER_MANAGER, "overflow_drop_count", 0)
-        )
+        after_overflow_drops = BLACKOUT_ORDER_MANAGER.overflow_drop_count
         logger.warning(
             (
                 "Blackout active: queued order intent %s %s (%s) "

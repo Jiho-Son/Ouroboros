@@ -6502,6 +6502,7 @@ async def test_blackout_queues_order_and_skips_submission() -> None:
     blackout_manager.in_blackout.return_value = True
     blackout_manager.enqueue.return_value = True
     blackout_manager.pending_count = 1
+    blackout_manager.overflow_drop_count = 0
 
     with patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager):
         await trading_cycle(
