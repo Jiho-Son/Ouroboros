@@ -35,6 +35,7 @@ def _cost_model() -> BacktestCostModel:
         commission_bps=3.0,
         slippage_bps_by_session={"KRX_REG": 10.0, "US_PRE": 50.0},
         failure_rate_by_session={"KRX_REG": 0.01, "US_PRE": 0.08},
+        partial_fill_rate_by_session={"KRX_REG": 0.05, "US_PRE": 0.2},
         unfavorable_fill_required=True,
     )
 
@@ -71,6 +72,7 @@ def test_pipeline_happy_path_returns_fold_and_artifact_contract() -> None:
         assert names == {"B0", "B1", "M1"}
         for score in fold.baseline_scores:
             assert 0.0 <= score.accuracy <= 1.0
+            assert 0.0 <= score.cost_adjusted_accuracy <= 1.0
 
 
 def test_pipeline_cost_guard_fail_fast() -> None:
@@ -78,6 +80,7 @@ def test_pipeline_cost_guard_fail_fast() -> None:
         commission_bps=3.0,
         slippage_bps_by_session={"KRX_REG": 10.0},
         failure_rate_by_session={"KRX_REG": 0.01},
+        partial_fill_rate_by_session={"KRX_REG": 0.05},
         unfavorable_fill_required=True,
     )
     try:
@@ -166,3 +169,45 @@ def test_pipeline_rejects_minutes_spec_when_timestamp_missing() -> None:
         assert "BacktestBar.timestamp is required" in str(exc)
     else:
         raise AssertionError("expected timestamp validation error")
+
+
+def test_pipeline_fold_scores_reflect_cost_and_execution_effects() -> None:
+    cfg = dict(
+        bars=_bars(),
+        entry_indices=[0, 1, 2, 3, 4, 5, 6, 7],
+        side=1,
+        triple_barrier_spec=TripleBarrierSpec(
+            take_profit_pct=0.02,
+            stop_loss_pct=0.01,
+            max_holding_minutes=3,
+        ),
+        walk_forward=WalkForwardConfig(
+            train_size=4,
+            test_size=2,
+            step_size=2,
+            purge_size=1,
+            embargo_size=1,
+            min_train_size=3,
+        ),
+    )
+    optimistic = BacktestCostModel(
+        commission_bps=0.0,
+        slippage_bps_by_session={"KRX_REG": 0.0, "US_PRE": 0.0},
+        failure_rate_by_session={"KRX_REG": 0.0, "US_PRE": 0.0},
+        partial_fill_rate_by_session={"KRX_REG": 0.0, "US_PRE": 0.0},
+        unfavorable_fill_required=True,
+    )
+    conservative = BacktestCostModel(
+        commission_bps=10.0,
+        slippage_bps_by_session={"KRX_REG": 30.0, "US_PRE": 80.0},
+        failure_rate_by_session={"KRX_REG": 0.2, "US_PRE": 0.4},
+        partial_fill_rate_by_session={"KRX_REG": 0.5, "US_PRE": 0.7},
+        unfavorable_fill_required=True,
+    )
+    optimistic_out = run_v2_backtest_pipeline(cost_model=optimistic, **cfg)
+    conservative_out = run_v2_backtest_pipeline(cost_model=conservative, **cfg)
+
+    assert optimistic_out.folds and conservative_out.folds
+    optimistic_score = optimistic_out.folds[0].baseline_scores[1].cost_adjusted_accuracy
+    conservative_score = conservative_out.folds[0].baseline_scores[1].cost_adjusted_accuracy
+    assert conservative_score < optimistic_score
