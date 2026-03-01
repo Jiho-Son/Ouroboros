@@ -88,6 +88,10 @@ def _check_handover_entry(
         if token not in latest:
             errors.append(f"latest handover entry missing token: {token}")
 
+    if strict:
+        if "- next_ticket: #TBD" in latest:
+            errors.append("latest handover entry must not use placeholder next_ticket (#TBD)")
+
     if strict and not ci_mode:
         today_utc = datetime.now(UTC).date().isoformat()
         if today_utc not in latest:
@@ -100,8 +104,6 @@ def _check_handover_entry(
                 "latest handover entry must target current branch "
                 f"({branch_token})"
             )
-        if "- next_ticket: #TBD" in latest:
-            errors.append("latest handover entry must not use placeholder next_ticket (#TBD)")
         if "merged_to_feature_branch=no" in latest:
             errors.append(
                 "process gate indicates not merged; implementation must stay blocked "
@@ -122,8 +124,8 @@ def main() -> int:
         "--ci",
         action="store_true",
         help=(
-            "CI mode: keep structural/token checks but skip strict "
-            "today-date/current-branch matching."
+            "CI mode: keep structural/token checks and placeholder guard, "
+            "but skip strict today-date/current-branch/merge-gate checks."
         ),
     )
     args = parser.parse_args()
