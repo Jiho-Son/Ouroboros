@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     KR_ATR_STOP_MIN_PCT: float = Field(default=-2.0, le=0.0)
     KR_ATR_STOP_MAX_PCT: float = Field(default=-7.0, le=0.0)
     OVERNIGHT_EXCEPTION_ENABLED: bool = True
+    SESSION_RISK_RELOAD_ENABLED: bool = True
+    SESSION_RISK_PROFILES_JSON: str = "{}"
 
     # Trading frequency mode (daily = batch API calls, realtime = per-stock calls)
     TRADE_MODE: str = Field(default="daily", pattern="^(daily|realtime)$")

@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
+import src.main as main_module
 
 from src.config import Settings
 from src.context.layer import ContextLayer
@@ -15,6 +16,9 @@ from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
 from src.main import (
     KILL_SWITCH,
+    _SESSION_RISK_LAST_BY_MARKET,
+    _SESSION_RISK_OVERRIDES_BY_MARKET,
+    _SESSION_RISK_PROFILES_MAP,
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL,
     _apply_staged_exit_override_for_hold,
     _compute_kr_atr_value,
@@ -32,10 +36,12 @@ from src.main import (
     _extract_held_qty_from_balance,
     _handle_market_close,
     _retry_connection,
+    _resolve_market_setting,
     _resolve_sell_qty_for_pnl,
     _run_context_scheduler,
     _run_evolution_loop,
     _start_dashboard_server,
+    _stoploss_cooldown_minutes,
     _compute_kr_dynamic_stop_loss_pct,
     handle_domestic_pending_orders,
     handle_overseas_pending_orders,
@@ -99,11 +105,19 @@ def _reset_kill_switch_state() -> None:
     KILL_SWITCH.clear_block()
     _RUNTIME_EXIT_STATES.clear()
     _RUNTIME_EXIT_PEAKS.clear()
+    _SESSION_RISK_LAST_BY_MARKET.clear()
+    _SESSION_RISK_OVERRIDES_BY_MARKET.clear()
+    _SESSION_RISK_PROFILES_MAP.clear()
+    main_module._SESSION_RISK_PROFILES_RAW = "__reset__"
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL.clear()
     yield
     KILL_SWITCH.clear_block()
     _RUNTIME_EXIT_STATES.clear()
     _RUNTIME_EXIT_PEAKS.clear()
+    _SESSION_RISK_LAST_BY_MARKET.clear()
+    _SESSION_RISK_OVERRIDES_BY_MARKET.clear()
+    _SESSION_RISK_PROFILES_MAP.clear()
+    main_module._SESSION_RISK_PROFILES_RAW = "__reset__"
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL.clear()
 
 
@@ -184,6 +198,116 @@ def test_compute_kr_dynamic_stop_loss_pct_uses_settings_values() -> None:
         settings=settings,
     )
     assert out == -3.0
+
+
+def test_resolve_market_setting_uses_session_profile_override() -> None:
+    settings = Settings(
+        KIS_APP_KEY="k",
+        KIS_APP_SECRET="s",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="g",
+        SESSION_RISK_PROFILES_JSON='{"US_PRE": {"US_MIN_PRICE": 7.5}}',
+    )
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+
+    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_PRE")):
+        value = _resolve_market_setting(
+            market=market,
+            settings=settings,
+            key="US_MIN_PRICE",
+            default=5.0,
+        )
+
+    assert value == pytest.approx(7.5)
+
+
+def test_stoploss_cooldown_minutes_uses_session_override() -> None:
+    settings = Settings(
+        KIS_APP_KEY="k",
+        KIS_APP_SECRET="s",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="g",
+        STOPLOSS_REENTRY_COOLDOWN_MINUTES=120,
+        SESSION_RISK_PROFILES_JSON='{"NXT_AFTER": {"STOPLOSS_REENTRY_COOLDOWN_MINUTES": 45}}',
+    )
+    market = MagicMock()
+    market.code = "KR"
+
+    with patch("src.main.get_session_info", return_value=MagicMock(session_id="NXT_AFTER")):
+        value = _stoploss_cooldown_minutes(settings, market=market)
+
+    assert value == 45
+
+
+def test_resolve_market_setting_ignores_profile_when_reload_disabled() -> None:
+    settings = Settings(
+        KIS_APP_KEY="k",
+        KIS_APP_SECRET="s",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="g",
+        US_MIN_PRICE=5.0,
+        SESSION_RISK_RELOAD_ENABLED=False,
+        SESSION_RISK_PROFILES_JSON='{"US_PRE": {"US_MIN_PRICE": 9.5}}',
+    )
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+
+    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_PRE")):
+        value = _resolve_market_setting(
+            market=market,
+            settings=settings,
+            key="US_MIN_PRICE",
+            default=5.0,
+        )
+
+    assert value == pytest.approx(5.0)
+
+
+def test_resolve_market_setting_falls_back_on_invalid_profile_json() -> None:
+    settings = Settings(
+        KIS_APP_KEY="k",
+        KIS_APP_SECRET="s",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="g",
+        US_MIN_PRICE=5.0,
+        SESSION_RISK_PROFILES_JSON="{invalid-json",
+    )
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+
+    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_PRE")):
+        value = _resolve_market_setting(
+            market=market,
+            settings=settings,
+            key="US_MIN_PRICE",
+            default=5.0,
+        )
+
+    assert value == pytest.approx(5.0)
+
+
+def test_resolve_market_setting_coerces_bool_string_override() -> None:
+    settings = Settings(
+        KIS_APP_KEY="k",
+        KIS_APP_SECRET="s",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="g",
+        OVERNIGHT_EXCEPTION_ENABLED=True,
+        SESSION_RISK_PROFILES_JSON='{"US_AFTER": {"OVERNIGHT_EXCEPTION_ENABLED": "false"}}',
+    )
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+
+    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_AFTER")):
+        value = _resolve_market_setting(
+            market=market,
+            settings=settings,
+            key="OVERNIGHT_EXCEPTION_ENABLED",
+            default=True,
+        )
+
+    assert value is False
 
 
 def test_estimate_pred_down_prob_from_rsi_uses_linear_mapping() -> None:
