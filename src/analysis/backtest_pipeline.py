@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from statistics import mean
 from typing import Literal
+from typing import cast
 
 from src.analysis.backtest_cost_guard import BacktestCostModel, validate_backtest_cost_model
 from src.analysis.triple_barrier import TripleBarrierSpec, label_with_triple_barrier
@@ -100,7 +101,7 @@ def run_v2_backtest_pipeline(
                 "BacktestBar.timestamp is required for all bars when "
                 "triple_barrier_spec.max_holding_minutes is set"
             )
-        resolved_timestamps = [ts for ts in timestamps if ts is not None]
+        resolved_timestamps = cast(list[datetime], timestamps)
 
     labels_by_bar_index: dict[int, int] = {}
     for idx in normalized_entries:
