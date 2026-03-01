@@ -23,6 +23,7 @@ class BlackoutWindow:
 class QueuedOrderIntent:
     market_code: str
     exchange_code: str
+    session_id: str
     stock_code: str
     order_type: str
     quantity: int
