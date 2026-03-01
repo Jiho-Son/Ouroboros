@@ -19,9 +19,20 @@ META_PATTERN = re.compile(
     re.MULTILINE,
 )
 ID_PATTERN = re.compile(r"\b(?:REQ|RULE|TASK|TEST|DOC)-[A-Z0-9-]+-\d{3}\b")
-DEF_PATTERN = re.compile(r"^-\s+`(?P<id>(?:REQ|RULE|TASK|TEST|DOC)-[A-Z0-9-]+-\d{3})`", re.MULTILINE)
+DEF_PATTERN = re.compile(
+    r"^-\s+`(?P<id>(?:REQ|RULE|TASK|TEST|DOC)-[A-Z0-9-]+-\d{3})`",
+    re.MULTILINE,
+)
 LINK_PATTERN = re.compile(r"\[[^\]]+\]\((?P<link>[^)]+)\)")
-LINE_DEF_PATTERN = re.compile(r"^-\s+`(?P<id>(?:REQ|RULE|TASK|TEST|DOC)-[A-Z0-9-]+-\d{3})`.*$", re.MULTILINE)
+LINE_DEF_PATTERN = re.compile(
+    r"^-\s+`(?P<id>(?:REQ|RULE|TASK|TEST|DOC)-[A-Z0-9-]+-\d{3})`.*$",
+    re.MULTILINE,
+)
+PLAN_LINK_PATTERN = re.compile(r"ouroboros_plan_v(?P<version>[23])\.txt$")
+ALLOWED_PLAN_TARGETS = {
+    "2": (DOC_DIR / "source" / "ouroboros_plan_v2.txt").resolve(),
+    "3": (DOC_DIR / "source" / "ouroboros_plan_v3.txt").resolve(),
+}
 
 
 def iter_docs() -> list[Path]:
@@ -40,11 +51,35 @@ def validate_metadata(path: Path, text: str, errors: list[str], doc_ids: dict[st
         doc_ids[doc_id] = path
 
 
+def validate_plan_source_link(path: Path, link: str, errors: list[str]) -> None:
+    normalized = link.strip()
+    match = PLAN_LINK_PATTERN.search(normalized)
+    if not match:
+        return
+
+    version = match.group("version")
+    expected_target = ALLOWED_PLAN_TARGETS[version]
+    if normalized.startswith("/"):
+        errors.append(
+            f"{path}: invalid plan link path -> {link} "
+            f"(use ./source/ouroboros_plan_v{version}.txt)"
+        )
+        return
+
+    resolved_target = (path.parent / normalized).resolve()
+    if resolved_target != expected_target:
+        errors.append(
+            f"{path}: invalid plan link path -> {link} "
+            f"(must resolve to docs/ouroboros/source/ouroboros_plan_v{version}.txt)"
+        )
+
+
 def validate_links(path: Path, text: str, errors: list[str]) -> None:
     for m in LINK_PATTERN.finditer(text):
         link = m.group("link").strip()
         if not link or link.startswith("http") or link.startswith("#"):
             continue
+        validate_plan_source_link(path, link, errors)
         if link.startswith("/"):
             target = Path(link)
         else:
@@ -61,7 +96,9 @@ def collect_ids(path: Path, text: str, defs: dict[str, Path], refs: dict[str, se
         refs.setdefault(idv, set()).add(path)
 
 
-def collect_req_traceability(text: str, req_to_task: dict[str, set[str]], req_to_test: dict[str, set[str]]) -> None:
+def collect_req_traceability(
+    text: str, req_to_task: dict[str, set[str]], req_to_test: dict[str, set[str]]
+) -> None:
     for m in LINE_DEF_PATTERN.finditer(text):
         line = m.group(0)
         item_id = m.group("id")
