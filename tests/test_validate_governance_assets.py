@@ -116,3 +116,63 @@ def test_validate_pr_traceability_warns_when_req_missing(monkeypatch) -> None:
     module.validate_pr_traceability(warnings)
     assert warnings
     assert "PR text missing REQ-ID reference" in warnings
+
+
+def test_validate_read_only_approval_requires_evidence(monkeypatch) -> None:
+    module = _load_module()
+    changed_files = ["src/core/risk_manager.py"]
+    errors: list[str] = []
+    warnings: list[str] = []
+    monkeypatch.setenv(
+        "GOVERNANCE_PR_BODY",
+        "\n".join(
+            [
+                "## READ-ONLY Approval (Required when touching READ-ONLY files)",
+                "- Touched READ-ONLY files: src/core/risk_manager.py",
+                "- Human approval: TBD",
+                "- Test suite 1: pytest -q",
+                "- Test suite 2: TBD",
+            ]
+        ),
+    )
+
+    module.validate_read_only_approval(changed_files, errors, warnings)
+    assert warnings == []
+    assert any("Human approval" in err for err in errors)
+    assert any("Test suite 2" in err for err in errors)
+
+
+def test_validate_read_only_approval_passes_with_complete_evidence(monkeypatch) -> None:
+    module = _load_module()
+    changed_files = ["src/core/risk_manager.py"]
+    errors: list[str] = []
+    warnings: list[str] = []
+    monkeypatch.setenv(
+        "GOVERNANCE_PR_BODY",
+        "\n".join(
+            [
+                "## READ-ONLY Approval (Required when touching READ-ONLY files)",
+                "- Touched READ-ONLY files: src/core/risk_manager.py",
+                "- Human approval: https://example.com/review/123",
+                "- Test suite 1: pytest -q tests/test_risk.py",
+                "- Test suite 2: pytest -q tests/test_main.py -k risk",
+            ]
+        ),
+    )
+
+    module.validate_read_only_approval(changed_files, errors, warnings)
+    assert errors == []
+    assert warnings == []
+
+
+def test_validate_read_only_approval_warns_without_pr_body(monkeypatch) -> None:
+    module = _load_module()
+    changed_files = ["src/core/risk_manager.py"]
+    errors: list[str] = []
+    warnings: list[str] = []
+    monkeypatch.delenv("GOVERNANCE_PR_BODY", raising=False)
+
+    module.validate_read_only_approval(changed_files, errors, warnings)
+    assert errors == []
+    assert warnings
+    assert "approval evidence check skipped" in warnings[0]
