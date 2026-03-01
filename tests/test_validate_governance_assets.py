@@ -79,3 +79,38 @@ def test_load_changed_files_with_range_uses_git_diff(monkeypatch) -> None:
         "docs/ouroboros/85_loss_recovery_action_plan.md",
         "src/main.py",
     ]
+
+
+def test_validate_task_req_mapping_reports_missing_req_reference(tmp_path) -> None:
+    module = _load_module()
+    doc = tmp_path / "work_orders.md"
+    doc.write_text(
+        "- `TASK-OPS-999` no req mapping line\n",
+        encoding="utf-8",
+    )
+    errors: list[str] = []
+    module.validate_task_req_mapping(errors, task_doc=doc)
+    assert errors
+    assert "TASK without REQ mapping" in errors[0]
+
+
+def test_validate_task_req_mapping_passes_when_req_present(tmp_path) -> None:
+    module = _load_module()
+    doc = tmp_path / "work_orders.md"
+    doc.write_text(
+        "- `TASK-OPS-999` (`REQ-OPS-001`): enforce timezone labels\n",
+        encoding="utf-8",
+    )
+    errors: list[str] = []
+    module.validate_task_req_mapping(errors, task_doc=doc)
+    assert errors == []
+
+
+def test_validate_pr_traceability_warns_when_req_missing(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setenv("GOVERNANCE_PR_TITLE", "feat: update policy checker")
+    monkeypatch.setenv("GOVERNANCE_PR_BODY", "Refs: TASK-OPS-001 TEST-ACC-007")
+    warnings: list[str] = []
+    module.validate_pr_traceability(warnings)
+    assert warnings
+    assert "PR text missing REQ-ID reference" in warnings
