@@ -187,3 +187,57 @@ def test_validate_read_only_approval_skips_when_no_readonly_file_changed() -> No
     module.validate_read_only_approval(changed_files, errors, warnings)
     assert errors == []
     assert warnings == []
+
+
+def test_must_contain_enforces_workflow_newline_helper_tokens(tmp_path) -> None:
+    module = _load_module()
+    workflow_doc = tmp_path / "workflow.md"
+    workflow_doc.write_text(
+        "\n".join(
+            [
+                "Session Handover Gate (Mandatory)",
+                "python3 scripts/session_handover_check.py --strict",
+                "scripts/tea_comment.sh",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    errors: list[str] = []
+    module.must_contain(
+        workflow_doc,
+        [
+            "Session Handover Gate (Mandatory)",
+            "session_handover_check.py --strict",
+            "scripts/tea_comment.sh",
+        ],
+        errors,
+    )
+    assert errors == []
+
+
+def test_must_contain_enforces_commands_newline_section_tokens(tmp_path) -> None:
+    module = _load_module()
+    commands_doc = tmp_path / "commands.md"
+    commands_doc.write_text(
+        "\n".join(
+            [
+                "Session Handover Preflight (Mandatory)",
+                "python3 scripts/session_handover_check.py --strict",
+                "Comment Newline Escaping",
+                "scripts/tea_comment.sh",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    errors: list[str] = []
+    module.must_contain(
+        commands_doc,
+        [
+            "Session Handover Preflight (Mandatory)",
+            "session_handover_check.py --strict",
+            "Comment Newline Escaping",
+            "scripts/tea_comment.sh",
+        ],
+        errors,
+    )
+    assert errors == []
