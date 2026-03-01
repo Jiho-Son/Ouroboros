@@ -24,11 +24,17 @@ Updated: 2026-02-27
 ## 2) 필수 상태 체크 (필수)
 
 필수 CI 항목:
-- `validate_ouroboros_docs` (명령: `python3 scripts/validate_ouroboros_docs.py`)
-- `test` (명령: `pytest -q`)
+
+| 참조 기준 | 이름 | 설명 |
+|-----------|------|------|
+| **job 단위** (브랜치 보호 설정 시 사용) | `test` | 전체 CI job (문서 검증 + 테스트 포함) |
+| **step 단위** (로그 확인 시 참조) | `validate_ouroboros_docs` | `python3 scripts/validate_ouroboros_docs.py` 실행 step |
+| **step 단위** | `run_tests` | `pytest -q` 실행 step |
+
+> **주의**: Gitea 브랜치 보호의 Required Status Checks는 **job 이름** 기준으로 설정한다 (`test`). step 이름은 UI 로그 탐색용이며 보호 규칙에 직접 입력하지 않는다.
 
 설정 기준:
-- 위 2개 체크가 `success` 아니면 머지 금지
+- `test` job이 `success` 아니면 머지 금지
 - 체크 스킵/중립 상태 허용 금지
 
 ## 3) 필수 리뷰어 규칙 (권장 -> 필수)

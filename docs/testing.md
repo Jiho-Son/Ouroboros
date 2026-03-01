@@ -2,7 +2,7 @@
 
 ## Test Structure
 
-**551 tests** across **25 files**. `asyncio_mode = "auto"` in pyproject.toml — async tests need no special decorator.
+**998 tests** across **41 files**. `asyncio_mode = "auto"` in pyproject.toml — async tests need no special decorator.
 
 The `settings` fixture in `conftest.py` provides safe defaults with test credentials and in-memory DB.
 
@@ -22,6 +22,8 @@ The `settings` fixture in `conftest.py` provides safe defaults with test credent
 - Hash key generation
 - Network error handling
 - SSL context configuration
+
+> **Note**: 아래 파일별 테스트 수는 릴리즈 시점 스냅샷이며 실제 수치와 다를 수 있습니다. 현재 정확한 수치는 `pytest --collect-only -q`로 확인하세요.
 
 ##### `tests/test_brain.py` (24 tests)
 - Valid JSON parsing and markdown-wrapped JSON handling
@@ -90,7 +92,7 @@ The `settings` fixture in `conftest.py` provides safe defaults with test credent
 - Python-first filtering pipeline
 - RSI and volume ratio filter logic
 - Candidate scoring and ranking
-- Fallback to static watchlist
+- Fallback to static watchlist (domestic) or dynamic universe (overseas)
 
 #### Context & Memory
 
@@ -138,8 +140,8 @@ The `settings` fixture in `conftest.py` provides safe defaults with test credent
 #### Dashboard
 
 ##### `tests/test_dashboard.py` (14 tests)
-- FastAPI endpoint responses (8 API routes)
-- Status, playbook, scorecard, performance, context, decisions, scenarios
+- FastAPI endpoint responses (10 API routes)
+- Status, playbook, scorecard, performance, context, decisions, scenarios, pnl/history, positions
 - Query parameter handling (market, date, limit)
 
 #### Performance & Quality

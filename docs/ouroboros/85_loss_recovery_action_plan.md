@@ -1,15 +1,18 @@
 <!--
 Doc-ID: DOC-ACTION-085
-Version: 1.0.0
+Version: 1.1.0
 Status: active
 Owner: strategy
-Updated: 2026-02-28
+Updated: 2026-03-01
 -->
 
 # 손실 복구 실행 계획
 
 작성일: 2026-02-28
+최종 업데이트: 2026-03-01 (Phase 1~3 완료 상태 반영)
 기반 문서: [80_implementation_audit.md](./80_implementation_audit.md) (ROOT 7개 + GAP 5개)
+
+> **2026-03-01 현황**: Phase 1 ✅ 완료, Phase 2 ✅ 완료, Phase 3 ✅ 기본 완료 (ACT-13 고도화 잔여)
 
 ---
 
@@ -35,13 +38,13 @@ Updated: 2026-02-28
 
 ## 2. Phase별 작업 분해
 
-### Phase 1: 즉시 — 손실 출혈 차단
+### Phase 1: 즉시 — 손실 출혈 차단 ✅ 완료
 
 가장 큰 손실 패턴(노이즈 손절, 반복 매매, 페니스탁)을 즉시 제거한다.
 
 ---
 
-#### ACT-01: KR 손절선 ATR 기반 동적 확대
+#### ACT-01: KR 손절선 ATR 기반 동적 확대 ✅ 머지
 
 - **ROOT 참조**: ROOT-1 (hard_stop_pct -2%가 KR 소형주 변동성 대비 과소)
 - **Gitea 이슈**: feat: KR 손절선 ATR 기반 동적 확대 (-2% → ATR 적응형)
@@ -60,7 +63,7 @@ Updated: 2026-02-28
 
 ---
 
-#### ACT-02: 손절 후 동일 종목 재진입 쿨다운
+#### ACT-02: 손절 후 동일 종목 재진입 쿨다운 ✅ 머지
 
 - **ROOT 참조**: ROOT-2 (동일 종목 반복 매매)
 - **Gitea 이슈**: feat: 손절 후 동일 종목 재진입 쿨다운 (1~2시간)
@@ -79,7 +82,7 @@ Updated: 2026-02-28
 
 ---
 
-#### ACT-03: US $5 이하 종목 진입 차단 필터
+#### ACT-03: US $5 이하 종목 진입 차단 필터 ✅ 머지
 
 - **ROOT 참조**: ROOT-3 (미국 페니스탁 무분별 진입)
 - **Gitea 이슈**: feat: US $5 이하 종목 진입 차단 필터
@@ -97,7 +100,7 @@ Updated: 2026-02-28
 
 ---
 
-#### ACT-04: 진화 전략 코드 생성 시 syntax 검증 추가
+#### ACT-04: 진화 전략 코드 생성 시 syntax 검증 추가 ✅ 머지
 
 - **ROOT 참조**: ROOT-4 (진화 전략 문법 오류)
 - **Gitea 이슈**: fix: 진화 전략 코드 생성 시 syntax 검증 추가
@@ -116,13 +119,13 @@ Updated: 2026-02-28
 
 ---
 
-### Phase 2: 단기 — 데이터 정합성 + v2 실효화
+### Phase 2: 단기 — 데이터 정합성 + v2 실효화 ✅ 완료
 
 손익 계산 정확도를 확보하고, v2 청산 로직을 실효화한다.
 
 ---
 
-#### ACT-05: SELL PnL 계산을 sell_qty 기준으로 수정
+#### ACT-05: SELL PnL 계산을 sell_qty 기준으로 수정 ✅ 머지
 
 - **ROOT 참조**: ROOT-6 (CRITICAL — PnL 계산이 buy_qty 사용)
 - **Gitea 이슈**: fix(critical): SELL PnL 계산을 sell_qty 기준으로 수정
@@ -141,7 +144,7 @@ Updated: 2026-02-28
 
 ---
 
-#### ACT-06: BUY 매칭 키에 exchange_code 추가
+#### ACT-06: BUY 매칭 키에 exchange_code 추가 ✅ 머지
 
 - **ROOT 참조**: ROOT-7 (BUY 매칭 키에 exchange_code 미포함)
 - **Gitea 이슈**: fix: BUY 매칭 키에 exchange_code 추가
@@ -159,12 +162,12 @@ Updated: 2026-02-28
 
 ---
 
-#### ACT-07: 블랙아웃 복구 주문에 log_trade() 추가
+#### ACT-07: 블랙아웃 복구 주문에 log_trade() 추가 ✅ 머지
 
 - **ROOT 참조**: GAP-4 (블랙아웃 복구 주문 DB 미기록)
 - **Gitea 이슈**: fix: 블랙아웃 복구 주문에 log_trade() 추가
 - **Gitea 이슈 번호**: #324
-- **변경 대상 파일**: `src/main.py` (line 694-791, 블랙아웃 복구 실행 경로)
+- **변경 대상 파일**: `src/main.py` — `process_blackout_recovery_orders()` 함수 내 복구 주문 실행 경로
 - **현재 동작**: 블랙아웃 복구 주문이 실행되나 `log_trade()` 호출 없음 → DB에 기록 안 됨
 - **목표 동작**: 복구 주문 실행 후 `log_trade()` 호출하여 DB에 기록. rationale에 `[blackout-recovery]` prefix 추가
 - **수용 기준**:
@@ -178,7 +181,7 @@ Updated: 2026-02-28
 
 ---
 
-#### ACT-08: v2 staged exit에 실제 피처 공급
+#### ACT-08: v2 staged exit에 실제 피처 공급 ✅ 머지
 
 - **ROOT 참조**: ROOT-5 (v2 청산 로직 실효성 부족)
 - **Gitea 이슈**: feat: v2 staged exit에 실제 피처(ATR, pred_down_prob) 공급
@@ -200,7 +203,7 @@ Updated: 2026-02-28
 
 ---
 
-#### ACT-09: session_id를 거래/의사결정 로그에 명시적 전달
+#### ACT-09: session_id를 거래/의사결정 로그에 명시적 전달 ✅ 머지
 
 - **ROOT 참조**: GAP-1 (DecisionLogger session_id 미포함), GAP-2 (log_trade session_id 미전달)
 - **Gitea 이슈**: feat: session_id를 거래/의사결정 로그에 명시적 전달
@@ -223,13 +226,13 @@ Updated: 2026-02-28
 
 ---
 
-### Phase 3: 중기 — v3 세션 최적화
+### Phase 3: 중기 — v3 세션 최적화 ✅ 기본 완료 (ACT-13 고도화 잔여)
 
 세션 경계 처리와 운영 거버넌스를 강화한다.
 
 ---
 
-#### ACT-10: 세션 전환 시 리스크 파라미터 동적 재로딩
+#### ACT-10: 세션 전환 시 리스크 파라미터 동적 재로딩 ✅ 머지
 
 - **ROOT 참조**: GAP-3 (세션 전환 시 리스크 파라미터 재로딩 없음)
 - **Gitea 이슈**: feat: 세션 전환 시 리스크 파라미터 동적 재로딩
@@ -241,14 +244,12 @@ Updated: 2026-02-28
   - NXT_AFTER → KRX_REG 전환 시 파라미터 재로딩 확인
   - 재로딩 이벤트 로그 기록
   - 재로딩 실패 시 기존 파라미터 유지 (안전 폴백)
-- **테스트 계획**:
-  - 단위: 세션 전환 훅 콜백 테스트
-  - 단위: 재로딩 실패 시 폴백 테스트
+- **테스트**: `test_main.py`에 설정 오버라이드/리로드/폴백 단위 테스트 포함. **잔여**: 세션 경계 실시간 전환 E2E 보강
 - **의존성**: ACT-09 (session_id 인프라)
 
 ---
 
-#### ACT-11: 블랙아웃 복구 시 가격/세션 재검증 강화
+#### ACT-11: 블랙아웃 복구 시 가격/세션 재검증 강화 ✅ 머지
 
 - **ROOT 참조**: GAP-4 잔여 (가격 유효성, 세션 변경 재적용 미구현)
 - **Gitea 이슈**: feat: 블랙아웃 복구 시 가격/세션 재검증 강화
@@ -268,7 +269,7 @@ Updated: 2026-02-28
 
 ---
 
-#### ACT-12: Triple Barrier 시간장벽을 캘린더 시간(분) 기반으로 전환
+#### ACT-12: Triple Barrier 시간장벽을 캘린더 시간(분) 기반으로 전환 ✅ 머지
 
 - **ROOT 참조**: GAP-5 (시간장벽이 봉 개수 고정)
 - **Gitea 이슈**: feat: Triple Barrier 시간장벽을 캘린더 시간(분) 기반으로 전환
@@ -286,21 +287,13 @@ Updated: 2026-02-28
 
 ---
 
-#### ACT-13: CI 자동 검증 (정책 레지스트리 + TASK-REQ 매핑)
+#### ACT-13: CI 자동 검증 (정책 레지스트리 + TASK-REQ 매핑) ✅ 기본 구현 완료, 고도화 잔여
 
 - **ROOT 참조**: REQ-OPS-002 (정책 변경 시 레지스트리 업데이트 강제), REQ-OPS-003 (TASK-REQ 매핑 강제)
 - **Gitea 이슈**: infra: CI 자동 검증 (정책 레지스트리 + TASK-REQ 매핑)
 - **Gitea 이슈 번호**: #330
-- **변경 대상 파일**: `.gitea/workflows/`, `scripts/validate_governance_assets.py`
-- **현재 동작**: CI 자동 검증 없음. 문서 검증은 수동 실행
-- **목표 동작**:
-  - PR 시 정책 레지스트리(`01_requirements_registry.md`) 변경 여부 자동 검증
-  - TASK/이슈가 REQ-ID를 참조하는지 자동 검증
-- **수용 기준**:
-  - 정책 파일 변경 시 레지스트리 미업데이트면 CI 실패
-  - 새 이슈/PR에 REQ-ID 미참조 시 경고
-- **테스트 계획**:
-  - CI 파이프라인 자체 테스트 (정상/실패 케이스)
+- **현재 동작**: `.gitea/workflows/ci.yml`에서 `scripts/validate_governance_assets.py` + `scripts/validate_ouroboros_docs.py` 자동 실행
+- **잔여 고도화**: PR 본문 REQ/TASK/TEST 강제 레벨 상향, 정책 파일 미업데이트 시 CI 실패 기준 강화
 - **의존성**: 없음
 
 ---
@@ -311,7 +304,7 @@ Updated: 2026-02-28
 
 - 모든 ACT 항목에 대해 개별 테스트 작성
 - 커버리지 >= 80% 유지
-- 기존 551개 테스트 전체 통과 확인
+- 현재 CI 기준 전체 테스트 통과 확인 (2026-03-01 기준 998 tests collected)
 
 ### 3.2 통합 테스트
 
@@ -386,6 +379,38 @@ Phase 3
 1. 해당 ACT의 PR branch에서 `git revert` 수행
 2. 기존 테스트 전체 통과 확인
 3. 실환경 투입 전 소액 live 검증
+
+---
+
+## 6. 미진 사항 (2026-03-01 기준)
+
+Phase 1~3 구현 완료 후에도 다음 항목이 운영상 미완료 상태이다.
+
+### 6.1 운영 검증 필요
+
+| 항목 | 설명 | 우선순위 |
+|------|------|----------|
+| FX PnL 운영 활성화 | `fx_pnl`/`strategy_pnl` 컬럼 존재하나 모든 운영 데이터 값이 0 | P1 |
+| 세션 경계 E2E 통합 테스트 보강 | `test_main.py`에 단위 테스트 존재; 세션 경계 실시간 전환 E2E 미작성 | P2 |
+| v2 상태기계 통합 end-to-end | 실거래 경로에서 HOLDING→BE_LOCK→ARMED→EXITED 전체 시나리오 테스트 미작성 | P2 |
+
+### 6.2 아키텍처 수준 잔여 갭
+
+| 항목 | 설명 | 배경 문서 |
+|------|------|-----------|
+| CI 자동 검증 고도화 (#330) | 기본 구현 완료(`validate_governance_assets.py` CI 연동); 규칙/강제수준 고도화 필요 | REQ-OPS-002, REQ-OPS-003 |
+| pred_down_prob ML 모델 대체 | 현재 RSI 프록시 사용 — 추후 실제 GBDT/ML 모델로 대체 권장 | ROOT-5, ouroboros_plan_v2.txt §3.D |
+| KR/US 파라미터 민감도 분석 | v2 계획의 be_arm_pct/arm_pct/atr_k 최적값 탐색 미수행 | ouroboros_plan_v2.txt §8 |
+
+### 6.3 v3 실험 매트릭스 미착수
+
+ouroboros_plan_v3.txt §9에 정의된 3개 실험이 아직 시작되지 않았다.
+
+| 실험 ID | 시장 | 포커스 | 상태 |
+|---------|------|--------|------|
+| EXP-KR-01 | KR | NXT 야간 특화 (p_thresh 0.65) | ❌ 미착수 |
+| EXP-US-01 | US | 21h 준연속 운용 (atr_k 2.5) | ❌ 미착수 |
+| EXP-HYB-01 | Global | KR 낮 + US 밤 연계 레짐 자산배분 | ❌ 미착수 |
 
 ---
 

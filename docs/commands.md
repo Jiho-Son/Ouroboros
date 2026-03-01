@@ -136,7 +136,7 @@ No decorator needed for async tests.
 # Install all dependencies (production + dev)
 pip install -e ".[dev]"
 
-# Run full test suite with coverage (551 tests across 25 files)
+# Run full test suite with coverage (998 tests across 41 files)
 pytest -v --cov=src --cov-report=term-missing
 
 # Run a single test file
@@ -202,6 +202,8 @@ Dashboard runs as a daemon thread on `DASHBOARD_HOST:DASHBOARD_PORT` (default: `
 | `GET /api/context/{layer}` | Context data by layer L1-L7 (query: `timeframe`) |
 | `GET /api/decisions` | Decision log entries (query: `limit`, `market`) |
 | `GET /api/scenarios/active` | Today's matched scenarios |
+| `GET /api/pnl/history` | P&L history over time |
+| `GET /api/positions` | Current open positions |
 
 ## Telegram Commands
 
