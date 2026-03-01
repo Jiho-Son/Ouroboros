@@ -9,6 +9,7 @@ import src.main as main_module
 from src.config import Settings
 from src.context.layer import ContextLayer
 from src.context.scheduler import ScheduleResult
+from src.core.blackout_manager import BlackoutOrderManager
 from src.core.order_policy import OrderPolicyRejected, get_session_info
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
 from src.db import init_db, log_trade
@@ -33,6 +34,7 @@ from src.main import (
     _extract_held_qty_from_balance,
     _handle_market_close,
     _inject_staged_exit_features,
+    _maybe_queue_order_intent,
     _resolve_market_setting,
     _resolve_sell_qty_for_pnl,
     _retry_connection,
@@ -6527,6 +6529,40 @@ async def test_blackout_queues_order_and_skips_submission() -> None:
 
     broker.send_order.assert_not_called()
     blackout_manager.enqueue.assert_called_once()
+
+
+def test_blackout_queue_overflow_keeps_latest_intent() -> None:
+    manager = BlackoutOrderManager(enabled=True, windows=[], max_queue_size=1)
+    manager.in_blackout = lambda now=None: True  # type: ignore[method-assign]
+
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+
+    with patch("src.main.BLACKOUT_ORDER_MANAGER", manager):
+        assert _maybe_queue_order_intent(
+            market=market,
+            stock_code="005930",
+            order_type="BUY",
+            quantity=1,
+            price=100.0,
+            source="test-first",
+        )
+        assert _maybe_queue_order_intent(
+            market=market,
+            stock_code="000660",
+            order_type="BUY",
+            quantity=2,
+            price=200.0,
+            source="test-second",
+        )
+
+    assert manager.pending_count == 1
+    assert manager.overflow_drop_count == 1
+    manager.in_blackout = lambda now=None: False  # type: ignore[method-assign]
+    batch = manager.pop_recovery_batch()
+    assert len(batch) == 1
+    assert batch[0].stock_code == "000660"
 
 
 @pytest.mark.asyncio

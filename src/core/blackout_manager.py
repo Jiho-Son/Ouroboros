@@ -68,10 +68,15 @@ class BlackoutOrderManager:
         self._queue: deque[QueuedOrderIntent] = deque()
         self._was_blackout = False
         self._max_queue_size = max_queue_size
+        self._overflow_drop_count = 0
 
     @property
     def pending_count(self) -> int:
         return len(self._queue)
+
+    @property
+    def overflow_drop_count(self) -> int:
+        return self._overflow_drop_count
 
     def in_blackout(self, now: datetime | None = None) -> bool:
         if not self.enabled or not self._windows:
@@ -81,8 +86,11 @@ class BlackoutOrderManager:
         return any(window.contains(kst_now) for window in self._windows)
 
     def enqueue(self, intent: QueuedOrderIntent) -> bool:
-        if len(self._queue) >= self._max_queue_size:
+        if self._max_queue_size <= 0:
             return False
+        if len(self._queue) >= self._max_queue_size:
+            self._queue.popleft()
+            self._overflow_drop_count += 1
         self._queue.append(intent)
         return True
 

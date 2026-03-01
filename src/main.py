@@ -1031,9 +1031,19 @@ def _maybe_queue_order_intent(
     price: float,
     source: str,
 ) -> bool:
+    def _coerce_nonnegative_int(value: Any) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return 0
+        return max(0, parsed)
+
     if not BLACKOUT_ORDER_MANAGER.in_blackout():
         return False
 
+    before_overflow_drops = _coerce_nonnegative_int(
+        getattr(BLACKOUT_ORDER_MANAGER, "overflow_drop_count", 0)
+    )
     queued = BLACKOUT_ORDER_MANAGER.enqueue(
         _build_queued_order_intent(
             market=market,
@@ -1045,6 +1055,9 @@ def _maybe_queue_order_intent(
         )
     )
     if queued:
+        after_overflow_drops = _coerce_nonnegative_int(
+            getattr(BLACKOUT_ORDER_MANAGER, "overflow_drop_count", 0)
+        )
         logger.warning(
             (
                 "Blackout active: queued order intent %s %s (%s) "
@@ -1058,9 +1071,22 @@ def _maybe_queue_order_intent(
             source,
             BLACKOUT_ORDER_MANAGER.pending_count,
         )
+        if after_overflow_drops > before_overflow_drops:
+            logger.error(
+                (
+                    "Blackout queue overflow policy applied: evicted oldest intent "
+                    "to keep latest %s %s (%s) source=%s pending=%d total_evicted=%d"
+                ),
+                order_type,
+                stock_code,
+                market.code,
+                source,
+                BLACKOUT_ORDER_MANAGER.pending_count,
+                after_overflow_drops,
+            )
     else:
         logger.error(
-            "Blackout queue full: dropped order intent %s %s (%s) qty=%d source=%s",
+            "Blackout queue unavailable: could not queue order intent %s %s (%s) qty=%d source=%s",
             order_type,
             stock_code,
             market.code,

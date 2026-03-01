@@ -1,6 +1,6 @@
 <!--
 Doc-ID: DOC-REQ-001
-Version: 1.0.5
+Version: 1.0.6
 Status: active
 Owner: strategy
 Updated: 2026-03-02
@@ -26,7 +26,7 @@ Updated: 2026-03-02
 - `REQ-V3-001`: 모든 신호/주문/로그는 `session_id`를 포함해야 한다.
 - `REQ-V3-002`: 세션 전환 시 리스크 파라미터 재로딩이 수행되어야 한다.
 - `REQ-V3-003`: 브로커 블랙아웃 시간대에는 신규 주문이 금지되어야 한다.
-- `REQ-V3-004`: 블랙아웃 중 신호는 Queue에 적재되고, 복구 후 유효성 재검증을 거친다.
+- `REQ-V3-004`: 블랙아웃 중 신호는 bounded Queue에 적재되며, 포화 시 oldest-drop 정책으로 최신 intent를 보존하고 복구 후 유효성 재검증을 거친다.
 - `REQ-V3-005`: 저유동 세션(`NXT_AFTER`, `US_PRE`, `US_DAY`, `US_AFTER`)은 시장가 주문 금지다.
 - `REQ-V3-006`: 백테스트 체결가는 불리한 방향 체결 가정을 기본으로 한다.
 - `REQ-V3-007`: US 운용은 환율 손익 분리 추적과 통화 버퍼 정책을 포함해야 한다.

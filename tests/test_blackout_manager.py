@@ -79,3 +79,51 @@ def test_requeued_intent_is_processed_next_non_blackout_cycle() -> None:
     manager.requeue(first_batch[0])
     second_batch = manager.pop_recovery_batch(outside_blackout)
     assert len(second_batch) == 1
+
+
+def test_queue_overflow_drops_oldest_and_keeps_latest() -> None:
+    manager = BlackoutOrderManager(
+        enabled=True,
+        windows=parse_blackout_windows_kst("23:30-00:10"),
+        max_queue_size=2,
+    )
+    first = QueuedOrderIntent(
+        market_code="KR",
+        exchange_code="KRX",
+        stock_code="000001",
+        order_type="BUY",
+        quantity=1,
+        price=100.0,
+        source="first",
+        queued_at=datetime.now(UTC),
+    )
+    second = QueuedOrderIntent(
+        market_code="KR",
+        exchange_code="KRX",
+        stock_code="000002",
+        order_type="BUY",
+        quantity=1,
+        price=101.0,
+        source="second",
+        queued_at=datetime.now(UTC),
+    )
+    third = QueuedOrderIntent(
+        market_code="KR",
+        exchange_code="KRX",
+        stock_code="000003",
+        order_type="SELL",
+        quantity=2,
+        price=102.0,
+        source="third",
+        queued_at=datetime.now(UTC),
+    )
+
+    assert manager.enqueue(first)
+    assert manager.enqueue(second)
+    assert manager.enqueue(third)
+    assert manager.pending_count == 2
+    assert manager.overflow_drop_count == 1
+
+    outside_blackout = datetime(2026, 1, 1, 15, 20, tzinfo=UTC)
+    batch = manager.pop_recovery_batch(outside_blackout)
+    assert [intent.stock_code for intent in batch] == ["000002", "000003"]
