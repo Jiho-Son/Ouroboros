@@ -1223,7 +1223,7 @@ async def process_blackout_recovery_orders(
                     pnl=0.0,
                     market=market.code,
                     exchange_code=market.exchange_code,
-                    session_id=getattr(intent, "session_id", get_session_info(market).session_id),
+                    session_id=intent.session_id,
                 )
                 logger.info(
                     "Recovered queued order executed: %s %s (%s) qty=%d price=%.4f source=%s",
