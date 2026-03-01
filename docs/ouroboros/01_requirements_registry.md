@@ -1,6 +1,6 @@
 <!--
 Doc-ID: DOC-REQ-001
-Version: 1.0.6
+Version: 1.0.7
 Status: active
 Owner: strategy
 Updated: 2026-03-02
