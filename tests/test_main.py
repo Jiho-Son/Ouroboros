@@ -106,22 +106,22 @@ def _make_sell_match(stock_code: str = "005930") -> ScenarioMatch:
 @pytest.fixture(autouse=True)
 def _reset_kill_switch_state() -> None:
     """Prevent cross-test leakage from global kill-switch state."""
+    def _reset_session_risk_globals() -> None:
+        _SESSION_RISK_LAST_BY_MARKET.clear()
+        _SESSION_RISK_OVERRIDES_BY_MARKET.clear()
+        _SESSION_RISK_PROFILES_MAP.clear()
+        main_module._SESSION_RISK_PROFILES_RAW = "{}"
+
     KILL_SWITCH.clear_block()
     _RUNTIME_EXIT_STATES.clear()
     _RUNTIME_EXIT_PEAKS.clear()
-    _SESSION_RISK_LAST_BY_MARKET.clear()
-    _SESSION_RISK_OVERRIDES_BY_MARKET.clear()
-    _SESSION_RISK_PROFILES_MAP.clear()
-    main_module._SESSION_RISK_PROFILES_RAW = "__reset__"
+    _reset_session_risk_globals()
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL.clear()
     yield
     KILL_SWITCH.clear_block()
     _RUNTIME_EXIT_STATES.clear()
     _RUNTIME_EXIT_PEAKS.clear()
-    _SESSION_RISK_LAST_BY_MARKET.clear()
-    _SESSION_RISK_OVERRIDES_BY_MARKET.clear()
-    _SESSION_RISK_PROFILES_MAP.clear()
-    main_module._SESSION_RISK_PROFILES_RAW = "__reset__"
+    _reset_session_risk_globals()
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL.clear()
 
 
