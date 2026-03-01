@@ -38,5 +38,5 @@ python3 scripts/validate_ouroboros_docs.py
 
 ## 원본 계획 문서
 
-- [v2](/home/agentson/repos/The-Ouroboros/ouroboros_plan_v2.txt)
-- [v3](/home/agentson/repos/The-Ouroboros/ouroboros_plan_v3.txt)
+- [v2](../../ouroboros_plan_v2.txt)
+- [v3](../../ouroboros_plan_v3.txt)
