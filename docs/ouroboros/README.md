@@ -18,12 +18,14 @@ Updated: 2026-02-26
 4. v3 실행 지시서: [20_phase_v3_execution.md](./20_phase_v3_execution.md)
 5. 코드 레벨 작업 지시: [30_code_level_work_orders.md](./30_code_level_work_orders.md)
 6. 수용 기준/테스트 계획: [40_acceptance_and_test_plan.md](./40_acceptance_and_test_plan.md)
-7. PM 시나리오/이슈 분류: [50_scenario_matrix_and_issue_taxonomy.md](./50_scenario_matrix_and_issue_taxonomy.md)
-8. TPM 제어 프로토콜/수용 매트릭스: [50_tpm_control_protocol.md](./50_tpm_control_protocol.md)
+7. PM 시나리오/이슈 분류 **(A)**: [50_scenario_matrix_and_issue_taxonomy.md](./50_scenario_matrix_and_issue_taxonomy.md)
+8. TPM 제어 프로토콜/수용 매트릭스 **(B)**: [50_tpm_control_protocol.md](./50_tpm_control_protocol.md)
 9. 저장소 강제 설정 체크리스트: [60_repo_enforcement_checklist.md](./60_repo_enforcement_checklist.md)
 10. 메인 에이전트 아이디에이션 백로그: [70_main_agent_ideation.md](./70_main_agent_ideation.md)
 11. v2/v3 구현 감사 및 수익률 분석: [80_implementation_audit.md](./80_implementation_audit.md)
 12. 손실 복구 실행 계획: [85_loss_recovery_action_plan.md](./85_loss_recovery_action_plan.md)
+
+> **참고**: 7번·8번은 `50_` 프리픽스를 공유합니다. (A) = 시나리오/이슈 분류, (B) = TPM 제어 프로토콜.
 
 ## 운영 규칙
 

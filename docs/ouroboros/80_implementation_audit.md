@@ -1,14 +1,15 @@
 <!--
 Doc-ID: DOC-AUDIT-001
-Version: 1.0.0
+Version: 1.1.0
 Status: active
 Owner: strategy
-Updated: 2026-02-28
+Updated: 2026-03-01
 -->
 
 # v2/v3 구현 감사 및 수익률 분석 보고서
 
 작성일: 2026-02-28
+최종 업데이트: 2026-03-01 (Phase 2 완료 + Phase 3 부분 완료 반영)
 대상 기간: 2026-02-25 ~ 2026-02-28 (실거래)
 분석 브랜치: `feature/v3-session-policy-stream`
 
@@ -29,68 +30,79 @@ Updated: 2026-02-28
 | REQ-V2-007 | 비용/슬리피지/체결실패 모델 필수 | `src/analysis/backtest_cost_guard.py` | ✅ 완료 |
 | REQ-V2-008 | Kill Switch 실행 순서 (Block→Cancel→Refresh→Reduce→Snapshot) | `src/core/kill_switch.py` | ✅ 완료 |
 
-### 1.2 v3 구현 상태: ~75% 완료
+### 1.2 v3 구현 상태: ~85% 완료 (2026-03-01 기준)
 
-| REQ-ID | 요구사항 | 상태 | 갭 설명 |
-|--------|----------|------|---------|
-| REQ-V3-001 | 모든 신호/주문/로그에 session_id 포함 | ⚠️ 부분 | 아래 GAP-1, GAP-2 참조 |
-| REQ-V3-002 | 세션 전환 훅 + 리스크 파라미터 재로딩 | ⚠️ 부분 | 아래 GAP-3 참조 |
+| REQ-ID | 요구사항 | 상태 | 비고 |
+|--------|----------|------|------|
+| REQ-V3-001 | 모든 신호/주문/로그에 session_id 포함 | ✅ 완료 | #326 머지 — `log_decision()` 파라미터 추가, `log_trade()` 명시적 전달 |
+| REQ-V3-002 | 세션 전환 훅 + 리스크 파라미터 재로딩 | ⚠️ 부분 | #327 머지 — 재로딩 메커니즘 구현, 세션 훅 테스트 미작성 |
 | REQ-V3-003 | 블랙아웃 윈도우 정책 | ✅ 완료 | `src/core/blackout_manager.py` |
-| REQ-V3-004 | 블랙아웃 큐 + 복구 시 재검증 | ⚠️ 부분 | 아래 GAP-4 참조 (부분 해소) |
+| REQ-V3-004 | 블랙아웃 큐 + 복구 시 재검증 | ✅ 완료 | #324(DB 기록) + #328(가격/세션 재검증) 머지 |
 | REQ-V3-005 | 저유동 세션 시장가 금지 | ✅ 완료 | `src/core/order_policy.py` |
 | REQ-V3-006 | 보수적 백테스트 체결 (불리 방향) | ✅ 완료 | `src/analysis/backtest_execution_model.py` |
 | REQ-V3-007 | FX 손익 분리 (전략 PnL vs 환율 PnL) | ⚠️ 코드 완료 / 운영 미반영 | `src/db.py` 스키마·함수 완료, 운영 데이터 `fx_pnl` 전부 0 |
-| REQ-V3-008 | 오버나잇 예외 vs Kill Switch 우선순위 | ✅ 완료 | `src/main.py:459-471` |
+| REQ-V3-008 | 오버나잇 예외 vs Kill Switch 우선순위 | ✅ 완료 | `src/main.py` — `_should_force_exit_for_overnight()`, `_apply_staged_exit_override_for_hold()` |
 
-### 1.3 운영 거버넌스: ~20% 완료
+### 1.3 운영 거버넌스: ~60% 완료 (2026-03-01 재평가)
 
-| REQ-ID | 요구사항 | 상태 | 갭 설명 |
-|--------|----------|------|---------|
+| REQ-ID | 요구사항 | 상태 | 비고 |
+|--------|----------|------|------|
 | REQ-OPS-001 | 타임존 명시 (KST/UTC) | ⚠️ 부분 | DB 기록은 UTC, 세션은 KST. 일부 로그에서 타임존 미표기 |
-| REQ-OPS-002 | 정책 변경 시 레지스트리 업데이트 강제 | ❌ 미구현 | CI 자동 검증 없음 |
-| REQ-OPS-003 | TASK-REQ 매핑 강제 | ❌ 미구현 | PR 단위 자동 검증 없음 |
+| REQ-OPS-002 | 정책 변경 시 레지스트리 업데이트 강제 | ⚠️ 기본 구현 완료 | `scripts/validate_governance_assets.py` CI 연동 완료; 규칙 고도화 잔여 |
+| REQ-OPS-003 | TASK-REQ 매핑 강제 | ⚠️ 기본 구현 완료 | `scripts/validate_ouroboros_docs.py` CI 연동 완료; PR 강제 검증 강화 잔여 |
 
 ---
 
 ## 2. 구현 갭 상세
 
-### GAP-1: DecisionLogger에 session_id 미포함 (CRITICAL)
+> **2026-03-01 업데이트**: GAP-1~5 모두 해소되었거나 이슈 머지로 부분 해소됨.
 
-- **위치**: `src/logging/decision_logger.py:40`
-- **문제**: `log_decision()` 함수에 `session_id` 파라미터가 없음
-- **영향**: 어떤 세션에서 전략적 의사결정이 내려졌는지 추적 불가
+### GAP-1: DecisionLogger에 session_id 미포함 → ✅ 해소 (#326)
+
+- **위치**: `src/logging/decision_logger.py`
+- ~~문제: `log_decision()` 함수에 `session_id` 파라미터가 없음~~
+- **해소**: #326 머지 — `log_decision()` 파라미터에 `session_id` 추가, DB 기록 포함
 - **요구사항**: REQ-V3-001
 
-### GAP-2: src/main.py 거래 로그에 session_id 미전달 (CRITICAL)
+### GAP-2: src/main.py 거래 로그에 session_id 미전달 → ✅ 해소 (#326)
 
-- **위치**: `src/main.py` line 1625, 1682, 2769
-- **문제**: `log_trade()` 호출 시 `session_id` 파라미터를 전달하지 않음
-- **현상**: 시장 코드 기반 자동 추론에 의존 → 실제 런타임 세션과 불일치 가능
+- **위치**: `src/main.py`
+- ~~문제: `log_trade()` 호출 시 `session_id` 파라미터를 전달하지 않음~~
+- **해소**: #326 머지 — `log_trade()` 호출 시 런타임 `session_id` 명시적 전달
 - **요구사항**: REQ-V3-001
 
-### GAP-3: 세션 전환 시 리스크 파라미터 재로딩 없음 (HIGH)
+### GAP-3: 세션 전환 시 리스크 파라미터 재로딩 없음 → ⚠️ 부분 해소 (#327)
 
-- **위치**: `src/main.py` 전체
-- **문제**: 리스크 파라미터가 시작 시 한 번만 로딩되고, 세션 경계 변경 시 재로딩 메커니즘 없음
-- **영향**: NXT_AFTER(저유동) → KRX_REG(정규장) 전환 시에도 동일 파라미터 사용
+- **위치**: `src/main.py`, `src/config.py`
+- **해소 내용**: #327 머지 — `SESSION_RISK_PROFILES_JSON` 기반 세션별 파라미터 재로딩 메커니즘 구현
+  - `SESSION_RISK_RELOAD_ENABLED=true` 시 세션 경계에서 파라미터 재로딩
+  - 재로딩 실패 시 기존 파라미터 유지 (안전 폴백)
+- **잔여 갭**: 세션 경계 실시간 전환 E2E 통합 테스트 보강 필요 (`test_main.py`에 설정 오버라이드/폴백 단위 테스트는 존재)
 - **요구사항**: REQ-V3-002
 
-### GAP-4: 블랙아웃 복구 시 재검증 부분 해소, DB 기록 미구현 (HIGH)
+### GAP-4: 블랙아웃 복구 DB 기록 + 재검증 → ✅ 해소 (#324, #328)
 
-- **위치**: `src/core/blackout_manager.py:89-96`, `src/main.py:694-791`
-- **상태**: `pop_recovery_batch()` 자체는 단순 dequeue이나, 실행 경로에서 부분 재검증 수행:
-  - stale BUY 드롭 (포지션 이미 존재 시) — `src/main.py:713-720`
-  - stale SELL 드롭 (포지션 부재 시) — `src/main.py:721-727`
-  - `validate_order_policy()` 호출 — `src/main.py:729-734`
-- **잔여 갭**: 가격 유효성(시세 변동), 세션 변경에 따른 파라미터 재적용은 미구현
-- **신규 발견**: 블랙아웃 복구 주문이 `log_trade()` 없이 실행되어 거래 DB에 기록되지 않음 → 성과 리포트 불일치 유발
+- **위치**: `src/core/blackout_manager.py`, `src/main.py`
+- **해소 내용**:
+  - #324 머지 — 복구 주문 실행 후 `log_trade()` 호출, rationale에 `[blackout-recovery]` prefix
+  - #328 머지 — 가격 유효성 검증 (진입가 대비 급변 시 드롭), 세션 변경 시 새 파라미터로 재검증
 - **요구사항**: REQ-V3-004
 
-### GAP-5: 시간장벽이 봉 개수 고정 (MEDIUM)
+### GAP-5: 시간장벽이 봉 개수 고정 → ✅ 해소 (#329)
 
-- **위치**: `src/analysis/triple_barrier.py:19`
-- **문제**: `max_holding_bars` (고정 봉 수) 사용, v3 계획의 `max_holding_minutes` (캘린더 시간) 미반영
+- **위치**: `src/analysis/triple_barrier.py`
+- ~~문제: `max_holding_bars` (고정 봉 수) 사용~~
+- **해소**: #329 머지 — `max_holding_minutes` (캘린더 분) 기반 시간장벽 전환
+  - 봉 주기 무관하게 일정 시간 경과 시 장벽 도달
+  - `max_holding_bars` deprecated 경고 유지 (하위 호환)
 - **요구사항**: REQ-V2-005 / v3 확장
+
+### GAP-6 (신규): FX PnL 운영 미활성 (LOW — 코드 완료)
+
+- **위치**: `src/db.py` (`fx_pnl`, `strategy_pnl` 컬럼 존재)
+- **문제**: 스키마와 함수는 완료되었으나 운영 데이터에서 `fx_pnl` 전부 0
+- **영향**: USD 거래에서 환율 손익과 전략 손익이 분리되지 않아 성과 분석 부정확
+- **요구사항**: REQ-V3-007
 
 ---
 
@@ -244,18 +256,25 @@ Updated: 2026-02-28
 - **문제**: 중첩 `def evaluate` 정의 (들여쓰기 오류)
 - **영향**: 런타임 실패 → 기본 전략으로 폴백 → 진화 시스템 사실상 무효
 
-### ROOT-5: v2 청산 로직이 부분 통합되었으나 실효성 부족 (HIGH)
+### ROOT-5: v2 청산 로직이 부분 통합되었으나 실효성 부족 → ⚠️ 부분 해소 (#325)
 
-- **현재 상태**: `src/main.py:500-583`에서 `evaluate_exit()` 기반 staged exit override가 동작함
-  - 상태기계(HOLDING→BE_LOCK→ARMED→EXITED) 전이 구현
-  - 4중 청산(hard stop, BE lock threat, ATR trailing, model/liquidity exit) 평가
-- **실효성 문제**:
-  - `hard_stop_pct`에 고정 `-2.0`이 기본값으로 들어가 v2 계획의 ATR 적응형 의도와 괴리
-  - `be_arm_pct`/`arm_pct`가 playbook의 `take_profit_pct`에서 기계적 파생(`* 0.4`)되어 v2 계획의 독립 파라미터 튜닝 불가
-  - `atr_value`, `pred_down_prob` 등 런타임 피처가 대부분 0.0으로 들어와 사실상 hard stop만 발동
-- **결론**: 코드 통합은 되었으나, 피처 공급과 파라미터 설정이 미비하여 v2 설계 가치가 실현되지 않는 상태
+**초기 진단 (2026-02-28 감사 기준):**
+- `hard_stop_pct`에 고정 `-2.0`이 기본값으로 들어가 v2 계획의 ATR 적응형 의도와 괴리
+- `be_arm_pct`/`arm_pct`가 playbook의 `take_profit_pct`에서 기계적 파생(`* 0.4`)되어 v2 계획의 독립 파라미터 튜닝 불가
+- `atr_value`, `pred_down_prob` 등 런타임 피처가 0.0으로 공급되어 사실상 hard stop만 발동
 
-### ROOT-6: SELL 손익 계산이 부분청산/수량 불일치에 취약 (CRITICAL)
+**현재 상태 (#325 머지 후):**
+- `STAGED_EXIT_BE_ARM_PCT`, `STAGED_EXIT_ARM_PCT` 환경변수로 독립 파라미터 설정 가능
+- `_inject_staged_exit_features()`: KR 시장 ATR 실시간 계산 주입, RSI 기반 `pred_down_prob` 공급
+- KR ATR dynamic hard stop (#318)으로 `-2.0` 고정값 문제 해소
+
+**잔여 리스크:**
+- KR 외 시장(US 등)에서 `atr_value` 공급 경로 불완전 — hard stop 편향 잔존 가능
+- `pred_down_prob`가 RSI 프록시 수준 — 추후 실제 ML 모델 대체 권장
+
+### ROOT-6: SELL 손익 계산이 부분청산/수량 불일치에 취약 (CRITICAL) → ✅ 해소 (#322)
+
+> **현재 상태**: #322 머지로 해소됨. 아래는 원인 발견 시점(2026-02-28) 진단 기록.
 
 - **위치**: `src/main.py:1658-1663`, `src/main.py:2755-2760`
 - **문제**: PnL 계산이 실제 매도 수량(`sell_qty`)이 아닌 직전 BUY의 `buy_qty`를 사용
@@ -263,7 +282,9 @@ Updated: 2026-02-28
 - **영향**: 부분청산, 역분할/액분할, startup-sync 후 수량 드리프트 시 손익 과대/과소 계상
 - **실증**: CRCA 이상치(BUY 146주 → SELL 15주에서 PnL +4,612 USD) 가 이 버그와 정합
 
-### ROOT-7: BUY 매칭 키에 exchange_code 미포함 — 잠재 오매칭 리스크 (HIGH)
+### ROOT-7: BUY 매칭 키에 exchange_code 미포함 — 잠재 오매칭 리스크 (HIGH) → ✅ 해소 (#323)
+
+> **현재 상태**: #323 머지로 해소됨. 아래는 원인 발견 시점(2026-02-28) 진단 기록.
 
 - **위치**: `src/db.py:292-313`
 - **문제**: `get_latest_buy_trade()`가 `(stock_code, market)`만으로 매칭, `exchange_code` 미사용
@@ -283,17 +304,28 @@ Updated: 2026-02-28
 | P1 | US 최소 가격 필터: $5 이하 종목 진입 차단 | 페니스탁 대폭락 방지 | 낮음 |
 | P1 | 진화 전략 코드 생성 시 syntax 검증 추가 | 진화 시스템 정상화 | 낮음 |
 
-### 5.2 구조적 개선 (아키텍처 변경)
+### 5.2 구조적 개선 현황 (2026-03-01 기준)
 
-| 우선순위 | 방안 | 예상 효과 | 난이도 |
-|----------|------|-----------|--------|
-| **P0** | **SELL PnL 계산을 sell_qty 기준으로 수정 (ROOT-6)** | 손익 계상 정확도 확보, 이상치 제거 | 낮음 |
-| **P0** | **v2 staged exit에 실제 피처 공급 (atr_value, pred_down_prob) + 독립 파라미터 설정 (ROOT-5)** | v2 설계 가치 실현, 수익 보호 | 중간 |
-| P0 | BUY 매칭 키에 exchange_code 추가 (ROOT-7) | 오매칭 방지 | 낮음 |
-| P0 | 블랙아웃 복구 주문에 `log_trade()` 추가 (GAP-4) | DB/성과 리포트 정합성 | 낮음 |
-| P1 | 세션 전환 시 리스크 파라미터 동적 재로딩 (GAP-3 해소) | 세션별 최적 파라미터 적용 | 중간 |
-| P1 | session_id를 거래 로그/의사결정 로그에 명시적 전달 (GAP-1,2 해소) | 세션별 성과 분석 가능 | 낮음 |
-| P2 | 블랙아웃 복구 시 가격/세션 재검증 강화 (GAP-4 잔여) | 세션 변경 후 무효 주문 방지 | 중간 |
+**완료 항목 (모니터링 단계):**
+
+| 항목 | 이슈 | 상태 |
+|------|------|------|
+| SELL PnL 계산을 sell_qty 기준으로 수정 (ROOT-6) | #322 | ✅ 머지 |
+| v2 staged exit 피처 공급 + 독립 파라미터 설정 (ROOT-5) | #325 | ✅ 머지 |
+| BUY 매칭 키에 exchange_code 추가 (ROOT-7) | #323 | ✅ 머지 |
+| 블랙아웃 복구 주문 `log_trade()` 추가 (GAP-4) | #324 | ✅ 머지 |
+| 세션 전환 리스크 파라미터 동적 재로딩 (GAP-3) | #327 | ✅ 머지 |
+| session_id 거래/의사결정 로그 명시 전달 (GAP-1, GAP-2) | #326 | ✅ 머지 |
+| 블랙아웃 복구 가격/세션 재검증 강화 (GAP-4 잔여) | #328 | ✅ 머지 |
+
+**잔여 개선 항목:**
+
+| 우선순위 | 방안 | 난이도 |
+|----------|------|--------|
+| P1 | US 시장 ATR 공급 경로 완성 (ROOT-5 잔여) | 중간 |
+| P1 | FX PnL 운영 활성화 (REQ-V3-007) | 낮음 |
+| P2 | pred_down_prob ML 모델 대체 (ROOT-5 잔여) | 높음 |
+| P2 | 세션 경계 E2E 통합 테스트 보강 (GAP-3 잔여) | 낮음 |
 
 ### 5.3 권장 실행 순서
 
@@ -334,14 +366,26 @@ Phase 3 (중기): v3 세션 최적화
 - ✅ 블랙아웃 복구 후 유효 intent 실행 (`tests/test_main.py:5811`)
 - ✅ 블랙아웃 복구 후 정책 거부 intent 드롭 (`tests/test_main.py:5851`)
 
-### 테스트 미존재
+### 테스트 추가됨 (Phase 1~3, 2026-03-01)
 
-- ❌ 세션 전환 훅 콜백
-- ❌ 세션 경계 리스크 파라미터 재로딩
-- ❌ DecisionLogger session_id 캡처
+- ✅ KR ATR 기반 동적 hard stop (`test_main.py` — #318)
+- ✅ 재진입 쿨다운 (손절 후 동일 종목 매수 차단) (`test_main.py` — #319)
+- ✅ US 최소 가격 필터 ($5 이하 차단) (`test_main.py` — #320)
+- ✅ 진화 전략 syntax 검증 (`test_evolution.py` — #321)
+- ✅ SELL PnL sell_qty 기준 계산 (`test_main.py` — #322)
+- ✅ BUY 매칭 키 exchange_code 포함 (`test_db.py` — #323)
+- ✅ 블랙아웃 복구 주문 DB 기록 (`test_main.py` — #324)
+- ✅ staged exit에 실제 ATR/RSI 피처 공급 (`test_main.py` — #325)
+- ✅ session_id 거래/의사결정 로그 명시적 전달 (`test_main.py`, `test_decision_logger.py` — #326)
+- ✅ 블랙아웃 복구 후 유효 intent 실행 (`tests/test_main.py:5811`)
+- ✅ 블랙아웃 복구 후 정책 거부 intent 드롭 (`tests/test_main.py:5851`)
+
+### 테스트 미존재 (잔여)
+
+- ❌ 세션 전환 훅 콜백 (GAP-3 잔여)
+- ❌ 세션 경계 리스크 파라미터 재로딩 단위 테스트 (GAP-3 잔여)
 - ❌ 실거래 경로 ↔ v2 상태기계 통합 테스트 (피처 공급 포함)
-- ❌ 블랙아웃 복구 주문의 DB 기록 검증
-- ❌ SELL PnL 계산 시 수량 불일치 케이스
+- ❌ FX PnL 운영 활성화 검증 (GAP-6)
 
 ---
 
