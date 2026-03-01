@@ -1004,6 +1004,7 @@ async def build_overseas_symbol_universe(
 def _build_queued_order_intent(
     *,
     market: MarketInfo,
+    session_id: str,
     stock_code: str,
     order_type: str,
     quantity: int,
@@ -1013,6 +1014,7 @@ def _build_queued_order_intent(
     return QueuedOrderIntent(
         market_code=market.code,
         exchange_code=market.exchange_code,
+        session_id=session_id,
         stock_code=stock_code,
         order_type=order_type,
         quantity=quantity,
@@ -1025,6 +1027,7 @@ def _build_queued_order_intent(
 def _maybe_queue_order_intent(
     *,
     market: MarketInfo,
+    session_id: str,
     stock_code: str,
     order_type: str,
     quantity: int,
@@ -1038,6 +1041,7 @@ def _maybe_queue_order_intent(
     queued = BLACKOUT_ORDER_MANAGER.enqueue(
         _build_queued_order_intent(
             market=market,
+            session_id=session_id,
             stock_code=stock_code,
             order_type=order_type,
             quantity=quantity,
@@ -1208,7 +1212,6 @@ async def process_blackout_recovery_orders(
 
             accepted = result.get("rt_cd", "0") == "0"
             if accepted:
-                runtime_session_id = get_session_info(market).session_id
                 log_trade(
                     conn=db_conn,
                     stock_code=intent.stock_code,
@@ -1220,7 +1223,7 @@ async def process_blackout_recovery_orders(
                     pnl=0.0,
                     market=market.code,
                     exchange_code=market.exchange_code,
-                    session_id=runtime_session_id,
+                    session_id=getattr(intent, "session_id", get_session_info(market).session_id),
                 )
                 logger.info(
                     "Recovered queued order executed: %s %s (%s) qty=%d price=%.4f source=%s",
@@ -2057,6 +2060,7 @@ async def trading_cycle(
                 return
             if _maybe_queue_order_intent(
                 market=market,
+                session_id=runtime_session_id,
                 stock_code=stock_code,
                 order_type=decision.action,
                 quantity=quantity,
@@ -2104,6 +2108,7 @@ async def trading_cycle(
                 return
             if _maybe_queue_order_intent(
                 market=market,
+                session_id=runtime_session_id,
                 stock_code=stock_code,
                 order_type=decision.action,
                 quantity=quantity,
@@ -3264,6 +3269,7 @@ async def run_daily_session(
                             continue
                         if _maybe_queue_order_intent(
                             market=market,
+                            session_id=runtime_session_id,
                             stock_code=stock_code,
                             order_type=decision.action,
                             quantity=quantity,
@@ -3301,6 +3307,7 @@ async def run_daily_session(
                             continue
                         if _maybe_queue_order_intent(
                             market=market,
+                            session_id=runtime_session_id,
                             stock_code=stock_code,
                             order_type=decision.action,
                             quantity=quantity,

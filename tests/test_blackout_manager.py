@@ -35,6 +35,7 @@ def test_recovery_batch_only_after_blackout_exit() -> None:
     intent = QueuedOrderIntent(
         market_code="KR",
         exchange_code="KRX",
+        session_id="KRX_REG",
         stock_code="005930",
         order_type="BUY",
         quantity=1,
@@ -64,6 +65,7 @@ def test_requeued_intent_is_processed_next_non_blackout_cycle() -> None:
     intent = QueuedOrderIntent(
         market_code="KR",
         exchange_code="KRX",
+        session_id="KRX_REG",
         stock_code="005930",
         order_type="BUY",
         quantity=1,
@@ -90,6 +92,7 @@ def test_queue_overflow_drops_oldest_and_keeps_latest() -> None:
     first = QueuedOrderIntent(
         market_code="KR",
         exchange_code="KRX",
+        session_id="KRX_REG",
         stock_code="000001",
         order_type="BUY",
         quantity=1,
@@ -100,6 +103,7 @@ def test_queue_overflow_drops_oldest_and_keeps_latest() -> None:
     second = QueuedOrderIntent(
         market_code="KR",
         exchange_code="KRX",
+        session_id="KRX_REG",
         stock_code="000002",
         order_type="BUY",
         quantity=1,
@@ -110,6 +114,7 @@ def test_queue_overflow_drops_oldest_and_keeps_latest() -> None:
     third = QueuedOrderIntent(
         market_code="KR",
         exchange_code="KRX",
+        session_id="KRX_REG",
         stock_code="000003",
         order_type="SELL",
         quantity=2,

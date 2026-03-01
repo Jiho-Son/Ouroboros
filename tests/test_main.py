@@ -6543,6 +6543,7 @@ def test_blackout_queue_overflow_keeps_latest_intent() -> None:
     with patch("src.main.BLACKOUT_ORDER_MANAGER", manager):
         assert _maybe_queue_order_intent(
             market=market,
+            session_id="KRX_REG",
             stock_code="005930",
             order_type="BUY",
             quantity=1,
@@ -6551,6 +6552,7 @@ def test_blackout_queue_overflow_keeps_latest_intent() -> None:
         )
         assert _maybe_queue_order_intent(
             market=market,
+            session_id="KRX_REG",
             stock_code="000660",
             order_type="BUY",
             quantity=2,
@@ -6564,6 +6566,7 @@ def test_blackout_queue_overflow_keeps_latest_intent() -> None:
     batch = manager.pop_recovery_batch()
     assert len(batch) == 1
     assert batch[0].stock_code == "000660"
+    assert batch[0].session_id == "KRX_REG"
 
 
 @pytest.mark.asyncio
@@ -6587,6 +6590,7 @@ async def test_process_blackout_recovery_executes_valid_intents() -> None:
     intent.quantity = 1
     intent.price = 100.0
     intent.source = "test"
+    intent.session_id = "NXT_AFTER"
     intent.attempts = 0
 
     blackout_manager = MagicMock()
@@ -6617,7 +6621,7 @@ async def test_process_blackout_recovery_executes_valid_intents() -> None:
     assert row is not None
     assert row[0] == "BUY"
     assert row[1] == 1
-    assert row[2] == "KRX_REG"
+    assert row[2] == "NXT_AFTER"
     assert row[3].startswith("[blackout-recovery]")
 
 
@@ -6642,6 +6646,7 @@ async def test_process_blackout_recovery_drops_policy_rejected_intent() -> None:
     intent.quantity = 1
     intent.price = 100.0
     intent.source = "test"
+    intent.session_id = "KRX_REG"
     intent.attempts = 0
 
     blackout_manager = MagicMock()
@@ -6691,6 +6696,7 @@ async def test_process_blackout_recovery_drops_intent_on_excessive_price_drift()
     intent.quantity = 1
     intent.price = 100.0
     intent.source = "test"
+    intent.session_id = "US_PRE"
     intent.attempts = 0
 
     blackout_manager = MagicMock()
@@ -6741,6 +6747,7 @@ async def test_process_blackout_recovery_drops_overseas_intent_on_excessive_pric
     intent.quantity = 1
     intent.price = 100.0
     intent.source = "test"
+    intent.session_id = "KRX_REG"
     intent.attempts = 0
 
     blackout_manager = MagicMock()
@@ -6790,6 +6797,7 @@ async def test_process_blackout_recovery_requeues_intent_when_price_lookup_fails
     intent.quantity = 1
     intent.price = 100.0
     intent.source = "test"
+    intent.session_id = "KRX_REG"
     intent.attempts = 0
 
     blackout_manager = MagicMock()
