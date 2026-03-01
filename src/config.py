@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     ORDER_BLACKOUT_ENABLED: bool = True
     ORDER_BLACKOUT_WINDOWS_KST: str = "23:30-00:10"
     ORDER_BLACKOUT_QUEUE_MAX: int = Field(default=500, ge=10, le=5000)
+    BLACKOUT_RECOVERY_PRICE_REVALIDATION_ENABLED: bool = True
+    BLACKOUT_RECOVERY_MAX_PRICE_DRIFT_PCT: float = Field(default=5.0, ge=0.0, le=100.0)
 
     # Pre-Market Planner
     PRE_MARKET_MINUTES: int = Field(default=30, ge=10, le=120)
