@@ -38,6 +38,27 @@ python3 scripts/validate_docs_sync.py
 
 ### tea CLI (Gitea Command Line Tool)
 
+#### ❌ Comment Newline Escaping (`\n` rendered literally)
+```bash
+YES="" ~/bin/tea comment 374 "line1\nline2"
+# Web UI shows "\n" as text instead of line breaks
+```
+**💡 Reason:** Inline string escaping is interpreted literally before comment submission.
+
+**✅ Solution:** Use file-based helper to preserve multiline text
+```bash
+cat > /tmp/comment.md <<'EOF'
+line1
+line2
+EOF
+
+scripts/tea_comment.sh 374 /tmp/comment.md
+```
+
+**📝 Notes:**
+- `scripts/tea_comment.sh` accepts stdin with `-` as body source.
+- The helper fails fast when body looks like escaped-newline text only.
+
 #### ❌ TTY Error - Interactive Confirmation Fails
 ```bash
 ~/bin/tea issues create --repo X --title "Y" --description "Z"

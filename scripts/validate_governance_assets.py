@@ -215,6 +215,7 @@ def main() -> int:
         [
             "Session Handover Gate (Mandatory)",
             "session_handover_check.py --strict",
+            "scripts/tea_comment.sh",
         ],
         errors,
     )
@@ -223,6 +224,8 @@ def main() -> int:
         [
             "Session Handover Preflight (Mandatory)",
             "session_handover_check.py --strict",
+            "Comment Newline Escaping",
+            "scripts/tea_comment.sh",
         ],
         errors,
     )
