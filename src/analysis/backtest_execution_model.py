@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 from random import Random
 from typing import Literal
-
 
 OrderSide = Literal["BUY", "SELL"]
 
@@ -77,7 +76,9 @@ class BacktestExecutionModel:
                 reason="execution_failure",
             )
 
-        slip_mult = 1.0 + (slippage_bps / 10000.0 if request.side == "BUY" else -slippage_bps / 10000.0)
+        slip_mult = 1.0 + (
+            slippage_bps / 10000.0 if request.side == "BUY" else -slippage_bps / 10000.0
+        )
         exec_price = request.reference_price * slip_mult
 
         if self._rng.random() < partial_rate:

@@ -103,9 +103,7 @@ class TestSetupLogging:
         """setup_logging must attach a JSON handler to the root logger."""
         setup_logging(level=logging.DEBUG)
         root = logging.getLogger()
-        json_handlers = [
-            h for h in root.handlers if isinstance(h.formatter, JSONFormatter)
-        ]
+        json_handlers = [h for h in root.handlers if isinstance(h.formatter, JSONFormatter)]
         assert len(json_handlers) == 1
         assert root.level == logging.DEBUG
 

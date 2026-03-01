@@ -14,14 +14,14 @@ import shutil
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class HealthStatus(str, Enum):
+class HealthStatus(StrEnum):
     """Health check status."""
 
     HEALTHY = "healthy"
@@ -137,9 +137,13 @@ class HealthMonitor:
             used_percent = (stat.used / stat.total) * 100
 
             if stat.free < self.min_disk_space_bytes:
+                min_disk_gb = self.min_disk_space_bytes / 1024 / 1024 / 1024
                 return HealthCheckResult(
                     status=HealthStatus.UNHEALTHY,
-                    message=f"Low disk space: {free_gb:.2f} GB free (minimum: {self.min_disk_space_bytes / 1024 / 1024 / 1024:.2f} GB)",
+                    message=(
+                        f"Low disk space: {free_gb:.2f} GB free "
+                        f"(minimum: {min_disk_gb:.2f} GB)"
+                    ),
                     details={
                         "free_gb": free_gb,
                         "total_gb": total_gb,

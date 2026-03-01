@@ -14,14 +14,14 @@ import json
 import logging
 import sqlite3
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class ExportFormat(str, Enum):
+class ExportFormat(StrEnum):
     """Supported export formats."""
 
     JSON = "json"
@@ -103,15 +103,11 @@ class BackupExporter:
         elif fmt == ExportFormat.CSV:
             return self._export_csv(output_dir, timestamp, compress, incremental_since)
         elif fmt == ExportFormat.PARQUET:
-            return self._export_parquet(
-                output_dir, timestamp, compress, incremental_since
-            )
+            return self._export_parquet(output_dir, timestamp, compress, incremental_since)
         else:
             raise ValueError(f"Unsupported format: {fmt}")
 
-    def _get_trades(
-        self, incremental_since: datetime | None = None
-    ) -> list[dict[str, Any]]:
+    def _get_trades(self, incremental_since: datetime | None = None) -> list[dict[str, Any]]:
         """Fetch trades from database.
 
         Args:
@@ -164,9 +160,7 @@ class BackupExporter:
 
         data = {
             "export_timestamp": datetime.now(UTC).isoformat(),
-            "incremental_since": (
-                incremental_since.isoformat() if incremental_since else None
-            ),
+            "incremental_since": (incremental_since.isoformat() if incremental_since else None),
             "record_count": len(trades),
             "trades": trades,
         }
@@ -284,8 +278,7 @@ class BackupExporter:
             import pyarrow.parquet as pq
         except ImportError:
             raise ImportError(
-                "pyarrow is required for Parquet export. "
-                "Install with: pip install pyarrow"
+                "pyarrow is required for Parquet export. Install with: pip install pyarrow"
             )
 
         # Convert to pyarrow table

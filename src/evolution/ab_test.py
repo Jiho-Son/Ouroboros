@@ -90,9 +90,7 @@ class ABTester:
         sharpe_ratio = None
         if len(pnls) > 1:
             mean_return = avg_pnl
-            std_return = (
-                sum((p - mean_return) ** 2 for p in pnls) / (len(pnls) - 1)
-            ) ** 0.5
+            std_return = (sum((p - mean_return) ** 2 for p in pnls) / (len(pnls) - 1)) ** 0.5
             if std_return > 0:
                 sharpe_ratio = mean_return / std_return
 
@@ -198,8 +196,7 @@ class ABTester:
 
         if meets_criteria:
             logger.info(
-                "Strategy '%s' meets deployment criteria: "
-                "win_rate=%.2f%%, trades=%d, avg_pnl=%.2f",
+                "Strategy '%s' meets deployment criteria: win_rate=%.2f%%, trades=%d, avg_pnl=%.2f",
                 result.winner,
                 winning_perf.win_rate,
                 winning_perf.total_trades,

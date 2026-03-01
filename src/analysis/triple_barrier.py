@@ -6,10 +6,10 @@ Implements first-touch labeling with upper/lower/time barriers.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal, Sequence
-
+from typing import Literal
 
 TieBreakMode = Literal["stop_first", "take_first"]
 
@@ -92,7 +92,10 @@ def label_with_triple_barrier(
     else:
         assert spec.max_holding_bars is not None
         warnings.warn(
-            "TripleBarrierSpec.max_holding_bars is deprecated; use max_holding_minutes with timestamps instead.",
+            (
+                "TripleBarrierSpec.max_holding_bars is deprecated; "
+                "use max_holding_minutes with timestamps instead."
+            ),
             DeprecationWarning,
             stacklevel=2,
         )

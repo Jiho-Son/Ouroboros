@@ -1,9 +1,9 @@
 <!--
 Doc-ID: DOC-REQ-001
-Version: 1.0.0
+Version: 1.0.1
 Status: active
 Owner: strategy
-Updated: 2026-02-26
+Updated: 2026-03-01
 -->
 
 # 요구사항 원장 (Single Source of Truth)
@@ -37,3 +37,4 @@ Updated: 2026-02-26
 - `REQ-OPS-001`: 타임존은 모든 시간 필드에 명시(KST/UTC)되어야 한다.
 - `REQ-OPS-002`: 문서의 수치 정책은 원장에서만 변경한다.
 - `REQ-OPS-003`: 구현 태스크는 반드시 테스트 태스크를 동반한다.
+- `REQ-OPS-004`: 원본 계획 문서(`v2`, `v3`)는 `docs/ouroboros/source/` 경로를 단일 기준으로 사용한다.

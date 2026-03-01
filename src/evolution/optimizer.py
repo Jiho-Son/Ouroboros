@@ -80,26 +80,26 @@ class EvolutionOptimizer:
         # Convert to dict format for analysis
         failures = []
         for decision in losing_decisions:
-            failures.append({
-                "decision_id": decision.decision_id,
-                "timestamp": decision.timestamp,
-                "stock_code": decision.stock_code,
-                "market": decision.market,
-                "exchange_code": decision.exchange_code,
-                "action": decision.action,
-                "confidence": decision.confidence,
-                "rationale": decision.rationale,
-                "outcome_pnl": decision.outcome_pnl,
-                "outcome_accuracy": decision.outcome_accuracy,
-                "context_snapshot": decision.context_snapshot,
-                "input_data": decision.input_data,
-            })
+            failures.append(
+                {
+                    "decision_id": decision.decision_id,
+                    "timestamp": decision.timestamp,
+                    "stock_code": decision.stock_code,
+                    "market": decision.market,
+                    "exchange_code": decision.exchange_code,
+                    "action": decision.action,
+                    "confidence": decision.confidence,
+                    "rationale": decision.rationale,
+                    "outcome_pnl": decision.outcome_pnl,
+                    "outcome_accuracy": decision.outcome_accuracy,
+                    "context_snapshot": decision.context_snapshot,
+                    "input_data": decision.input_data,
+                }
+            )
 
         return failures
 
-    def identify_failure_patterns(
-        self, failures: list[dict[str, Any]]
-    ) -> dict[str, Any]:
+    def identify_failure_patterns(self, failures: list[dict[str, Any]]) -> dict[str, Any]:
         """Identify patterns in losing decisions.
 
         Analyzes:
@@ -143,12 +143,8 @@ class EvolutionOptimizer:
             total_confidence += failure.get("confidence", 0)
             total_loss += failure.get("outcome_pnl", 0.0)
 
-        patterns["avg_confidence"] = (
-            round(total_confidence / len(failures), 2) if failures else 0.0
-        )
-        patterns["avg_loss"] = (
-            round(total_loss / len(failures), 2) if failures else 0.0
-        )
+        patterns["avg_confidence"] = round(total_confidence / len(failures), 2) if failures else 0.0
+        patterns["avg_loss"] = round(total_loss / len(failures), 2) if failures else 0.0
 
         # Convert Counters to regular dicts for JSON serialization
         patterns["markets"] = dict(patterns["markets"])
@@ -197,7 +193,8 @@ class EvolutionOptimizer:
 
         prompt = (
             "You are a quantitative trading strategy developer.\n"
-            "Analyze these failed trades and their patterns, then generate an improved strategy.\n\n"
+            "Analyze these failed trades and their patterns, "
+            "then generate an improved strategy.\n\n"
             f"Failure Patterns:\n{json.dumps(patterns, indent=2)}\n\n"
             f"Sample Failed Trades (first 5):\n"
             f"{json.dumps(failures[:5], indent=2, default=str)}\n\n"
@@ -214,7 +211,8 @@ class EvolutionOptimizer:
 
         try:
             response = await self._client.aio.models.generate_content(
-                model=self._model_name, contents=prompt,
+                model=self._model_name,
+                contents=prompt,
             )
             body = response.text.strip()
         except Exception as exc:
@@ -280,9 +278,7 @@ class EvolutionOptimizer:
             logger.info("Strategy validation PASSED")
             return True
         else:
-            logger.warning(
-                "Strategy validation FAILED:\n%s", result.stdout + result.stderr
-            )
+            logger.warning("Strategy validation FAILED:\n%s", result.stdout + result.stderr)
             # Clean up failing strategy
             strategy_path.unlink(missing_ok=True)
             return False

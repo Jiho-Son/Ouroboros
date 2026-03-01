@@ -1,14 +1,14 @@
 <!--
 Doc-ID: DOC-ROOT-001
-Version: 1.0.0
+Version: 1.0.1
 Status: active
 Owner: strategy
-Updated: 2026-02-26
+Updated: 2026-03-01
 -->
 
 # The Ouroboros 실행 문서 허브
 
-이 폴더는 `ouroboros_plan_v2.txt`, `ouroboros_plan_v3.txt`를 구현 가능한 작업 지시서 수준으로 분해한 문서 허브다.
+이 폴더는 `source/ouroboros_plan_v2.txt`, `source/ouroboros_plan_v3.txt`를 구현 가능한 작업 지시서 수준으로 분해한 문서 허브다.
 
 ## 읽기 순서 (Routing)
 
@@ -40,5 +40,5 @@ python3 scripts/validate_ouroboros_docs.py
 
 ## 원본 계획 문서
 
-- [v2](/home/agentson/repos/The-Ouroboros/ouroboros_plan_v2.txt)
-- [v3](/home/agentson/repos/The-Ouroboros/ouroboros_plan_v3.txt)
+- [v2](./source/ouroboros_plan_v2.txt)
+- [v3](./source/ouroboros_plan_v3.txt)

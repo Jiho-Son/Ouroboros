@@ -70,7 +70,9 @@ def test_load_changed_files_with_range_uses_git_diff(monkeypatch) -> None:
         assert check is True
         assert capture_output is True
         assert text is True
-        return SimpleNamespace(stdout="docs/ouroboros/85_loss_recovery_action_plan.md\nsrc/main.py\n")
+        return SimpleNamespace(
+            stdout="docs/ouroboros/85_loss_recovery_action_plan.md\nsrc/main.py\n"
+        )
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     changed = module.load_changed_files(["abc...def"], errors)

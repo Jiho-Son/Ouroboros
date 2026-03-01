@@ -25,7 +25,7 @@ class CircuitBreakerTripped(SystemExit):
         )
 
 
-class FatFingerRejected(Exception):
+class FatFingerRejectedError(Exception):
     """Raised when an order exceeds the maximum allowed proportion of cash."""
 
     def __init__(self, order_amount: float, total_cash: float, max_pct: float) -> None:
@@ -61,7 +61,7 @@ class RiskManager:
     def check_fat_finger(self, order_amount: float, total_cash: float) -> None:
         """Reject orders that exceed the maximum proportion of available cash."""
         if total_cash <= 0:
-            raise FatFingerRejected(order_amount, total_cash, self._ff_max_pct)
+            raise FatFingerRejectedError(order_amount, total_cash, self._ff_max_pct)
 
         ratio_pct = (order_amount / total_cash) * 100
         if ratio_pct > self._ff_max_pct:
@@ -69,7 +69,7 @@ class RiskManager:
                 "Fat finger check failed",
                 extra={"order_amount": order_amount},
             )
-            raise FatFingerRejected(order_amount, total_cash, self._ff_max_pct)
+            raise FatFingerRejectedError(order_amount, total_cash, self._ff_max_pct)
 
     def validate_order(
         self,
@@ -81,3 +81,7 @@ class RiskManager:
         self.check_circuit_breaker(current_pnl_pct)
         self.check_fat_finger(order_amount, total_cash)
         logger.info("Order passed risk validation")
+
+
+# Backward compatibility alias
+FatFingerRejected = FatFingerRejectedError

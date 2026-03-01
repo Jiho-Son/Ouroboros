@@ -12,14 +12,14 @@ import logging
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-class BackupPolicy(str, Enum):
+class BackupPolicy(StrEnum):
     """Backup retention policies."""
 
     DAILY = "daily"
@@ -69,9 +69,7 @@ class BackupScheduler:
         for d in [self.daily_dir, self.weekly_dir, self.monthly_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
-    def create_backup(
-        self, policy: BackupPolicy, verify: bool = True
-    ) -> BackupMetadata:
+    def create_backup(self, policy: BackupPolicy, verify: bool = True) -> BackupMetadata:
         """Create a database backup.
 
         Args:
@@ -229,9 +227,7 @@ class BackupScheduler:
 
         return removed
 
-    def list_backups(
-        self, policy: BackupPolicy | None = None
-    ) -> list[BackupMetadata]:
+    def list_backups(self, policy: BackupPolicy | None = None) -> list[BackupMetadata]:
         """List available backups.
 
         Args:

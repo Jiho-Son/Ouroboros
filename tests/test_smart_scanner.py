@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from src.analysis.smart_scanner import ScanCandidate, SmartVolatilityScanner
 from src.analysis.volatility import VolatilityAnalyzer
@@ -200,9 +201,7 @@ class TestSmartVolatilityScanner:
         assert len(candidates) <= scanner.top_n
 
     @pytest.mark.asyncio
-    async def test_get_stock_codes(
-        self, scanner: SmartVolatilityScanner
-    ) -> None:
+    async def test_get_stock_codes(self, scanner: SmartVolatilityScanner) -> None:
         """Test extraction of stock codes from candidates."""
         candidates = [
             ScanCandidate(

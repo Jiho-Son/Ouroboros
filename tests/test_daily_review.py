@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -15,8 +16,6 @@ from src.db import init_db, log_trade
 from src.evolution.daily_review import DailyReviewer
 from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
-
-from datetime import UTC, datetime
 
 TODAY = datetime.now(UTC).strftime("%Y-%m-%d")
 
@@ -53,7 +52,8 @@ def _log_decision(
 
 
 def test_generate_scorecard_market_scoped(
-    db_conn: sqlite3.Connection, context_store: ContextStore,
+    db_conn: sqlite3.Connection,
+    context_store: ContextStore,
 ) -> None:
     reviewer = DailyReviewer(db_conn, context_store)
     logger = DecisionLogger(db_conn)
@@ -134,7 +134,8 @@ def test_generate_scorecard_market_scoped(
 
 
 def test_generate_scorecard_top_winners_and_losers(
-    db_conn: sqlite3.Connection, context_store: ContextStore,
+    db_conn: sqlite3.Connection,
+    context_store: ContextStore,
 ) -> None:
     reviewer = DailyReviewer(db_conn, context_store)
     logger = DecisionLogger(db_conn)
@@ -168,7 +169,8 @@ def test_generate_scorecard_top_winners_and_losers(
 
 
 def test_generate_scorecard_empty_day(
-    db_conn: sqlite3.Connection, context_store: ContextStore,
+    db_conn: sqlite3.Connection,
+    context_store: ContextStore,
 ) -> None:
     reviewer = DailyReviewer(db_conn, context_store)
     scorecard = reviewer.generate_scorecard(TODAY, "KR")
@@ -184,7 +186,8 @@ def test_generate_scorecard_empty_day(
 
 @pytest.mark.asyncio
 async def test_generate_lessons_without_gemini_returns_empty(
-    db_conn: sqlite3.Connection, context_store: ContextStore,
+    db_conn: sqlite3.Connection,
+    context_store: ContextStore,
 ) -> None:
     reviewer = DailyReviewer(db_conn, context_store, gemini_client=None)
     lessons = await reviewer.generate_lessons(
@@ -206,7 +209,8 @@ async def test_generate_lessons_without_gemini_returns_empty(
 
 @pytest.mark.asyncio
 async def test_generate_lessons_parses_json_array(
-    db_conn: sqlite3.Connection, context_store: ContextStore,
+    db_conn: sqlite3.Connection,
+    context_store: ContextStore,
 ) -> None:
     mock_gemini = MagicMock()
     mock_gemini.decide = AsyncMock(
@@ -233,7 +237,8 @@ async def test_generate_lessons_parses_json_array(
 
 @pytest.mark.asyncio
 async def test_generate_lessons_fallback_to_lines(
-    db_conn: sqlite3.Connection, context_store: ContextStore,
+    db_conn: sqlite3.Connection,
+    context_store: ContextStore,
 ) -> None:
     mock_gemini = MagicMock()
     mock_gemini.decide = AsyncMock(
@@ -260,7 +265,8 @@ async def test_generate_lessons_fallback_to_lines(
 
 @pytest.mark.asyncio
 async def test_generate_lessons_handles_gemini_error(
-    db_conn: sqlite3.Connection, context_store: ContextStore,
+    db_conn: sqlite3.Connection,
+    context_store: ContextStore,
 ) -> None:
     mock_gemini = MagicMock()
     mock_gemini.decide = AsyncMock(side_effect=RuntimeError("boom"))
@@ -284,7 +290,8 @@ async def test_generate_lessons_handles_gemini_error(
 
 
 def test_store_scorecard_in_context(
-    db_conn: sqlite3.Connection, context_store: ContextStore,
+    db_conn: sqlite3.Connection,
+    context_store: ContextStore,
 ) -> None:
     reviewer = DailyReviewer(db_conn, context_store)
     scorecard = DailyScorecard(
@@ -316,7 +323,8 @@ def test_store_scorecard_in_context(
 
 
 def test_store_scorecard_key_is_market_scoped(
-    db_conn: sqlite3.Connection, context_store: ContextStore,
+    db_conn: sqlite3.Connection,
+    context_store: ContextStore,
 ) -> None:
     reviewer = DailyReviewer(db_conn, context_store)
     kr = DailyScorecard(
@@ -357,7 +365,8 @@ def test_store_scorecard_key_is_market_scoped(
 
 
 def test_generate_scorecard_handles_invalid_context_snapshot(
-    db_conn: sqlite3.Connection, context_store: ContextStore,
+    db_conn: sqlite3.Connection,
+    context_store: ContextStore,
 ) -> None:
     reviewer = DailyReviewer(db_conn, context_store)
     db_conn.execute(

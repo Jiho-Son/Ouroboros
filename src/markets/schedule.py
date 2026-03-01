@@ -211,9 +211,7 @@ def get_open_markets(
         return is_market_open(market, now)
 
     open_markets = [
-        MARKETS[code]
-        for code in enabled_markets
-        if code in MARKETS and is_available(MARKETS[code])
+        MARKETS[code] for code in enabled_markets if code in MARKETS and is_available(MARKETS[code])
     ]
 
     return sorted(open_markets, key=lambda m: m.code)
@@ -282,9 +280,7 @@ def get_next_market_open(
         # Calculate next open time for this market
         for days_ahead in range(7):  # Check next 7 days
             check_date = market_now.date() + timedelta(days=days_ahead)
-            check_datetime = datetime.combine(
-                check_date, market.open_time, tzinfo=market.timezone
-            )
+            check_datetime = datetime.combine(check_date, market.open_time, tzinfo=market.timezone)
 
             # Skip weekends
             if check_datetime.weekday() >= 5:

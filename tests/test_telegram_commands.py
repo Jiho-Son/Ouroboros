@@ -357,8 +357,7 @@ class TestTradingControlCommands:
 
             pause_event.set()
             await client.send_message(
-                "<b>▶️ Trading Resumed</b>\n\n"
-                "Trading operations have been restarted."
+                "<b>▶️ Trading Resumed</b>\n\nTrading operations have been restarted."
             )
 
         handler.register_command("resume", mock_resume)
@@ -526,9 +525,7 @@ class TestStatusCommands:
 
         async def mock_status_error() -> None:
             """Mock /status handler with error."""
-            await client.send_message(
-                "<b>⚠️ Error</b>\n\nFailed to retrieve trading status."
-            )
+            await client.send_message("<b>⚠️ Error</b>\n\nFailed to retrieve trading status.")
 
         handler.register_command("status", mock_status_error)
 
@@ -603,10 +600,7 @@ class TestStatusCommands:
 
         async def mock_positions_empty() -> None:
             """Mock /positions handler with no positions."""
-            message = (
-                "<b>💼 Account Summary</b>\n\n"
-                "No balance information available."
-            )
+            message = "<b>💼 Account Summary</b>\n\nNo balance information available."
             await client.send_message(message)
 
         handler.register_command("positions", mock_positions_empty)
@@ -639,9 +633,7 @@ class TestStatusCommands:
 
         async def mock_positions_error() -> None:
             """Mock /positions handler with error."""
-            await client.send_message(
-                "<b>⚠️ Error</b>\n\nFailed to retrieve positions."
-            )
+            await client.send_message("<b>⚠️ Error</b>\n\nFailed to retrieve positions.")
 
         handler.register_command("positions", mock_positions_error)
 

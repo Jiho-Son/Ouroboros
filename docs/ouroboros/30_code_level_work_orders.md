@@ -51,6 +51,7 @@ Updated: 2026-02-26
 - `TASK-OPS-001` (`REQ-OPS-001`): 시간 필드/로그 스키마의 타임존 표기 강제 규칙 구현
 - `TASK-OPS-002` (`REQ-OPS-002`): 정책 수치 변경 시 `01_requirements_registry.md` 선수정 CI 체크 추가
 - `TASK-OPS-003` (`REQ-OPS-003`): `TASK-*` 없는 `REQ-*` 또는 `TEST-*` 없는 `REQ-*`를 차단하는 문서 검증 게이트 유지
+- `TASK-OPS-004` (`REQ-OPS-004`): v2/v3 원본 계획 문서 위치를 `docs/ouroboros/source/`로 표준화하고 링크 일관성 검증
 
 ## 커밋 규칙
 

@@ -123,8 +123,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
         """
     )
     decision_columns = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(decision_logs)").fetchall()
+        row[1] for row in conn.execute("PRAGMA table_info(decision_logs)").fetchall()
     }
     if "session_id" not in decision_columns:
         conn.execute("ALTER TABLE decision_logs ADD COLUMN session_id TEXT DEFAULT 'UNKNOWN'")
@@ -185,9 +184,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_decision_logs_timestamp ON decision_logs(timestamp)"
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_decision_logs_reviewed ON decision_logs(reviewed)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_logs_reviewed ON decision_logs(reviewed)")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_decision_logs_confidence ON decision_logs(confidence)"
     )
@@ -381,9 +378,7 @@ def get_open_position(
     return {"decision_id": row[1], "price": row[2], "quantity": row[3], "timestamp": row[4]}
 
 
-def get_recent_symbols(
-    conn: sqlite3.Connection, market: str, limit: int = 30
-) -> list[str]:
+def get_recent_symbols(conn: sqlite3.Connection, market: str, limit: int = 30) -> list[str]:
     """Return recent unique symbols for a market, newest first."""
     cursor = conn.execute(
         """

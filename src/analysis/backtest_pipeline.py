@@ -10,8 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from statistics import mean
-from typing import Literal
-from typing import cast
+from typing import Literal, cast
 
 from src.analysis.backtest_cost_guard import BacktestCostModel, validate_backtest_cost_model
 from src.analysis.triple_barrier import TripleBarrierSpec, label_with_triple_barrier

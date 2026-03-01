@@ -66,6 +66,7 @@ def _check_handover_entry(
     *,
     branch: str,
     strict: bool,
+    ci_mode: bool,
     errors: list[str],
 ) -> None:
     if not HANDOVER_LOG.exists():
@@ -88,6 +89,10 @@ def _check_handover_entry(
             errors.append(f"latest handover entry missing token: {token}")
 
     if strict:
+        if "- next_ticket: #TBD" in latest:
+            errors.append("latest handover entry must not use placeholder next_ticket (#TBD)")
+
+    if strict and not ci_mode:
         today_utc = datetime.now(UTC).date().isoformat()
         if today_utc not in latest:
             errors.append(
@@ -99,8 +104,6 @@ def _check_handover_entry(
                 "latest handover entry must target current branch "
                 f"({branch_token})"
             )
-        if "- next_ticket: #TBD" in latest:
-            errors.append("latest handover entry must not use placeholder next_ticket (#TBD)")
         if "merged_to_feature_branch=no" in latest:
             errors.append(
                 "process gate indicates not merged; implementation must stay blocked "
@@ -117,6 +120,14 @@ def main() -> int:
         action="store_true",
         help="Enforce today-date and current-branch match on latest handover entry.",
     )
+    parser.add_argument(
+        "--ci",
+        action="store_true",
+        help=(
+            "CI mode: keep structural/token checks and placeholder guard, "
+            "but skip strict today-date/current-branch/merge-gate checks."
+        ),
+    )
     args = parser.parse_args()
 
     errors: list[str] = []
@@ -125,10 +136,15 @@ def main() -> int:
     branch = _current_branch()
     if not branch:
         errors.append("cannot resolve current git branch")
-    elif branch in {"main", "master"}:
+    elif not args.ci and branch in {"main", "master"}:
         errors.append(f"working branch must not be {branch}")
 
-    _check_handover_entry(branch=branch, strict=args.strict, errors=errors)
+    _check_handover_entry(
+        branch=branch,
+        strict=args.strict,
+        ci_mode=args.ci,
+        errors=errors,
+    )
 
     if errors:
         print("[FAIL] session handover check failed")

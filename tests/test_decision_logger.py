@@ -49,7 +49,10 @@ def test_log_decision_creates_record(logger: DecisionLogger, db_conn: sqlite3.Co
 
     # Verify record exists in database
     cursor = db_conn.execute(
-        "SELECT decision_id, action, confidence, session_id FROM decision_logs WHERE decision_id = ?",
+        (
+            "SELECT decision_id, action, confidence, session_id "
+            "FROM decision_logs WHERE decision_id = ?"
+        ),
         (decision_id,),
     )
     row = cursor.fetchone()

@@ -9,7 +9,7 @@ This module summarizes old context data instead of including raw details:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from src.context.layer import ContextLayer

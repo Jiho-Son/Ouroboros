@@ -94,7 +94,9 @@ class CloudStorage:
         if metadata:
             extra_args["Metadata"] = metadata
 
-        logger.info("Uploading %s to s3://%s/%s", file_path.name, self.config.bucket_name, object_key)
+        logger.info(
+            "Uploading %s to s3://%s/%s", file_path.name, self.config.bucket_name, object_key
+        )
 
         try:
             self.client.upload_file(
