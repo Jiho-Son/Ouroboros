@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 REQUIREMENTS_REGISTRY = "docs/ouroboros/01_requirements_registry.md"
@@ -15,6 +15,8 @@ TASK_DEF_LINE = re.compile(r"^-\s+`(?P<task_id>TASK-[A-Z0-9-]+-\d{3})`(?P<body>.
 REQ_ID_IN_LINE = re.compile(r"\bREQ-[A-Z0-9-]+-\d{3}\b")
 TASK_ID_IN_TEXT = re.compile(r"\bTASK-[A-Z0-9-]+-\d{3}\b")
 TEST_ID_IN_TEXT = re.compile(r"\bTEST-[A-Z0-9-]+-\d{3}\b")
+READ_ONLY_FILES = {"src/core/risk_manager.py"}
+PLACEHOLDER_VALUES = {"", "tbd", "n/a", "na", "none", "<link>", "<required>"}
 
 
 def must_contain(path: Path, required: list[str], errors: list[str]) -> None:
@@ -118,6 +120,55 @@ def validate_pr_traceability(warnings: list[str]) -> None:
         warnings.append("PR text missing TEST-ID reference")
 
 
+def _parse_pr_evidence_line(text: str, field: str) -> str | None:
+    pattern = re.compile(rf"^\s*-\s*{re.escape(field)}:\s*(?P<value>.+?)\s*$", re.MULTILINE)
+    match = pattern.search(text)
+    if not match:
+        return None
+    return match.group("value").strip()
+
+
+def _is_placeholder(value: str | None) -> bool:
+    if value is None:
+        return True
+    normalized = value.strip().lower()
+    return normalized in PLACEHOLDER_VALUES
+
+
+def validate_read_only_approval(
+    changed_files: list[str], errors: list[str], warnings: list[str]
+) -> None:
+    changed_set = set(changed_files)
+    touched = sorted(path for path in READ_ONLY_FILES if path in changed_set)
+    if not touched:
+        return
+
+    body = os.getenv("GOVERNANCE_PR_BODY", "").strip()
+    if not body:
+        warnings.append(
+            "READ-ONLY file changed but PR body is unavailable; approval evidence check skipped"
+        )
+        return
+
+    if "READ-ONLY Approval" not in body:
+        errors.append("READ-ONLY file changed without 'READ-ONLY Approval' section in PR body")
+        return
+
+    touched_field = _parse_pr_evidence_line(body, "Touched READ-ONLY files")
+    human_approval = _parse_pr_evidence_line(body, "Human approval")
+    test_suite_1 = _parse_pr_evidence_line(body, "Test suite 1")
+    test_suite_2 = _parse_pr_evidence_line(body, "Test suite 2")
+
+    if _is_placeholder(touched_field):
+        errors.append("READ-ONLY Approval section missing 'Touched READ-ONLY files' evidence")
+    if _is_placeholder(human_approval):
+        errors.append("READ-ONLY Approval section missing 'Human approval' evidence")
+    if _is_placeholder(test_suite_1):
+        errors.append("READ-ONLY Approval section missing 'Test suite 1' evidence")
+    if _is_placeholder(test_suite_2):
+        errors.append("READ-ONLY Approval section missing 'Test suite 2' evidence")
+
+
 def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
@@ -141,6 +192,11 @@ def main() -> int:
             "gh",
             "Session Handover Gate",
             "session_handover_check.py --strict",
+            "READ-ONLY Approval",
+            "Touched READ-ONLY files",
+            "Human approval",
+            "Test suite 1",
+            "Test suite 2",
         ],
         errors,
     )
@@ -187,6 +243,7 @@ def main() -> int:
     validate_registry_sync(changed_files, errors)
     validate_task_req_mapping(errors)
     validate_pr_traceability(warnings)
+    validate_read_only_approval(changed_files, errors, warnings)
 
     if errors:
         print("[FAIL] governance asset validation failed")

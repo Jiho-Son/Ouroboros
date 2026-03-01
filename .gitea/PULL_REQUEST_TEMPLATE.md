@@ -47,6 +47,13 @@
 - 모니터링 로그 경로:
 - 이상 징후/이슈 링크:
 
+## READ-ONLY Approval (Required when touching READ-ONLY files)
+
+- Touched READ-ONLY files:
+- Human approval:
+- Test suite 1:
+- Test suite 2:
+
 ## Approval Gate
 
 - [ ] Static Verifier approval comment linked
