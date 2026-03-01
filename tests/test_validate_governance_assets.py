@@ -176,3 +176,14 @@ def test_validate_read_only_approval_warns_without_pr_body(monkeypatch) -> None:
     assert errors == []
     assert warnings
     assert "approval evidence check skipped" in warnings[0]
+
+
+def test_validate_read_only_approval_skips_when_no_readonly_file_changed() -> None:
+    module = _load_module()
+    changed_files = ["src/main.py"]
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    module.validate_read_only_approval(changed_files, errors, warnings)
+    assert errors == []
+    assert warnings == []
