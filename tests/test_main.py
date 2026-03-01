@@ -2281,7 +2281,7 @@ async def test_sell_updates_original_buy_decision_outcome() -> None:
             ],
         }
     )
-    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
 
     overseas_broker = MagicMock()
     engine = MagicMock(spec=ScenarioEngine)
