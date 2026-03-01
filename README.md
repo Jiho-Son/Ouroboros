@@ -217,6 +217,7 @@ The-Ouroboros/
 
 ## 문서
 
+- **[문서 허브](docs/README.md)** — 전체 문서 라우팅, 우선순위, 읽기 순서
 - **[아키텍처](docs/architecture.md)** — 시스템 설계, 컴포넌트, 데이터 흐름
 - **[테스트](docs/testing.md)** — 테스트 구조, 커버리지, 작성 가이드
 - **[명령어](docs/commands.md)** — CLI, Dashboard, Telegram 명령어

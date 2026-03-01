@@ -87,6 +87,7 @@ Smart Scanner runs in both `TRADE_MODE=realtime` and `daily` paths. On API failu
 
 ## Documentation
 
+- **[Documentation Hub](docs/README.md)** — Top-level doc routing and reading order
 - **[Workflow Guide](docs/workflow.md)** — Git workflow policy and agent-based development
 - **[Command Reference](docs/commands.md)** — Common failures, build commands, troubleshooting
 - **[Architecture](docs/architecture.md)** — System design, components, data flow
