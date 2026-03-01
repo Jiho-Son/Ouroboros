@@ -1,15 +1,15 @@
 <!--
 Doc-ID: DOC-AUDIT-001
-Version: 1.1.0
+Version: 1.2.0
 Status: active
 Owner: strategy
-Updated: 2026-03-01
+Updated: 2026-03-02
 -->
 
 # v2/v3 구현 감사 및 수익률 분석 보고서
 
 작성일: 2026-02-28
-최종 업데이트: 2026-03-01 (Phase 2 완료 + Phase 3 부분 완료 반영)
+최종 업데이트: 2026-03-02 (#373 상태표 정합화 반영)
 대상 기간: 2026-02-25 ~ 2026-02-28 (실거래)
 분석 브랜치: `feature/v3-session-policy-stream`
 
@@ -17,45 +17,54 @@ Updated: 2026-03-01
 
 ## 1. 계획 대비 구현 감사
 
-### 1.1 v2 구현 상태: 100% 완료
+### 1.1 완료 판정 기준 (Definition of Done)
+
+아래 3가지를 모두 만족할 때만 `✅ 완료`로 표기한다.
+
+1. 코드 경로 존재: 요구사항을 수행하는 실행 경로가 코드에 존재한다.
+2. 효과 검증 통과: 요구사항 효과를 검증하는 테스트/런타임 증적이 존재한다.
+3. 추적성 일치: 요구사항 상태와 열린 갭 이슈가 모순되지 않는다.
+
+### 1.2 v2 구현 상태: 부분 완료 (핵심 갭 잔존)
 
 | REQ-ID | 요구사항 | 구현 파일 | 상태 |
 |--------|----------|-----------|------|
 | REQ-V2-001 | 4-상태 매도 상태기계 (HOLDING→BE_LOCK→ARMED→EXITED) | `src/strategy/position_state_machine.py` | ✅ 완료 |
 | REQ-V2-002 | 즉시 최상위 상태 승격 (갭 대응) | `position_state_machine.py:51-70` | ✅ 완료 |
 | REQ-V2-003 | EXITED 우선 평가 | `position_state_machine.py:38-48` | ✅ 완료 |
-| REQ-V2-004 | 4중 청산 로직 (Hard/BE/ATR Trailing/Model) | `src/strategy/exit_rules.py` | ✅ 완료 |
+| REQ-V2-004 | 4중 청산 로직 (Hard/BE/ATR Trailing/Model) | `src/strategy/exit_rules.py` | ⚠️ 부분 (`#369`) |
 | REQ-V2-005 | Triple Barrier 라벨링 | `src/analysis/triple_barrier.py` | ✅ 완료 |
 | REQ-V2-006 | Walk-Forward + Purge/Embargo 검증 | `src/analysis/walk_forward_split.py` | ✅ 완료 |
-| REQ-V2-007 | 비용/슬리피지/체결실패 모델 필수 | `src/analysis/backtest_cost_guard.py` | ✅ 완료 |
-| REQ-V2-008 | Kill Switch 실행 순서 (Block→Cancel→Refresh→Reduce→Snapshot) | `src/core/kill_switch.py` | ✅ 완료 |
+| REQ-V2-007 | 비용/슬리피지/체결실패 모델 필수 | `src/analysis/backtest_cost_guard.py` | ⚠️ 부분 (`#368`) |
+| REQ-V2-008 | Kill Switch 실행 순서 (Block→Cancel→Refresh→Reduce→Snapshot) | `src/core/kill_switch.py` | ⚠️ 부분 (`#377`) |
 
-### 1.2 v3 구현 상태: ~85% 완료 (2026-03-01 기준)
+### 1.3 v3 구현 상태: 부분 완료 (2026-03-02 기준)
 
 | REQ-ID | 요구사항 | 상태 | 비고 |
 |--------|----------|------|------|
-| REQ-V3-001 | 모든 신호/주문/로그에 session_id 포함 | ✅ 완료 | #326 머지 — `log_decision()` 파라미터 추가, `log_trade()` 명시적 전달 |
-| REQ-V3-002 | 세션 전환 훅 + 리스크 파라미터 재로딩 | ⚠️ 부분 | #327 머지 — 재로딩 메커니즘 구현, 세션 훅 테스트 미작성 |
+| REQ-V3-001 | 모든 신호/주문/로그에 session_id 포함 | ⚠️ 부분 | 큐 intent에 `session_id` 누락 (`#375`) |
+| REQ-V3-002 | 세션 전환 훅 + 리스크 파라미터 재로딩 | ⚠️ 부분 | 구현 존재, 세션 경계 E2E 회귀 보강 필요 (`#376`) |
 | REQ-V3-003 | 블랙아웃 윈도우 정책 | ✅ 완료 | `src/core/blackout_manager.py` |
-| REQ-V3-004 | 블랙아웃 큐 + 복구 시 재검증 | ✅ 완료 | #324(DB 기록) + #328(가격/세션 재검증) 머지 |
+| REQ-V3-004 | 블랙아웃 큐 + 복구 시 재검증 | ⚠️ 부분 | 큐 포화 시 intent 유실 경로 존재 (`#371`), 재검증 강화를 `#328`에서 추적 |
 | REQ-V3-005 | 저유동 세션 시장가 금지 | ✅ 완료 | `src/core/order_policy.py` |
 | REQ-V3-006 | 보수적 백테스트 체결 (불리 방향) | ✅ 완료 | `src/analysis/backtest_execution_model.py` |
-| REQ-V3-007 | FX 손익 분리 (전략 PnL vs 환율 PnL) | ⚠️ 코드 완료 / 운영 미반영 | `src/db.py` 스키마·함수 완료, 운영 데이터 `fx_pnl` 전부 0 |
+| REQ-V3-007 | FX 손익 분리 (전략 PnL vs 환율 PnL) | ⚠️ 부분 | 스키마 존재, 런타임 분리 계산/전달 미적용 (`#370`) |
 | REQ-V3-008 | 오버나잇 예외 vs Kill Switch 우선순위 | ✅ 완료 | `src/main.py` — `_should_force_exit_for_overnight()`, `_apply_staged_exit_override_for_hold()` |
 
-### 1.3 운영 거버넌스: ~60% 완료 (2026-03-01 재평가)
+### 1.4 운영 거버넌스: 부분 완료 (2026-03-02 재평가)
 
 | REQ-ID | 요구사항 | 상태 | 비고 |
 |--------|----------|------|------|
-| REQ-OPS-001 | 타임존 명시 (KST/UTC) | ⚠️ 부분 | DB 기록은 UTC, 세션은 KST. 일부 로그에서 타임존 미표기 |
-| REQ-OPS-002 | 정책 변경 시 레지스트리 업데이트 강제 | ⚠️ 기본 구현 완료 | `scripts/validate_governance_assets.py` CI 연동 완료; 규칙 고도화 잔여 |
-| REQ-OPS-003 | TASK-REQ 매핑 강제 | ⚠️ 기본 구현 완료 | `scripts/validate_ouroboros_docs.py` CI 연동 완료; PR 강제 검증 강화 잔여 |
+| REQ-OPS-001 | 타임존 명시 (KST/UTC) | ⚠️ 부분 | 문서 토큰 fail-fast 추가, 필드 수준 검증은 `#372` 잔여 |
+| REQ-OPS-002 | 정책 변경 시 레지스트리 업데이트 강제 | ⚠️ 부분 | 파일 단위 강제는 구현, 정책 수치 단위 정밀 검증은 `#372` 잔여 |
+| REQ-OPS-003 | TASK-REQ 매핑 강제 | ⚠️ 부분 | TASK-REQ/TASK-TEST 강제는 구현, 우회 케이스 추가 점검은 `#372` 잔여 |
+| REQ-OPS-004 | source 경로 표준화 검증 | ✅ 완료 | `scripts/validate_ouroboros_docs.py`의 canonical source path 검증 |
 
 ---
 
 ## 2. 구현 갭 상세
 
-> **2026-03-01 업데이트**: GAP-1~5 모두 해소되었거나 이슈 머지로 부분 해소됨.
+> **2026-03-02 업데이트**: 기존 해소 표기를 재검증했고, 열려 있는 갭 이슈 기준으로 상태를 재분류함.
 
 ### GAP-1: DecisionLogger에 session_id 미포함 → ✅ 해소 (#326)
 
@@ -80,12 +89,13 @@ Updated: 2026-03-01
 - **잔여 갭**: 세션 경계 실시간 전환 E2E 통합 테스트 보강 필요 (`test_main.py`에 설정 오버라이드/폴백 단위 테스트는 존재)
 - **요구사항**: REQ-V3-002
 
-### GAP-4: 블랙아웃 복구 DB 기록 + 재검증 → ✅ 해소 (#324, #328)
+### GAP-4: 블랙아웃 복구 DB 기록 + 재검증 → ⚠️ 부분 해소 (#324, #328, #371)
 
 - **위치**: `src/core/blackout_manager.py`, `src/main.py`
-- **해소 내용**:
-  - #324 머지 — 복구 주문 실행 후 `log_trade()` 호출, rationale에 `[blackout-recovery]` prefix
-  - #328 머지 — 가격 유효성 검증 (진입가 대비 급변 시 드롭), 세션 변경 시 새 파라미터로 재검증
+- **현 상태**:
+  - #324 추적 범위(DB 기록)는 구현 경로가 존재
+  - #328 범위(가격/세션 재검증 강화)는 추적 이슈 오픈 상태
+  - #371: 큐 포화 시 intent 유실 경로가 남아 있어 `REQ-V3-004`를 완료로 보기 어려움
 - **요구사항**: REQ-V3-004
 
 ### GAP-5: 시간장벽이 봉 개수 고정 → ✅ 해소 (#329)
@@ -97,10 +107,10 @@ Updated: 2026-03-01
   - `max_holding_bars` deprecated 경고 유지 (하위 호환)
 - **요구사항**: REQ-V2-005 / v3 확장
 
-### GAP-6 (신규): FX PnL 운영 미활성 (LOW — 코드 완료)
+### GAP-6 (신규): FX PnL 분리 미완료 (MEDIUM — 부분 구현)
 
 - **위치**: `src/db.py` (`fx_pnl`, `strategy_pnl` 컬럼 존재)
-- **문제**: 스키마와 함수는 완료되었으나 운영 데이터에서 `fx_pnl` 전부 0
+- **문제**: 스키마와 함수는 존재하지만 런타임 경로에서 `strategy_pnl`/`fx_pnl` 분리 계산 전달이 누락됨 (`#370`)
 - **영향**: USD 거래에서 환율 손익과 전략 손익이 분리되지 않아 성과 분석 부정확
 - **요구사항**: REQ-V3-007
 
