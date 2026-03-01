@@ -130,6 +130,9 @@ def _resolve_sell_qty_for_pnl(*, sell_qty: int | None, buy_qty: int | None) -> i
 
 def _extract_fx_rate_from_sources(*sources: dict[str, Any] | None) -> float | None:
     """Best-effort FX rate extraction from broker payloads."""
+    # KIS overseas payloads expose exchange-rate fields with varying key names
+    # across endpoints/responses (price, balance, buying power). Keep this list
+    # centralised so schema drifts can be patched in one place.
     rate_keys = (
         "frst_bltn_exrt",
         "bass_exrt",
@@ -3392,10 +3395,13 @@ async def run_daily_session(
                     sell_fx_rate=sell_fx_rate,
                 )
                 if sell_fx_rate is not None and not market.is_domestic:
+                    # Daily path does not carry scanner candidate metrics, so this
+                    # context intentionally stores FX snapshot only.
                     selection_context = {"fx_rate": sell_fx_rate}
             elif not market.is_domestic:
                 snapshot_fx_rate = _extract_fx_rate_from_sources(balance_info, stock_data)
                 if snapshot_fx_rate is not None:
+                    # BUY/HOLD in daily path: persist FX snapshot for later SELL split.
                     selection_context = {"fx_rate": snapshot_fx_rate}
             log_trade(
                 conn=db_conn,

@@ -111,6 +111,7 @@ Updated: 2026-03-02
 
 - **위치**: `src/db.py` (`fx_pnl`, `strategy_pnl` 컬럼 존재)
 - **현 상태**: 런타임 SELL 경로에서 `strategy_pnl`/`fx_pnl` 분리 계산 및 전달을 적용함 (`#370`).
+- **운영 메모**: `trading_cycle`은 scanner 기반 `selection_context`에 `fx_rate`를 추가하고, `run_daily_session`은 scanner 컨텍스트 없이 `fx_rate` 스냅샷만 기록한다.
 - **잔여**: 과거 BUY 레코드에 `fx_rate`가 없으면 해외 구간도 `fx_pnl=0` fallback으로 기록됨.
 - **영향**: USD 거래에서 환율 손익과 전략 손익이 분리되지 않아 성과 분석 부정확
 - **요구사항**: REQ-V3-007
