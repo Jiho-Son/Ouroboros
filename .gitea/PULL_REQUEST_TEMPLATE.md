@@ -41,6 +41,10 @@
 - [ ] `workflow/session-handover.md` 최신 엔트리가 현재 브랜치/당일(UTC) 기준으로 갱신됨
 - 최신 handover 엔트리 heading:
 
+## Docs Sync Gate (docs 파일 변경 시 필수)
+
+- [ ] `python3 scripts/validate_docs_sync.py` 통과 (`docs` 미변경 PR은 N/A 기재)
+
 ## Runtime Evidence
 
 - 시스템 실제 구동 커맨드:
