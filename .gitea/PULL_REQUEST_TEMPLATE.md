@@ -41,6 +41,13 @@
 - [ ] `workflow/session-handover.md` 최신 엔트리가 현재 브랜치/당일(UTC) 기준으로 갱신됨
 - 최신 handover 엔트리 heading:
 
+## Docs Sync Gate
+
+- [ ] `python3 scripts/validate_docs_sync.py` 통과
+- [ ] `README.md`/`CLAUDE.md`에 `docs/workflow.md`, `docs/commands.md` 코어 링크가 유지됨
+- [ ] 문서 링크를 절대경로(`/<path>`)로 추가하지 않음
+- [ ] `docs/commands.md` API endpoint 표에 중복 row 없음
+
 ## Runtime Evidence
 
 - 시스템 실제 구동 커맨드:

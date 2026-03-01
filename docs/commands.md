@@ -21,6 +21,20 @@ python3 scripts/session_handover_check.py --strict
 
 - 실패 시 `workflow/session-handover.md` 최신 엔트리를 보강한 뒤 재실행한다.
 
+## Docs Sync Validator (Mandatory for docs changes)
+
+- 문서 변경 PR에서는 아래 명령으로 동기화 검증을 먼저 실행한다.
+
+```bash
+python3 scripts/validate_docs_sync.py
+```
+
+- 검증 실패 시 메시지 기준으로 즉시 수정한다.
+  - `absolute link is forbidden`: 문서 링크에 절대경로(`/...`) 사용
+  - `broken link`: 상대경로 링크 대상 파일/앵커 누락
+  - `missing core doc link reference`: `README.md`/`CLAUDE.md` 핵심 링크 누락
+  - `duplicated API endpoint row`: `docs/commands.md` API endpoint 표 중복 행
+
 ### tea CLI (Gitea Command Line Tool)
 
 #### ❌ TTY Error - Interactive Confirmation Fails
