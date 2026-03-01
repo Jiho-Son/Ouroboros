@@ -10,6 +10,7 @@ def test_valid_backtest_cost_model_passes() -> None:
         commission_bps=5.0,
         slippage_bps_by_session={"KRX_REG": 10.0, "US_PRE": 50.0},
         failure_rate_by_session={"KRX_REG": 0.01, "US_PRE": 0.08},
+        partial_fill_rate_by_session={"KRX_REG": 0.1, "US_PRE": 0.2},
         unfavorable_fill_required=True,
     )
     validate_backtest_cost_model(model=model, required_sessions=["KRX_REG", "US_PRE"])
@@ -20,6 +21,7 @@ def test_missing_required_slippage_session_raises() -> None:
         commission_bps=5.0,
         slippage_bps_by_session={"KRX_REG": 10.0},
         failure_rate_by_session={"KRX_REG": 0.01, "US_PRE": 0.08},
+        partial_fill_rate_by_session={"KRX_REG": 0.1, "US_PRE": 0.2},
         unfavorable_fill_required=True,
     )
     with pytest.raises(ValueError, match="missing slippage_bps_by_session.*US_PRE"):
@@ -31,6 +33,7 @@ def test_missing_required_failure_rate_session_raises() -> None:
         commission_bps=5.0,
         slippage_bps_by_session={"KRX_REG": 10.0, "US_PRE": 50.0},
         failure_rate_by_session={"KRX_REG": 0.01},
+        partial_fill_rate_by_session={"KRX_REG": 0.1, "US_PRE": 0.2},
         unfavorable_fill_required=True,
     )
     with pytest.raises(ValueError, match="missing failure_rate_by_session.*US_PRE"):
@@ -42,6 +45,7 @@ def test_invalid_failure_rate_range_raises() -> None:
         commission_bps=5.0,
         slippage_bps_by_session={"KRX_REG": 10.0},
         failure_rate_by_session={"KRX_REG": 1.2},
+        partial_fill_rate_by_session={"KRX_REG": 0.2},
         unfavorable_fill_required=True,
     )
     with pytest.raises(ValueError, match="failure rate must be within"):
@@ -53,6 +57,7 @@ def test_unfavorable_fill_requirement_cannot_be_disabled() -> None:
         commission_bps=5.0,
         slippage_bps_by_session={"KRX_REG": 10.0},
         failure_rate_by_session={"KRX_REG": 0.02},
+        partial_fill_rate_by_session={"KRX_REG": 0.2},
         unfavorable_fill_required=False,
     )
     with pytest.raises(ValueError, match="unfavorable_fill_required must be True"):
@@ -65,6 +70,7 @@ def test_non_finite_commission_rejected(bad_commission: float) -> None:
         commission_bps=bad_commission,
         slippage_bps_by_session={"KRX_REG": 10.0},
         failure_rate_by_session={"KRX_REG": 0.02},
+        partial_fill_rate_by_session={"KRX_REG": 0.2},
         unfavorable_fill_required=True,
     )
     with pytest.raises(ValueError, match="commission_bps"):
@@ -77,7 +83,33 @@ def test_non_finite_slippage_rejected(bad_slippage: float) -> None:
         commission_bps=5.0,
         slippage_bps_by_session={"KRX_REG": bad_slippage},
         failure_rate_by_session={"KRX_REG": 0.02},
+        partial_fill_rate_by_session={"KRX_REG": 0.2},
         unfavorable_fill_required=True,
     )
     with pytest.raises(ValueError, match="slippage bps"):
+        validate_backtest_cost_model(model=model, required_sessions=["KRX_REG"])
+
+
+def test_missing_required_partial_fill_session_raises() -> None:
+    model = BacktestCostModel(
+        commission_bps=5.0,
+        slippage_bps_by_session={"KRX_REG": 10.0, "US_PRE": 50.0},
+        failure_rate_by_session={"KRX_REG": 0.01, "US_PRE": 0.08},
+        partial_fill_rate_by_session={"KRX_REG": 0.1},
+        unfavorable_fill_required=True,
+    )
+    with pytest.raises(ValueError, match="missing partial_fill_rate_by_session.*US_PRE"):
+        validate_backtest_cost_model(model=model, required_sessions=["KRX_REG", "US_PRE"])
+
+
+@pytest.mark.parametrize("bad_partial_fill", [float("nan"), float("inf"), float("-inf"), -0.1, 1.1])
+def test_invalid_partial_fill_rate_rejected(bad_partial_fill: float) -> None:
+    model = BacktestCostModel(
+        commission_bps=5.0,
+        slippage_bps_by_session={"KRX_REG": 10.0},
+        failure_rate_by_session={"KRX_REG": 0.02},
+        partial_fill_rate_by_session={"KRX_REG": bad_partial_fill},
+        unfavorable_fill_required=True,
+    )
+    with pytest.raises(ValueError, match="partial fill rate must be within"):
         validate_backtest_cost_model(model=model, required_sessions=["KRX_REG"])

@@ -13,6 +13,11 @@ from statistics import mean
 from typing import Literal, cast
 
 from src.analysis.backtest_cost_guard import BacktestCostModel, validate_backtest_cost_model
+from src.analysis.backtest_execution_model import (
+    BacktestExecutionModel,
+    ExecutionAssumptions,
+    ExecutionRequest,
+)
 from src.analysis.triple_barrier import TripleBarrierSpec, label_with_triple_barrier
 from src.analysis.walk_forward_split import WalkForwardFold, generate_walk_forward_splits
 
@@ -40,6 +45,7 @@ class WalkForwardConfig:
 class BaselineScore:
     name: Literal["B0", "B1", "M1"]
     accuracy: float
+    cost_adjusted_accuracy: float
 
 
 @dataclass(frozen=True)
@@ -115,6 +121,8 @@ def run_v2_backtest_pipeline(
         ).label
 
     ordered_labels = [labels_by_bar_index[idx] for idx in normalized_entries]
+    ordered_sessions = [bars[idx].session_id for idx in normalized_entries]
+    ordered_prices = [bars[idx].close for idx in normalized_entries]
     folds = generate_walk_forward_splits(
         n_samples=len(normalized_entries),
         train_size=walk_forward.train_size,
@@ -129,8 +137,13 @@ def run_v2_backtest_pipeline(
     for fold_idx, fold in enumerate(folds):
         train_labels = [ordered_labels[i] for i in fold.train_indices]
         test_labels = [ordered_labels[i] for i in fold.test_indices]
+        test_sessions = [ordered_sessions[i] for i in fold.test_indices]
+        test_prices = [ordered_prices[i] for i in fold.test_indices]
         if not test_labels:
             continue
+        execution_model = _build_execution_model(cost_model=cost_model, fold_seed=fold_idx)
+        b0_pred = _baseline_b0_pred(train_labels)
+        m1_pred = _m1_pred(train_labels)
         fold_results.append(
             BacktestFoldResult(
                 fold_index=fold_idx,
@@ -139,11 +152,41 @@ def run_v2_backtest_pipeline(
                 train_label_distribution=_label_dist(train_labels),
                 test_label_distribution=_label_dist(test_labels),
                 baseline_scores=[
-                    BaselineScore(name="B0", accuracy=_baseline_b0(train_labels, test_labels)),
-                    BaselineScore(name="B1", accuracy=_score_constant(1, test_labels)),
+                    BaselineScore(
+                        name="B0",
+                        accuracy=_score_constant(b0_pred, test_labels),
+                        cost_adjusted_accuracy=_score_with_execution(
+                            prediction=b0_pred,
+                            actual=test_labels,
+                            sessions=test_sessions,
+                            reference_prices=test_prices,
+                            execution_model=execution_model,
+                            commission_bps=float(cost_model.commission_bps or 0.0),
+                        ),
+                    ),
+                    BaselineScore(
+                        name="B1",
+                        accuracy=_score_constant(1, test_labels),
+                        cost_adjusted_accuracy=_score_with_execution(
+                            prediction=1,
+                            actual=test_labels,
+                            sessions=test_sessions,
+                            reference_prices=test_prices,
+                            execution_model=execution_model,
+                            commission_bps=float(cost_model.commission_bps or 0.0),
+                        ),
+                    ),
                     BaselineScore(
                         name="M1",
-                        accuracy=_score_constant(_m1_pred(train_labels), test_labels),
+                        accuracy=_score_constant(m1_pred, test_labels),
+                        cost_adjusted_accuracy=_score_with_execution(
+                            prediction=m1_pred,
+                            actual=test_labels,
+                            sessions=test_sessions,
+                            reference_prices=test_prices,
+                            execution_model=execution_model,
+                            commission_bps=float(cost_model.commission_bps or 0.0),
+                        ),
                     ),
                 ],
             )
@@ -176,18 +219,67 @@ def _score_constant(pred: int, actual: Sequence[int]) -> float:
 
 
 def _baseline_b0(train_labels: Sequence[int], test_labels: Sequence[int]) -> float:
+    return _score_constant(_baseline_b0_pred(train_labels), test_labels)
+
+
+def _baseline_b0_pred(train_labels: Sequence[int]) -> int:
     if not train_labels:
-        return _score_constant(0, test_labels)
+        return 0
     # Majority-class baseline from training fold.
     choices = (-1, 0, 1)
-    pred = max(choices, key=lambda c: train_labels.count(c))
-    return _score_constant(pred, test_labels)
+    return max(choices, key=lambda c: train_labels.count(c))
 
 
 def _m1_pred(train_labels: Sequence[int]) -> int:
     if not train_labels:
         return 0
     return train_labels[-1]
+
+
+def _build_execution_model(*, cost_model: BacktestCostModel, fold_seed: int) -> BacktestExecutionModel:
+    return BacktestExecutionModel(
+        ExecutionAssumptions(
+            slippage_bps_by_session=dict(cost_model.slippage_bps_by_session or {}),
+            failure_rate_by_session=dict(cost_model.failure_rate_by_session or {}),
+            partial_fill_rate_by_session=dict(cost_model.partial_fill_rate_by_session or {}),
+            seed=fold_seed,
+        )
+    )
+
+
+def _score_with_execution(
+    *,
+    prediction: int,
+    actual: Sequence[int],
+    sessions: Sequence[str],
+    reference_prices: Sequence[float],
+    execution_model: BacktestExecutionModel,
+    commission_bps: float,
+) -> float:
+    if not actual:
+        return 0.0
+    contributions: list[float] = []
+    for label, session_id, reference_price in zip(actual, sessions, reference_prices, strict=True):
+        if prediction == 0:
+            contributions.append(1.0 if label == 0 else 0.0)
+            continue
+        side = "BUY" if prediction > 0 else "SELL"
+        execution = execution_model.simulate(
+            ExecutionRequest(
+                side=side,
+                session_id=session_id,
+                qty=100,
+                reference_price=reference_price,
+            )
+        )
+        if execution.status == "REJECTED":
+            contributions.append(0.0)
+            continue
+        fill_ratio = execution.filled_qty / 100.0
+        cost_penalty = min(0.99, (commission_bps + execution.slippage_bps) / 10000.0)
+        correctness = 1.0 if prediction == label else 0.0
+        contributions.append(correctness * fill_ratio * (1.0 - cost_penalty))
+    return mean(contributions)
 
 
 def _build_run_id(*, n_entries: int, n_folds: int, sessions: Sequence[str]) -> str:
