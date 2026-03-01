@@ -31,6 +31,8 @@
   - [commands.md](./commands.md): 실행 커맨드, 실패 사례, 트러블슈팅
   - [testing.md](./testing.md): 테스트 구조, 작성 규칙, 검증 명령
   - [agents.md](./agents.md): 에이전트 작업 제약과 금지 행위
+  - [agent-constraints.md](./agent-constraints.md): 영속 제약/운영 불변식(agents.md 보완)
+  - [skills.md](./skills.md): 설치/사용 가능한 스킬 목록과 활용 가이드
 - Design and Operations
   - [architecture.md](./architecture.md): 시스템 구조와 컴포넌트 책임
   - [context-tree.md](./context-tree.md): L1-L7 컨텍스트 계층 설계
