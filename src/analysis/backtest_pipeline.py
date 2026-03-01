@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from statistics import mean
 from typing import Literal
+from typing import cast
 
 from src.analysis.backtest_cost_guard import BacktestCostModel, validate_backtest_cost_model
 from src.analysis.triple_barrier import TripleBarrierSpec, label_with_triple_barrier
@@ -22,6 +24,7 @@ class BacktestBar:
     low: float
     close: float
     session_id: str
+    timestamp: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -86,9 +89,19 @@ def run_v2_backtest_pipeline(
     highs = [float(bar.high) for bar in bars]
     lows = [float(bar.low) for bar in bars]
     closes = [float(bar.close) for bar in bars]
+    timestamps = [bar.timestamp for bar in bars]
     normalized_entries = sorted(set(int(i) for i in entry_indices))
     if normalized_entries[0] < 0 or normalized_entries[-1] >= len(bars):
         raise IndexError("entry index out of range")
+
+    resolved_timestamps: list[datetime] | None = None
+    if triple_barrier_spec.max_holding_minutes is not None:
+        if any(ts is None for ts in timestamps):
+            raise ValueError(
+                "BacktestBar.timestamp is required for all bars when "
+                "triple_barrier_spec.max_holding_minutes is set"
+            )
+        resolved_timestamps = cast(list[datetime], timestamps)
 
     labels_by_bar_index: dict[int, int] = {}
     for idx in normalized_entries:
@@ -96,6 +109,7 @@ def run_v2_backtest_pipeline(
             highs=highs,
             lows=lows,
             closes=closes,
+            timestamps=resolved_timestamps,
             entry_index=idx,
             side=side,
             spec=triple_barrier_spec,

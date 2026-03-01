@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from src.analysis.backtest_cost_guard import BacktestCostModel
 from src.analysis.backtest_pipeline import (
     BacktestBar,
@@ -12,6 +14,7 @@ from src.analysis.walk_forward_split import generate_walk_forward_splits
 
 
 def _bars() -> list[BacktestBar]:
+    base_ts = datetime(2026, 2, 28, 0, 0, tzinfo=UTC)
     closes = [100.0, 101.0, 102.0, 101.5, 103.0, 102.5, 104.0, 103.5, 105.0, 104.5, 106.0, 105.5]
     bars: list[BacktestBar] = []
     for i, close in enumerate(closes):
@@ -21,6 +24,7 @@ def _bars() -> list[BacktestBar]:
                 low=close - 1.0,
                 close=close,
                 session_id="KRX_REG" if i % 2 == 0 else "US_PRE",
+                timestamp=base_ts + timedelta(minutes=i),
             )
         )
     return bars
@@ -43,7 +47,7 @@ def test_pipeline_happy_path_returns_fold_and_artifact_contract() -> None:
         triple_barrier_spec=TripleBarrierSpec(
             take_profit_pct=0.02,
             stop_loss_pct=0.01,
-            max_holding_bars=3,
+            max_holding_minutes=3,
         ),
         walk_forward=WalkForwardConfig(
             train_size=4,
@@ -84,7 +88,7 @@ def test_pipeline_cost_guard_fail_fast() -> None:
             triple_barrier_spec=TripleBarrierSpec(
                 take_profit_pct=0.02,
                 stop_loss_pct=0.01,
-                max_holding_bars=3,
+                max_holding_minutes=3,
             ),
             walk_forward=WalkForwardConfig(train_size=2, test_size=1),
             cost_model=bad,
@@ -119,7 +123,7 @@ def test_pipeline_deterministic_seed_free_deterministic_result() -> None:
         triple_barrier_spec=TripleBarrierSpec(
             take_profit_pct=0.02,
             stop_loss_pct=0.01,
-            max_holding_bars=3,
+            max_holding_minutes=3,
         ),
         walk_forward=WalkForwardConfig(
             train_size=4,
@@ -134,3 +138,31 @@ def test_pipeline_deterministic_seed_free_deterministic_result() -> None:
     out1 = run_v2_backtest_pipeline(**cfg)
     out2 = run_v2_backtest_pipeline(**cfg)
     assert out1 == out2
+
+
+def test_pipeline_rejects_minutes_spec_when_timestamp_missing() -> None:
+    bars = _bars()
+    bars[2] = BacktestBar(
+        high=bars[2].high,
+        low=bars[2].low,
+        close=bars[2].close,
+        session_id=bars[2].session_id,
+        timestamp=None,
+    )
+    try:
+        run_v2_backtest_pipeline(
+            bars=bars,
+            entry_indices=[0, 1, 2, 3],
+            side=1,
+            triple_barrier_spec=TripleBarrierSpec(
+                take_profit_pct=0.02,
+                stop_loss_pct=0.01,
+                max_holding_minutes=3,
+            ),
+            walk_forward=WalkForwardConfig(train_size=2, test_size=1),
+            cost_model=_cost_model(),
+        )
+    except ValueError as exc:
+        assert "BacktestBar.timestamp is required" in str(exc)
+    else:
+        raise AssertionError("expected timestamp validation error")
