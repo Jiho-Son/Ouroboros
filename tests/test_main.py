@@ -4895,7 +4895,7 @@ async def test_run_daily_session_passes_runtime_session_id_to_decision_and_trade
         }
     )
     broker.get_current_price = AsyncMock(return_value=(100.0, 1.0, 0.0))
-    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
 
     market = MagicMock()
     market.name = "Korea"
