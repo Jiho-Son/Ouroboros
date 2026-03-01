@@ -29,6 +29,7 @@ Updated: 2026-02-26
 - `TEST-ACC-007` (`REQ-OPS-001`): 시간 관련 필드는 타임존(KST/UTC)이 누락되면 검증 실패한다.
 - `TEST-ACC-008` (`REQ-OPS-002`): 정책 수치 변경이 원장 미반영이면 검증 실패한다.
 - `TEST-ACC-009` (`REQ-OPS-003`): `REQ-*`가 `TASK-*`/`TEST-*` 매핑 없이 존재하면 검증 실패한다.
+- `TEST-ACC-019` (`REQ-OPS-004`): v2/v3 원본 계획 문서 링크는 `docs/ouroboros/source/` 경로 기준으로만 통과한다.
 
 ## 테스트 계층
 
