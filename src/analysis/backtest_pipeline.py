@@ -56,6 +56,10 @@ class BacktestFoldResult:
     train_label_distribution: dict[int, int]
     test_label_distribution: dict[int, int]
     baseline_scores: list[BaselineScore]
+    execution_adjusted_avg_return_bps: float
+    execution_adjusted_trade_count: int
+    execution_rejected_count: int
+    execution_partial_count: int
 
 
 @dataclass(frozen=True)
@@ -90,6 +94,14 @@ def run_v2_backtest_pipeline(
         else sorted({bar.session_id for bar in bars})
     )
     validate_backtest_cost_model(model=cost_model, required_sessions=resolved_sessions)
+    execution_model = BacktestExecutionModel(
+        ExecutionAssumptions(
+            slippage_bps_by_session=cost_model.slippage_bps_by_session or {},
+            failure_rate_by_session=cost_model.failure_rate_by_session or {},
+            partial_fill_rate_by_session=cost_model.partial_fill_rate_by_session or {},
+            seed=0,
+        )
+    )
 
     highs = [float(bar.high) for bar in bars]
     lows = [float(bar.low) for bar in bars]
@@ -142,8 +154,32 @@ def run_v2_backtest_pipeline(
         if not test_labels:
             continue
         execution_model = _build_execution_model(cost_model=cost_model, fold_seed=fold_idx)
+        execution_return_model = _build_execution_model(
+            cost_model=cost_model,
+            fold_seed=fold_idx,
+        )
         b0_pred = _baseline_b0_pred(train_labels)
         m1_pred = _m1_pred(train_labels)
+        execution_returns_bps: list[float] = []
+        execution_rejected = 0
+        execution_partial = 0
+        for rel_idx in fold.test_indices:
+            entry_bar_index = normalized_entries[rel_idx]
+            bar = bars[entry_bar_index]
+            trade = _simulate_execution_adjusted_return_bps(
+                execution_model=execution_return_model,
+                bar=bar,
+                label=ordered_labels[rel_idx],
+                side=side,
+                spec=triple_barrier_spec,
+                commission_bps=float(cost_model.commission_bps or 0.0),
+            )
+            if trade["status"] == "REJECTED":
+                execution_rejected += 1
+                continue
+            execution_returns_bps.append(float(trade["return_bps"]))
+            if trade["status"] == "PARTIAL":
+                execution_partial += 1
         fold_results.append(
             BacktestFoldResult(
                 fold_index=fold_idx,
@@ -189,6 +225,12 @@ def run_v2_backtest_pipeline(
                         ),
                     ),
                 ],
+                execution_adjusted_avg_return_bps=(
+                    mean(execution_returns_bps) if execution_returns_bps else 0.0
+                ),
+                execution_adjusted_trade_count=len(execution_returns_bps),
+                execution_rejected_count=execution_rejected,
+                execution_partial_count=execution_partial,
             )
         )
 
@@ -294,3 +336,58 @@ def _build_run_id(*, n_entries: int, n_folds: int, sessions: Sequence[str]) -> s
 def fold_has_leakage(fold: WalkForwardFold) -> bool:
     """Utility for tests/verification: True when train/test overlap exists."""
     return bool(set(fold.train_indices).intersection(fold.test_indices))
+
+
+def _simulate_execution_adjusted_return_bps(
+    *,
+    execution_model: BacktestExecutionModel,
+    bar: BacktestBar,
+    label: int,
+    side: int,
+    spec: TripleBarrierSpec,
+    commission_bps: float,
+) -> dict[str, float | str]:
+    qty = 100
+    entry_req = ExecutionRequest(
+        side="BUY" if side == 1 else "SELL",
+        session_id=bar.session_id,
+        qty=qty,
+        reference_price=float(bar.close),
+    )
+    entry_fill = execution_model.simulate(entry_req)
+    if entry_fill.status == "REJECTED":
+        return {"status": "REJECTED", "return_bps": 0.0}
+
+    exit_qty = entry_fill.filled_qty
+    if label == 1:
+        gross_return_bps = spec.take_profit_pct * 10000.0
+    elif label == -1:
+        gross_return_bps = -spec.stop_loss_pct * 10000.0
+    else:
+        gross_return_bps = 0.0
+
+    if side == 1:
+        exit_price = float(bar.close) * (1.0 + gross_return_bps / 10000.0)
+    else:
+        exit_price = float(bar.close) * (1.0 - gross_return_bps / 10000.0)
+
+    exit_req = ExecutionRequest(
+        side="SELL" if side == 1 else "BUY",
+        session_id=bar.session_id,
+        qty=exit_qty,
+        reference_price=max(0.01, exit_price),
+    )
+    exit_fill = execution_model.simulate(exit_req)
+    if exit_fill.status == "REJECTED":
+        return {"status": "REJECTED", "return_bps": 0.0}
+
+    fill_ratio = min(entry_fill.filled_qty, exit_fill.filled_qty) / qty
+    cost_bps = (
+        float(entry_fill.slippage_bps)
+        + float(exit_fill.slippage_bps)
+        + (2.0 * float(commission_bps))
+    )
+    net_return_bps = (gross_return_bps * fill_ratio) - cost_bps
+    is_partial = entry_fill.status == "PARTIAL" or exit_fill.status == "PARTIAL"
+    status = "PARTIAL" if is_partial else "FILLED"
+    return {"status": status, "return_bps": net_return_bps}

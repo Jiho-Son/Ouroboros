@@ -73,6 +73,9 @@ def test_pipeline_happy_path_returns_fold_and_artifact_contract() -> None:
         for score in fold.baseline_scores:
             assert 0.0 <= score.accuracy <= 1.0
             assert 0.0 <= score.cost_adjusted_accuracy <= 1.0
+        assert fold.execution_adjusted_trade_count >= 0
+        assert fold.execution_rejected_count >= 0
+        assert fold.execution_partial_count >= 0
 
 
 def test_pipeline_cost_guard_fail_fast() -> None:
@@ -211,3 +214,7 @@ def test_pipeline_fold_scores_reflect_cost_and_execution_effects() -> None:
     optimistic_score = optimistic_out.folds[0].baseline_scores[1].cost_adjusted_accuracy
     conservative_score = conservative_out.folds[0].baseline_scores[1].cost_adjusted_accuracy
     assert conservative_score < optimistic_score
+
+    optimistic_avg_return = optimistic_out.folds[0].execution_adjusted_avg_return_bps
+    conservative_avg_return = conservative_out.folds[0].execution_adjusted_avg_return_bps
+    assert conservative_avg_return < optimistic_avg_return
