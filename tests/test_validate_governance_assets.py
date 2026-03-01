@@ -215,6 +215,27 @@ def test_must_contain_enforces_workflow_newline_helper_tokens(tmp_path) -> None:
     assert errors == []
 
 
+def test_must_contain_fails_when_workflow_missing_newline_helper_token(tmp_path) -> None:
+    module = _load_module()
+    workflow_doc = tmp_path / "workflow.md"
+    workflow_doc.write_text(
+        "\n".join(
+            [
+                "Session Handover Gate (Mandatory)",
+                "python3 scripts/session_handover_check.py --strict",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    errors: list[str] = []
+    module.must_contain(
+        workflow_doc,
+        ["scripts/tea_comment.sh"],
+        errors,
+    )
+    assert any("scripts/tea_comment.sh" in err for err in errors)
+
+
 def test_must_contain_enforces_commands_newline_section_tokens(tmp_path) -> None:
     module = _load_module()
     commands_doc = tmp_path / "commands.md"
@@ -241,3 +262,25 @@ def test_must_contain_enforces_commands_newline_section_tokens(tmp_path) -> None
         errors,
     )
     assert errors == []
+
+
+def test_must_contain_fails_when_commands_missing_newline_section_token(tmp_path) -> None:
+    module = _load_module()
+    commands_doc = tmp_path / "commands.md"
+    commands_doc.write_text(
+        "\n".join(
+            [
+                "Session Handover Preflight (Mandatory)",
+                "python3 scripts/session_handover_check.py --strict",
+                "scripts/tea_comment.sh",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    errors: list[str] = []
+    module.must_contain(
+        commands_doc,
+        ["Comment Newline Escaping"],
+        errors,
+    )
+    assert any("Comment Newline Escaping" in err for err in errors)
