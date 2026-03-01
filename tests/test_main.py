@@ -40,6 +40,7 @@ from src.main import (
     _run_evolution_loop,
     _should_block_overseas_buy_for_fx_buffer,
     _should_force_exit_for_overnight,
+    _split_trade_pnl_components,
     _start_dashboard_server,
     _stoploss_cooldown_minutes,
     _trigger_emergency_kill_switch,
@@ -3181,6 +3182,13 @@ async def test_sell_order_uses_broker_balance_qty_not_db() -> None:
     updated_buy = decision_logger.get_decision_by_id(buy_decision_id)
     assert updated_buy is not None
     assert updated_buy.outcome_pnl == -25.0
+    sell_row = db_conn.execute(
+        "SELECT pnl, strategy_pnl, fx_pnl FROM trades WHERE action='SELL' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert sell_row is not None
+    assert sell_row[0] == -25.0
+    assert sell_row[1] == -25.0
+    assert sell_row[2] == 0.0
 
 
 @pytest.mark.asyncio
@@ -4596,6 +4604,23 @@ def test_fx_buffer_guard_applies_only_to_us_and_respects_boundary() -> None:
     )
     assert not blocked_jp
     assert required_jp == 0.0
+
+
+def test_split_trade_pnl_components_overseas_fx_split_preserves_total() -> None:
+    market = MagicMock()
+    market.is_domestic = False
+    strategy_pnl, fx_pnl = _split_trade_pnl_components(
+        market=market,
+        trade_pnl=20.0,
+        buy_price=100.0,
+        sell_price=110.0,
+        quantity=2,
+        buy_fx_rate=1200.0,
+        sell_fx_rate=1260.0,
+    )
+    assert strategy_pnl == 10.0
+    assert fx_pnl == 10.0
+    assert strategy_pnl + fx_pnl == pytest.approx(20.0)
 
 
 # run_daily_session — daily CB baseline (daily_start_eval) tests (issue #207)

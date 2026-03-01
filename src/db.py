@@ -318,7 +318,7 @@ def get_latest_buy_trade(
     if exchange_code:
         cursor = conn.execute(
             """
-            SELECT decision_id, price, quantity
+            SELECT decision_id, price, quantity, selection_context
             FROM trades
             WHERE stock_code = ?
               AND market = ?
@@ -339,7 +339,7 @@ def get_latest_buy_trade(
     else:
         cursor = conn.execute(
             """
-            SELECT decision_id, price, quantity
+            SELECT decision_id, price, quantity, selection_context
             FROM trades
             WHERE stock_code = ?
               AND market = ?
