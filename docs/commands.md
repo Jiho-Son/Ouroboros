@@ -34,6 +34,7 @@ python3 scripts/validate_docs_sync.py
   - `broken link`: 상대경로 링크 대상 파일/앵커 누락
   - `missing core doc link reference`: `README.md`/`CLAUDE.md` 핵심 링크 누락
   - `duplicated API endpoint row`: `docs/commands.md` API endpoint 표 중복 행
+  - `missing dynamic test count guidance`: `docs/testing.md`에 `pytest --collect-only -q` 가이드 누락
 
 ### tea CLI (Gitea Command Line Tool)
 
