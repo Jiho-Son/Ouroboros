@@ -6489,6 +6489,100 @@ async def test_process_blackout_recovery_drops_intent_on_excessive_price_drift()
 
 
 @pytest.mark.asyncio
+async def test_process_blackout_recovery_drops_overseas_intent_on_excessive_price_drift() -> None:
+    """Overseas queued intent is dropped when price drift exceeds threshold."""
+    db_conn = init_db(":memory:")
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "106.0"}})
+    overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+    market.exchange_code = "NASD"
+    market.is_domestic = False
+
+    intent = MagicMock()
+    intent.market_code = "US_NASDAQ"
+    intent.stock_code = "AAPL"
+    intent.order_type = "BUY"
+    intent.quantity = 1
+    intent.price = 100.0
+    intent.source = "test"
+    intent.attempts = 0
+
+    blackout_manager = MagicMock()
+    blackout_manager.pop_recovery_batch.return_value = [intent]
+
+    with (
+        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.main.MARKETS", {"US_NASDAQ": market}),
+        patch("src.main.get_open_position", return_value=None),
+        patch("src.main.validate_order_policy") as validate_policy,
+    ):
+        await process_blackout_recovery_orders(
+            broker=broker,
+            overseas_broker=overseas_broker,
+            db_conn=db_conn,
+            settings=Settings(
+                KIS_APP_KEY="k",
+                KIS_APP_SECRET="s",
+                KIS_ACCOUNT_NO="12345678-01",
+                GEMINI_API_KEY="g",
+                BLACKOUT_RECOVERY_MAX_PRICE_DRIFT_PCT=5.0,
+            ),
+        )
+
+    overseas_broker.send_overseas_order.assert_not_called()
+    validate_policy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_blackout_recovery_requeues_intent_when_price_lookup_fails() -> None:
+    """Price lookup failure must requeue intent for a later retry."""
+    db_conn = init_db(":memory:")
+    broker = MagicMock()
+    broker.get_current_price = AsyncMock(side_effect=ConnectionError("price API down"))
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    overseas_broker = MagicMock()
+
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    intent = MagicMock()
+    intent.market_code = "KR"
+    intent.stock_code = "005930"
+    intent.order_type = "BUY"
+    intent.quantity = 1
+    intent.price = 100.0
+    intent.source = "test"
+    intent.attempts = 0
+
+    blackout_manager = MagicMock()
+    blackout_manager.pop_recovery_batch.return_value = [intent]
+
+    with (
+        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.main.MARKETS", {"KR": market}),
+        patch("src.main.get_open_position", return_value=None),
+        patch("src.main.validate_order_policy") as validate_policy,
+    ):
+        await process_blackout_recovery_orders(
+            broker=broker,
+            overseas_broker=overseas_broker,
+            db_conn=db_conn,
+        )
+
+    broker.send_order.assert_not_called()
+    validate_policy.assert_not_called()
+    blackout_manager.requeue.assert_called_once_with(intent)
+    assert intent.attempts == 1
+
+
+@pytest.mark.asyncio
 async def test_trigger_emergency_kill_switch_executes_operational_steps() -> None:
     """Emergency kill switch should execute cancel/refresh/reduce/notify callbacks."""
     broker = MagicMock()
