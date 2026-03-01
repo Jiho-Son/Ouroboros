@@ -1004,6 +1004,7 @@ async def process_blackout_recovery_orders(
     broker: KISBroker,
     overseas_broker: OverseasBroker,
     db_conn: Any,
+    settings: Settings | None = None,
 ) -> None:
     intents = BLACKOUT_ORDER_MANAGER.pop_recovery_batch()
     if not intents:
@@ -1035,6 +1036,63 @@ async def process_blackout_recovery_orders(
             continue
 
         try:
+            revalidation_enabled = bool(
+                _resolve_market_setting(
+                    market=market,
+                    settings=settings,
+                    key="BLACKOUT_RECOVERY_PRICE_REVALIDATION_ENABLED",
+                    default=True,
+                )
+            )
+            if revalidation_enabled:
+                if market.is_domestic:
+                    current_price, _, _ = await _retry_connection(
+                        broker.get_current_price,
+                        intent.stock_code,
+                        label=f"recovery_price:{market.code}:{intent.stock_code}",
+                    )
+                else:
+                    price_data = await _retry_connection(
+                        overseas_broker.get_overseas_price,
+                        market.exchange_code,
+                        intent.stock_code,
+                        label=f"recovery_price:{market.code}:{intent.stock_code}",
+                    )
+                    current_price = safe_float(price_data.get("output", {}).get("last"), 0.0)
+
+                queued_price = float(intent.price)
+                max_drift_pct = float(
+                    _resolve_market_setting(
+                        market=market,
+                        settings=settings,
+                        key="BLACKOUT_RECOVERY_MAX_PRICE_DRIFT_PCT",
+                        default=5.0,
+                    )
+                )
+                if queued_price <= 0 or current_price <= 0:
+                    logger.info(
+                        "Drop queued intent by price revalidation (invalid price): %s %s (%s) queued=%.4f current=%.4f",
+                        intent.order_type,
+                        intent.stock_code,
+                        market.code,
+                        queued_price,
+                        current_price,
+                    )
+                    continue
+                drift_pct = abs(current_price - queued_price) / queued_price * 100.0
+                if drift_pct > max_drift_pct:
+                    logger.info(
+                        "Drop queued intent by price revalidation: %s %s (%s) queued=%.4f current=%.4f drift=%.2f%% max=%.2f%%",
+                        intent.order_type,
+                        intent.stock_code,
+                        market.code,
+                        queued_price,
+                        current_price,
+                        drift_pct,
+                        max_drift_pct,
+                    )
+                    continue
+
             validate_order_policy(
                 market=market,
                 order_type=intent.order_type,
@@ -2513,6 +2571,7 @@ async def run_daily_session(
             broker=broker,
             overseas_broker=overseas_broker,
             db_conn=db_conn,
+            settings=settings,
         )
         # Use market-local date for playbook keying
         market_today = datetime.now(market.timezone).date()
@@ -4051,6 +4110,7 @@ async def run(settings: Settings) -> None:
                         broker=broker,
                         overseas_broker=overseas_broker,
                         db_conn=db_conn,
+                        settings=settings,
                     )
 
                     # Notify market open if it just opened
