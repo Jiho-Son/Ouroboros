@@ -1,9 +1,9 @@
 <!--
 Doc-ID: DOC-REQ-001
-Version: 1.0.1
+Version: 1.0.2
 Status: active
 Owner: strategy
-Updated: 2026-03-01
+Updated: 2026-03-02
 -->
 
 # 요구사항 원장 (Single Source of Truth)

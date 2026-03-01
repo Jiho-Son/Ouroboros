@@ -108,14 +108,14 @@ def test_validate_task_req_mapping_passes_when_req_present(tmp_path) -> None:
     assert errors == []
 
 
-def test_validate_pr_traceability_warns_when_req_missing(monkeypatch) -> None:
+def test_validate_pr_traceability_fails_when_req_missing(monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setenv("GOVERNANCE_PR_TITLE", "feat: update policy checker")
     monkeypatch.setenv("GOVERNANCE_PR_BODY", "Refs: TASK-OPS-001 TEST-ACC-007")
-    warnings: list[str] = []
-    module.validate_pr_traceability(warnings)
-    assert warnings
-    assert "PR text missing REQ-ID reference" in warnings
+    errors: list[str] = []
+    module.validate_pr_traceability(errors)
+    assert errors
+    assert "PR text missing REQ-ID reference" in errors
 
 
 def test_validate_read_only_approval_requires_evidence(monkeypatch) -> None:
@@ -165,7 +165,7 @@ def test_validate_read_only_approval_passes_with_complete_evidence(monkeypatch) 
     assert warnings == []
 
 
-def test_validate_read_only_approval_warns_without_pr_body(monkeypatch) -> None:
+def test_validate_read_only_approval_fails_without_pr_body(monkeypatch) -> None:
     module = _load_module()
     changed_files = ["src/core/risk_manager.py"]
     errors: list[str] = []
@@ -173,9 +173,9 @@ def test_validate_read_only_approval_warns_without_pr_body(monkeypatch) -> None:
     monkeypatch.delenv("GOVERNANCE_PR_BODY", raising=False)
 
     module.validate_read_only_approval(changed_files, errors, warnings)
-    assert errors == []
-    assert warnings
-    assert "approval evidence check skipped" in warnings[0]
+    assert warnings == []
+    assert errors
+    assert "approval evidence is required" in errors[0]
 
 
 def test_validate_read_only_approval_skips_when_no_readonly_file_changed() -> None:
@@ -284,3 +284,54 @@ def test_must_contain_fails_when_commands_missing_newline_section_token(tmp_path
         errors,
     )
     assert any("Comment Newline Escaping" in err for err in errors)
+
+
+def test_validate_task_test_pairing_reports_missing_test_reference(tmp_path) -> None:
+    module = _load_module()
+    doc = tmp_path / "work_orders.md"
+    doc.write_text(
+        "- `TASK-OPS-999` (`REQ-OPS-001`): enforce timezone labels only\n",
+        encoding="utf-8",
+    )
+    errors: list[str] = []
+    module.validate_task_test_pairing(errors, task_doc=doc)
+    assert errors
+    assert "TASK without TEST mapping" in errors[0]
+
+
+def test_validate_task_test_pairing_passes_when_test_present(tmp_path) -> None:
+    module = _load_module()
+    doc = tmp_path / "work_orders.md"
+    doc.write_text(
+        "- `TASK-OPS-999` (`REQ-OPS-001`,`TEST-ACC-007`): enforce timezone labels\n",
+        encoding="utf-8",
+    )
+    errors: list[str] = []
+    module.validate_task_test_pairing(errors, task_doc=doc)
+    assert errors == []
+
+
+def test_validate_timezone_policy_tokens_requires_kst_or_utc(tmp_path, monkeypatch) -> None:
+    module = _load_module()
+    docs = tmp_path / "docs"
+    ouroboros = docs / "ouroboros"
+    docs.mkdir(parents=True)
+    ouroboros.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    (ouroboros / "01_requirements_registry.md").write_text("REQ-OPS-001\nUTC\n", encoding="utf-8")
+    (ouroboros / "30_code_level_work_orders.md").write_text(
+        "TASK-OPS-001 (`REQ-OPS-001`,`TEST-ACC-007`)\nKST\n",
+        encoding="utf-8",
+    )
+    (docs / "workflow.md").write_text("timezone policy: KST and UTC\n", encoding="utf-8")
+
+    errors: list[str] = []
+    module.validate_timezone_policy_tokens(errors)
+    assert errors == []
+
+    (docs / "workflow.md").write_text("timezone policy missing labels\n", encoding="utf-8")
+    errors = []
+    module.validate_timezone_policy_tokens(errors)
+    assert errors
+    assert any("missing timezone policy token" in err for err in errors)
