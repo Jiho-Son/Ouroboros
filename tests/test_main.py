@@ -1836,7 +1836,10 @@ class TestScenarioEngineIntegration:
             signal="oversold", score=85.0,
         )
 
-        with patch("src.main.log_trade"):
+        with (
+            patch("src.main.log_trade"),
+            patch("src.main.get_session_info", return_value=MagicMock(session_id="KRX_REG")),
+        ):
             await trading_cycle(
                 broker=mock_broker,
                 overseas_broker=MagicMock(),
@@ -2190,6 +2193,7 @@ class TestScenarioEngineIntegration:
 
         decision_logger.log_decision.assert_called_once()
         call_kwargs = decision_logger.log_decision.call_args.kwargs
+        assert call_kwargs["session_id"] == "KRX_REG"
         assert "scenario_match" in call_kwargs["context_snapshot"]
         assert call_kwargs["context_snapshot"]["scenario_match"]["rsi"] == 45.0
 
@@ -4861,6 +4865,110 @@ async def test_run_daily_session_applies_staged_exit_override_on_hold() -> None:
 
     broker.send_order.assert_called_once()
     assert broker.send_order.call_args.kwargs["order_type"] == "SELL"
+
+
+@pytest.mark.asyncio
+async def test_run_daily_session_passes_runtime_session_id_to_decision_and_trade_logs() -> None:
+    """Daily session must explicitly forward runtime session_id to decision/trade logs."""
+    from src.analysis.smart_scanner import ScanCandidate
+
+    db_conn = init_db(":memory:")
+    settings = Settings(
+        KIS_APP_KEY="k",
+        KIS_APP_SECRET="s",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="g",
+        MODE="paper",
+    )
+
+    broker = MagicMock()
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output1": [],
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "50000",
+                    "pchs_amt_smtl_amt": "50000",
+                }
+            ],
+        }
+    )
+    broker.get_current_price = AsyncMock(return_value=(100.0, 1.0, 0.0))
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+    market.timezone = __import__("zoneinfo").ZoneInfo("Asia/Seoul")
+
+    smart_scanner = MagicMock()
+    smart_scanner.scan = AsyncMock(
+        return_value=[
+            ScanCandidate(
+                stock_code="005930",
+                name="Samsung",
+                price=100.0,
+                volume=1_000_000.0,
+                volume_ratio=2.0,
+                rsi=45.0,
+                signal="momentum",
+                score=80.0,
+            )
+        ]
+    )
+
+    playbook_store = MagicMock()
+    playbook_store.load = MagicMock(return_value=_make_playbook("KR"))
+
+    scenario_engine = MagicMock(spec=ScenarioEngine)
+    scenario_engine.evaluate = MagicMock(return_value=_make_buy_match("005930"))
+
+    risk = MagicMock()
+    risk.check_circuit_breaker = MagicMock()
+    risk.validate_order = MagicMock()
+
+    decision_logger = MagicMock()
+    decision_logger.log_decision = MagicMock(return_value="d1")
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    async def _passthrough(fn, *a, label: str = "", **kw):  # type: ignore[override]
+        return await fn(*a, **kw)
+
+    with (
+        patch("src.main.get_open_position", return_value=None),
+        patch("src.main.get_open_markets", return_value=[market]),
+        patch("src.main.get_session_info", return_value=MagicMock(session_id="KRX_REG")),
+        patch("src.main._retry_connection", new=_passthrough),
+        patch("src.main.log_trade") as mock_log_trade,
+    ):
+        await run_daily_session(
+            broker=broker,
+            overseas_broker=MagicMock(),
+            scenario_engine=scenario_engine,
+            playbook_store=playbook_store,
+            pre_market_planner=MagicMock(),
+            risk=risk,
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(),
+            criticality_assessor=MagicMock(),
+            telegram=telegram,
+            settings=settings,
+            smart_scanner=smart_scanner,
+            daily_start_eval=0.0,
+        )
+
+    decision_logger.log_decision.assert_called_once()
+    assert decision_logger.log_decision.call_args.kwargs["session_id"] == "KRX_REG"
+    assert mock_log_trade.call_count >= 1
+    for call in mock_log_trade.call_args_list:
+        assert call.kwargs.get("session_id") == "KRX_REG"
 
 
 # ---------------------------------------------------------------------------
