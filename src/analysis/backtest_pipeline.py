@@ -236,7 +236,11 @@ def _m1_pred(train_labels: Sequence[int]) -> int:
     return train_labels[-1]
 
 
-def _build_execution_model(*, cost_model: BacktestCostModel, fold_seed: int) -> BacktestExecutionModel:
+def _build_execution_model(
+    *,
+    cost_model: BacktestCostModel,
+    fold_seed: int,
+) -> BacktestExecutionModel:
     return BacktestExecutionModel(
         ExecutionAssumptions(
             slippage_bps_by_session=dict(cost_model.slippage_bps_by_session or {}),
