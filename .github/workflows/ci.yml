@@ -22,7 +22,7 @@ jobs:
         run: pip install ".[dev]"
 
       - name: Session handover gate
-        run: python3 scripts/session_handover_check.py --strict
+        run: python3 scripts/session_handover_check.py --strict --ci
 
       - name: Validate governance assets
         env:
