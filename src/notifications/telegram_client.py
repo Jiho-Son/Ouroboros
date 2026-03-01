@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar
 
@@ -136,14 +136,14 @@ class TelegramClient:
         self._enabled = enabled
         self._rate_limiter = LeakyBucket(rate=rate_limit)
         self._session: aiohttp.ClientSession | None = None
-        self._filter = notification_filter if notification_filter is not None else NotificationFilter()
+        self._filter = (
+            notification_filter if notification_filter is not None else NotificationFilter()
+        )
 
         if not enabled:
             logger.info("Telegram notifications disabled via configuration")
         elif bot_token is None or chat_id is None:
-            logger.warning(
-                "Telegram notifications disabled (missing bot_token or chat_id)"
-            )
+            logger.warning("Telegram notifications disabled (missing bot_token or chat_id)")
             self._enabled = False
         else:
             logger.info("Telegram notifications enabled for chat_id=%s", chat_id)
@@ -209,14 +209,12 @@ class TelegramClient:
             async with session.post(url, json=payload) as resp:
                 if resp.status != 200:
                     error_text = await resp.text()
-                    logger.error(
-                        "Telegram API error (status=%d): %s", resp.status, error_text
-                    )
+                    logger.error("Telegram API error (status=%d): %s", resp.status, error_text)
                     return False
                 logger.debug("Telegram message sent: %s", text[:50])
                 return True
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Telegram message timeout")
             return False
         except aiohttp.ClientError as exc:
@@ -305,9 +303,7 @@ class TelegramClient:
             NotificationMessage(priority=NotificationPriority.LOW, message=message)
         )
 
-    async def notify_circuit_breaker(
-        self, pnl_pct: float, threshold: float
-    ) -> None:
+    async def notify_circuit_breaker(self, pnl_pct: float, threshold: float) -> None:
         """
         Notify circuit breaker activation.
 
@@ -354,9 +350,7 @@ class TelegramClient:
             NotificationMessage(priority=NotificationPriority.HIGH, message=message)
         )
 
-    async def notify_system_start(
-        self, mode: str, enabled_markets: list[str]
-    ) -> None:
+    async def notify_system_start(self, mode: str, enabled_markets: list[str]) -> None:
         """
         Notify system startup.
 
@@ -369,9 +363,7 @@ class TelegramClient:
         mode_emoji = "📝" if mode == "paper" else "💰"
         markets_str = ", ".join(enabled_markets)
         message = (
-            f"<b>{mode_emoji} System Started</b>\n"
-            f"Mode: {mode.upper()}\n"
-            f"Markets: {markets_str}"
+            f"<b>{mode_emoji} System Started</b>\nMode: {mode.upper()}\nMarkets: {markets_str}"
         )
         await self._send_notification(
             NotificationMessage(priority=NotificationPriority.MEDIUM, message=message)
@@ -445,11 +437,7 @@ class TelegramClient:
         """
         if not self._filter.playbook:
             return
-        message = (
-            f"<b>Playbook Failed</b>\n"
-            f"Market: {market}\n"
-            f"Reason: {reason[:200]}"
-        )
+        message = f"<b>Playbook Failed</b>\nMarket: {market}\nReason: {reason[:200]}"
         await self._send_notification(
             NotificationMessage(priority=NotificationPriority.HIGH, message=message)
         )
@@ -469,9 +457,7 @@ class TelegramClient:
             if "circuit breaker" in reason.lower()
             else NotificationPriority.MEDIUM
         )
-        await self._send_notification(
-            NotificationMessage(priority=priority, message=message)
-        )
+        await self._send_notification(NotificationMessage(priority=priority, message=message))
 
     async def notify_unfilled_order(
         self,
@@ -496,11 +482,7 @@ class TelegramClient:
             return
         # SELL resubmit is high priority — position liquidation at risk.
         # BUY cancel is medium priority — only cash is freed.
-        priority = (
-            NotificationPriority.HIGH
-            if action == "SELL"
-            else NotificationPriority.MEDIUM
-        )
+        priority = NotificationPriority.HIGH if action == "SELL" else NotificationPriority.MEDIUM
         outcome_emoji = "🔄" if outcome == "resubmitted" else "❌"
         outcome_label = "재주문" if outcome == "resubmitted" else "취소됨"
         action_emoji = "🔴" if action == "SELL" else "🟢"
@@ -515,9 +497,7 @@ class TelegramClient:
         message = "\n".join(lines)
         await self._send_notification(NotificationMessage(priority=priority, message=message))
 
-    async def notify_error(
-        self, error_type: str, error_msg: str, context: str
-    ) -> None:
+    async def notify_error(self, error_type: str, error_msg: str, context: str) -> None:
         """
         Notify system error.
 
@@ -541,9 +521,7 @@ class TelegramClient:
 class TelegramCommandHandler:
     """Handles incoming Telegram commands via long polling."""
 
-    def __init__(
-        self, client: TelegramClient, polling_interval: float = 1.0
-    ) -> None:
+    def __init__(self, client: TelegramClient, polling_interval: float = 1.0) -> None:
         """
         Initialize command handler.
 
@@ -559,9 +537,7 @@ class TelegramCommandHandler:
         self._polling_task: asyncio.Task[None] | None = None
         self._running = False
 
-    def register_command(
-        self, command: str, handler: Callable[[], Awaitable[None]]
-    ) -> None:
+    def register_command(self, command: str, handler: Callable[[], Awaitable[None]]) -> None:
         """
         Register a command handler (no arguments).
 
@@ -672,7 +648,7 @@ class TelegramCommandHandler:
 
                 return updates
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.debug("getUpdates timeout (normal)")
             return []
         except aiohttp.ClientError as exc:
@@ -697,9 +673,7 @@ class TelegramCommandHandler:
             # Verify chat_id matches configured chat
             chat_id = str(message.get("chat", {}).get("id", ""))
             if chat_id != self._client._chat_id:
-                logger.warning(
-                    "Ignoring command from unauthorized chat_id: %s", chat_id
-                )
+                logger.warning("Ignoring command from unauthorized chat_id: %s", chat_id)
                 return
 
             # Extract command text

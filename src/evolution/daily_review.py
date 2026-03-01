@@ -60,9 +60,7 @@ class DailyReviewer:
             if isinstance(scenario_match, dict) and scenario_match:
                 matched += 1
         scenario_match_rate = (
-            round((matched / total_decisions) * 100, 2)
-            if total_decisions
-            else 0.0
+            round((matched / total_decisions) * 100, 2) if total_decisions else 0.0
         )
 
         trade_stats = self._conn.execute(

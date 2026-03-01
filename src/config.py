@@ -111,25 +111,21 @@ class Settings(BaseSettings):
 
     # Telegram notification type filters (granular control)
     # circuit_breaker is always sent regardless — safety-critical
-    TELEGRAM_NOTIFY_TRADES: bool = True           # BUY/SELL execution alerts
+    TELEGRAM_NOTIFY_TRADES: bool = True  # BUY/SELL execution alerts
     TELEGRAM_NOTIFY_MARKET_OPEN_CLOSE: bool = True  # Market open/close alerts
-    TELEGRAM_NOTIFY_FAT_FINGER: bool = True       # Fat-finger rejection alerts
-    TELEGRAM_NOTIFY_SYSTEM_EVENTS: bool = True    # System start/shutdown alerts
-    TELEGRAM_NOTIFY_PLAYBOOK: bool = True         # Playbook generated/failed alerts
-    TELEGRAM_NOTIFY_SCENARIO_MATCH: bool = True   # Scenario matched alerts (most frequent)
-    TELEGRAM_NOTIFY_ERRORS: bool = True           # Error alerts
+    TELEGRAM_NOTIFY_FAT_FINGER: bool = True  # Fat-finger rejection alerts
+    TELEGRAM_NOTIFY_SYSTEM_EVENTS: bool = True  # System start/shutdown alerts
+    TELEGRAM_NOTIFY_PLAYBOOK: bool = True  # Playbook generated/failed alerts
+    TELEGRAM_NOTIFY_SCENARIO_MATCH: bool = True  # Scenario matched alerts (most frequent)
+    TELEGRAM_NOTIFY_ERRORS: bool = True  # Error alerts
 
     # Overseas ranking API (KIS endpoint/TR_ID may vary by account/product)
     # Override these from .env if your account uses different specs.
     OVERSEAS_RANKING_ENABLED: bool = True
     OVERSEAS_RANKING_FLUCT_TR_ID: str = "HHDFS76290000"
     OVERSEAS_RANKING_VOLUME_TR_ID: str = "HHDFS76270000"
-    OVERSEAS_RANKING_FLUCT_PATH: str = (
-        "/uapi/overseas-stock/v1/ranking/updown-rate"
-    )
-    OVERSEAS_RANKING_VOLUME_PATH: str = (
-        "/uapi/overseas-stock/v1/ranking/volume-surge"
-    )
+    OVERSEAS_RANKING_FLUCT_PATH: str = "/uapi/overseas-stock/v1/ranking/updown-rate"
+    OVERSEAS_RANKING_VOLUME_PATH: str = "/uapi/overseas-stock/v1/ranking/volume-surge"
 
     # Dashboard (optional)
     DASHBOARD_ENABLED: bool = False

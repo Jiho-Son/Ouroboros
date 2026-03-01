@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -188,10 +188,7 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
                 return {
                     "market": "all",
                     "combined": combined,
-                    "by_market": [
-                        _row_to_performance(row)
-                        for row in by_market_rows
-                    ],
+                    "by_market": [_row_to_performance(row) for row in by_market_rows],
                 }
 
             row = conn.execute(
@@ -401,7 +398,7 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
                 """
             ).fetchall()
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             positions = []
             for row in rows:
                 entry_time_str = row["entry_time"]

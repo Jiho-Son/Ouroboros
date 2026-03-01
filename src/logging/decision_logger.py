@@ -140,9 +140,7 @@ class DecisionLogger:
         )
         self.conn.commit()
 
-    def update_outcome(
-        self, decision_id: str, pnl: float, accuracy: int
-    ) -> None:
+    def update_outcome(self, decision_id: str, pnl: float, accuracy: int) -> None:
         """Update the outcome of a decision after trade execution.
 
         Args:

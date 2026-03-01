@@ -36,11 +36,11 @@ _CANCEL_TR_ID_MAP: dict[str, tuple[str, str]] = {
     "NYSE": ("TTTT1004U", "VTTT1004U"),
     "AMEX": ("TTTT1004U", "VTTT1004U"),
     "SEHK": ("TTTS1003U", "VTTS1003U"),
-    "TSE":  ("TTTS0309U", "VTTS0309U"),
+    "TSE": ("TTTS0309U", "VTTS0309U"),
     "SHAA": ("TTTS0302U", "VTTS0302U"),
     "SZAA": ("TTTS0306U", "VTTS0306U"),
-    "HNX":  ("TTTS0312U", "VTTS0312U"),
-    "HSX":  ("TTTS0312U", "VTTS0312U"),
+    "HNX": ("TTTS0312U", "VTTS0312U"),
+    "HSX": ("TTTS0312U", "VTTS0312U"),
 }
 
 
@@ -56,9 +56,7 @@ class OverseasBroker:
         """
         self._broker = kis_broker
 
-    async def get_overseas_price(
-        self, exchange_code: str, stock_code: str
-    ) -> dict[str, Any]:
+    async def get_overseas_price(self, exchange_code: str, stock_code: str) -> dict[str, Any]:
         """
         Fetch overseas stock price.
 
@@ -89,14 +87,10 @@ class OverseasBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    raise ConnectionError(
-                        f"get_overseas_price failed ({resp.status}): {text}"
-                    )
+                    raise ConnectionError(f"get_overseas_price failed ({resp.status}): {text}")
                 return await resp.json()
         except (TimeoutError, aiohttp.ClientError) as exc:
-            raise ConnectionError(
-                f"Network error fetching overseas price: {exc}"
-            ) from exc
+            raise ConnectionError(f"Network error fetching overseas price: {exc}") from exc
 
     async def fetch_overseas_rankings(
         self,
@@ -154,9 +148,7 @@ class OverseasBroker:
                             ranking_type,
                         )
                         return []
-                    raise ConnectionError(
-                        f"fetch_overseas_rankings failed ({resp.status}): {text}"
-                    )
+                    raise ConnectionError(f"fetch_overseas_rankings failed ({resp.status}): {text}")
 
                 data = await resp.json()
                 rows = self._extract_ranking_rows(data)
@@ -171,9 +163,7 @@ class OverseasBroker:
                 )
                 return []
         except (TimeoutError, aiohttp.ClientError) as exc:
-            raise ConnectionError(
-                f"Network error fetching overseas rankings: {exc}"
-            ) from exc
+            raise ConnectionError(f"Network error fetching overseas rankings: {exc}") from exc
 
     async def get_overseas_balance(self, exchange_code: str) -> dict[str, Any]:
         """
@@ -193,9 +183,7 @@ class OverseasBroker:
 
         # TR_ID: 실전 TTTS3012R, 모의 VTTS3012R
         # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 잔고조회' 시트
-        balance_tr_id = (
-            "TTTS3012R" if self._broker._settings.MODE == "live" else "VTTS3012R"
-        )
+        balance_tr_id = "TTTS3012R" if self._broker._settings.MODE == "live" else "VTTS3012R"
         headers = await self._broker._auth_headers(balance_tr_id)
         params = {
             "CANO": self._broker._account_no,
@@ -205,22 +193,16 @@ class OverseasBroker:
             "CTX_AREA_FK200": "",
             "CTX_AREA_NK200": "",
         }
-        url = (
-            f"{self._broker._base_url}/uapi/overseas-stock/v1/trading/inquire-balance"
-        )
+        url = f"{self._broker._base_url}/uapi/overseas-stock/v1/trading/inquire-balance"
 
         try:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    raise ConnectionError(
-                        f"get_overseas_balance failed ({resp.status}): {text}"
-                    )
+                    raise ConnectionError(f"get_overseas_balance failed ({resp.status}): {text}")
                 return await resp.json()
         except (TimeoutError, aiohttp.ClientError) as exc:
-            raise ConnectionError(
-                f"Network error fetching overseas balance: {exc}"
-            ) from exc
+            raise ConnectionError(f"Network error fetching overseas balance: {exc}") from exc
 
     async def get_overseas_buying_power(
         self,
@@ -247,9 +229,7 @@ class OverseasBroker:
 
         # TR_ID: 실전 TTTS3007R, 모의 VTTS3007R
         # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 매수가능금액조회' 시트
-        ps_tr_id = (
-            "TTTS3007R" if self._broker._settings.MODE == "live" else "VTTS3007R"
-        )
+        ps_tr_id = "TTTS3007R" if self._broker._settings.MODE == "live" else "VTTS3007R"
         headers = await self._broker._auth_headers(ps_tr_id)
         params = {
             "CANO": self._broker._account_no,
@@ -258,9 +238,7 @@ class OverseasBroker:
             "OVRS_ORD_UNPR": f"{price:.2f}",
             "ITEM_CD": stock_code,
         }
-        url = (
-            f"{self._broker._base_url}/uapi/overseas-stock/v1/trading/inquire-psamount"
-        )
+        url = f"{self._broker._base_url}/uapi/overseas-stock/v1/trading/inquire-psamount"
 
         try:
             async with session.get(url, headers=headers, params=params) as resp:
@@ -271,9 +249,7 @@ class OverseasBroker:
                     )
                 return await resp.json()
         except (TimeoutError, aiohttp.ClientError) as exc:
-            raise ConnectionError(
-                f"Network error fetching overseas buying power: {exc}"
-            ) from exc
+            raise ConnectionError(f"Network error fetching overseas buying power: {exc}") from exc
 
     async def send_overseas_order(
         self,
@@ -330,9 +306,7 @@ class OverseasBroker:
             async with session.post(url, headers=headers, json=body) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    raise ConnectionError(
-                        f"send_overseas_order failed ({resp.status}): {text}"
-                    )
+                    raise ConnectionError(f"send_overseas_order failed ({resp.status}): {text}")
                 data = await resp.json()
                 rt_cd = data.get("rt_cd", "")
                 msg1 = data.get("msg1", "")
@@ -357,13 +331,9 @@ class OverseasBroker:
                     )
                 return data
         except (TimeoutError, aiohttp.ClientError) as exc:
-            raise ConnectionError(
-                f"Network error sending overseas order: {exc}"
-            ) from exc
+            raise ConnectionError(f"Network error sending overseas order: {exc}") from exc
 
-    async def get_overseas_pending_orders(
-        self, exchange_code: str
-    ) -> list[dict[str, Any]]:
+    async def get_overseas_pending_orders(self, exchange_code: str) -> list[dict[str, Any]]:
         """Fetch unfilled (pending) overseas orders for a given exchange.
 
         Args:
@@ -379,9 +349,7 @@ class OverseasBroker:
             ConnectionError: On network or API errors (live mode only).
         """
         if self._broker._settings.MODE != "live":
-            logger.debug(
-                "Pending orders API (TTTS3018R) not supported in paper mode; returning []"
-            )
+            logger.debug("Pending orders API (TTTS3018R) not supported in paper mode; returning []")
             return []
 
         await self._broker._rate_limiter.acquire()
@@ -398,9 +366,7 @@ class OverseasBroker:
             "CTX_AREA_FK200": "",
             "CTX_AREA_NK200": "",
         }
-        url = (
-            f"{self._broker._base_url}/uapi/overseas-stock/v1/trading/inquire-nccs"
-        )
+        url = f"{self._broker._base_url}/uapi/overseas-stock/v1/trading/inquire-nccs"
 
         try:
             async with session.get(url, headers=headers, params=params) as resp:
@@ -415,9 +381,7 @@ class OverseasBroker:
                     return output
                 return []
         except (TimeoutError, aiohttp.ClientError) as exc:
-            raise ConnectionError(
-                f"Network error fetching pending orders: {exc}"
-            ) from exc
+            raise ConnectionError(f"Network error fetching pending orders: {exc}") from exc
 
     async def cancel_overseas_order(
         self,
@@ -469,22 +433,16 @@ class OverseasBroker:
         headers = await self._broker._auth_headers(tr_id)
         headers["hashkey"] = hash_key
 
-        url = (
-            f"{self._broker._base_url}/uapi/overseas-stock/v1/trading/order-rvsecncl"
-        )
+        url = f"{self._broker._base_url}/uapi/overseas-stock/v1/trading/order-rvsecncl"
 
         try:
             async with session.post(url, headers=headers, json=body) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    raise ConnectionError(
-                        f"cancel_overseas_order failed ({resp.status}): {text}"
-                    )
+                    raise ConnectionError(f"cancel_overseas_order failed ({resp.status}): {text}")
                 return await resp.json()
         except (TimeoutError, aiohttp.ClientError) as exc:
-            raise ConnectionError(
-                f"Network error cancelling overseas order: {exc}"
-            ) from exc
+            raise ConnectionError(f"Network error cancelling overseas order: {exc}") from exc
 
     def _get_currency_code(self, exchange_code: str) -> str:
         """

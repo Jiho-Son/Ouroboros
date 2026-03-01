@@ -6,10 +6,10 @@ State progression is monotonic (promotion-only) except terminal EXITED.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class PositionState(str, Enum):
+class PositionState(StrEnum):
     HOLDING = "HOLDING"
     BE_LOCK = "BE_LOCK"
     ARMED = "ARMED"
@@ -40,12 +40,7 @@ def evaluate_exit_first(inp: StateTransitionInput) -> bool:
 
     EXITED must be evaluated before any promotion.
     """
-    return (
-        inp.hard_stop_hit
-        or inp.trailing_stop_hit
-        or inp.model_exit_signal
-        or inp.be_lock_threat
-    )
+    return inp.hard_stop_hit or inp.trailing_stop_hit or inp.model_exit_signal or inp.be_lock_threat
 
 
 def promote_state(current: PositionState, inp: StateTransitionInput) -> PositionState:

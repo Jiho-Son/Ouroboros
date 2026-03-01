@@ -13,8 +13,8 @@ import hashlib
 import json
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from src.brain.gemini_client import TradeDecision
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 class CacheEntry:
     """Cached decision with metadata."""
 
-    decision: "TradeDecision"
+    decision: TradeDecision
     cached_at: float  # Unix timestamp
     hit_count: int = 0
     market_data_hash: str = ""
@@ -239,9 +239,7 @@ class DecisionCache:
         """
         current_time = time.time()
         expired_keys = [
-            k
-            for k, v in self._cache.items()
-            if current_time - v.cached_at > self.ttl_seconds
+            k for k, v in self._cache.items() if current_time - v.cached_at > self.ttl_seconds
         ]
 
         count = len(expired_keys)

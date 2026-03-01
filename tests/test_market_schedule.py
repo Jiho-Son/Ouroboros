@@ -173,9 +173,7 @@ class TestGetNextMarketOpen:
         """Should find next Monday opening when called on weekend."""
         # Saturday 2026-02-07 12:00 UTC
         test_time = datetime(2026, 2, 7, 12, 0, tzinfo=ZoneInfo("UTC"))
-        market, open_time = get_next_market_open(
-            enabled_markets=["KR"], now=test_time
-        )
+        market, open_time = get_next_market_open(enabled_markets=["KR"], now=test_time)
         assert market.code == "KR"
         # Monday 2026-02-09 09:00 KST
         expected = datetime(2026, 2, 9, 9, 0, tzinfo=ZoneInfo("Asia/Seoul"))
@@ -185,9 +183,7 @@ class TestGetNextMarketOpen:
         """Should find next day opening when called after market close."""
         # Monday 2026-02-02 16:00 KST (after close)
         test_time = datetime(2026, 2, 2, 16, 0, tzinfo=ZoneInfo("Asia/Seoul"))
-        market, open_time = get_next_market_open(
-            enabled_markets=["KR"], now=test_time
-        )
+        market, open_time = get_next_market_open(enabled_markets=["KR"], now=test_time)
         assert market.code == "KR"
         # Tuesday 2026-02-03 09:00 KST
         expected = datetime(2026, 2, 3, 9, 0, tzinfo=ZoneInfo("Asia/Seoul"))
@@ -197,9 +193,7 @@ class TestGetNextMarketOpen:
         """Should find earliest opening market among multiple."""
         # Saturday 2026-02-07 12:00 UTC
         test_time = datetime(2026, 2, 7, 12, 0, tzinfo=ZoneInfo("UTC"))
-        market, open_time = get_next_market_open(
-            enabled_markets=["KR", "US_NASDAQ"], now=test_time
-        )
+        market, open_time = get_next_market_open(enabled_markets=["KR", "US_NASDAQ"], now=test_time)
         # Monday 2026-02-09: KR opens at 09:00 KST = 00:00 UTC
         # Monday 2026-02-09: US opens at 09:30 EST = 14:30 UTC
         # KR opens first
@@ -214,9 +208,7 @@ class TestGetNextMarketOpen:
     def test_get_next_market_open_invalid_market(self) -> None:
         """Should skip invalid market codes."""
         test_time = datetime(2026, 2, 7, 12, 0, tzinfo=ZoneInfo("UTC"))
-        market, _ = get_next_market_open(
-            enabled_markets=["INVALID", "KR"], now=test_time
-        )
+        market, _ = get_next_market_open(enabled_markets=["INVALID", "KR"], now=test_time)
         assert market.code == "KR"
 
     def test_get_next_market_open_prefers_extended_session(self) -> None:

@@ -11,14 +11,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from src.context.layer import ContextLayer
 from src.context.store import ContextStore
 
 
-class DecisionType(str, Enum):
+class DecisionType(StrEnum):
     """Type of trading decision being made."""
 
     NORMAL = "normal"  # Regular trade decision
@@ -183,9 +183,7 @@ class ContextSelector:
             ContextLayer.L1_LEGACY,
         ]
 
-        scores = {
-            layer: self.score_layer_relevance(layer, decision_type) for layer in all_layers
-        }
+        scores = {layer: self.score_layer_relevance(layer, decision_type) for layer in all_layers}
 
         # Filter by minimum score
         selected_layers = [layer for layer, score in scores.items() if score >= min_score]

@@ -92,9 +92,7 @@ class VolatilityAnalyzer:
         recent_tr = true_ranges[-period:]
         return sum(recent_tr) / len(recent_tr)
 
-    def calculate_price_change(
-        self, current_price: float, past_price: float
-    ) -> float:
+    def calculate_price_change(self, current_price: float, past_price: float) -> float:
         """Calculate price change percentage.
 
         Args:
@@ -108,9 +106,7 @@ class VolatilityAnalyzer:
             return 0.0
         return ((current_price - past_price) / past_price) * 100
 
-    def calculate_volume_surge(
-        self, current_volume: float, avg_volume: float
-    ) -> float:
+    def calculate_volume_surge(self, current_volume: float, avg_volume: float) -> float:
         """Calculate volume surge ratio.
 
         Args:
@@ -240,11 +236,7 @@ class VolatilityAnalyzer:
             Momentum score (0-100)
         """
         # Weight recent changes more heavily
-        weighted_change = (
-            price_change_1m * 0.4 +
-            price_change_5m * 0.3 +
-            price_change_15m * 0.2
-        )
+        weighted_change = price_change_1m * 0.4 + price_change_5m * 0.3 + price_change_15m * 0.2
 
         # Volume contribution (normalized to 0-10 scale)
         volume_contribution = min(10.0, (volume_surge - 1.0) * 5.0)
@@ -301,17 +293,11 @@ class VolatilityAnalyzer:
 
         if len(close_prices) > 0:
             if len(close_prices) >= 1:
-                price_change_1m = self.calculate_price_change(
-                    current_price, close_prices[-1]
-                )
+                price_change_1m = self.calculate_price_change(current_price, close_prices[-1])
             if len(close_prices) >= 5:
-                price_change_5m = self.calculate_price_change(
-                    current_price, close_prices[-5]
-                )
+                price_change_5m = self.calculate_price_change(current_price, close_prices[-5])
             if len(close_prices) >= 15:
-                price_change_15m = self.calculate_price_change(
-                    current_price, close_prices[-15]
-                )
+                price_change_15m = self.calculate_price_change(current_price, close_prices[-15])
 
         # Calculate volume surge
         avg_volume = sum(volumes) / len(volumes) if volumes else current_volume

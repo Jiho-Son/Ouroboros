@@ -25,12 +25,12 @@ from typing import Any
 
 from google import genai
 
-from src.config import Settings
-from src.data.news_api import NewsAPI, NewsSentiment
-from src.data.economic_calendar import EconomicCalendar
-from src.data.market_data import MarketData
 from src.brain.cache import DecisionCache
 from src.brain.prompt_optimizer import PromptOptimizer
+from src.config import Settings
+from src.data.economic_calendar import EconomicCalendar
+from src.data.market_data import MarketData
+from src.data.news_api import NewsAPI, NewsSentiment
 
 logger = logging.getLogger(__name__)
 
@@ -159,16 +159,12 @@ class GeminiClient:
             return ""
 
         # Check for upcoming high-impact events
-        upcoming = self._economic_calendar.get_upcoming_events(
-            days_ahead=7, min_impact="HIGH"
-        )
+        upcoming = self._economic_calendar.get_upcoming_events(days_ahead=7, min_impact="HIGH")
 
         if upcoming.high_impact_count == 0:
             return ""
 
-        lines = [
-            f"Upcoming High-Impact Events: {upcoming.high_impact_count} in next 7 days"
-        ]
+        lines = [f"Upcoming High-Impact Events: {upcoming.high_impact_count} in next 7 days"]
 
         if upcoming.next_major_event is not None:
             event = upcoming.next_major_event
@@ -180,9 +176,7 @@ class GeminiClient:
         # Check for earnings
         earnings_date = self._economic_calendar.get_earnings_date(stock_code)
         if earnings_date is not None:
-            lines.append(
-                f"  Earnings: {stock_code} on {earnings_date.strftime('%Y-%m-%d')}"
-            )
+            lines.append(f"  Earnings: {stock_code} on {earnings_date.strftime('%Y-%m-%d')}")
 
         return "\n".join(lines)
 
@@ -235,9 +229,7 @@ class GeminiClient:
 
         # Add foreigner net if non-zero
         if market_data.get("foreigner_net", 0) != 0:
-            market_info_lines.append(
-                f"Foreigner Net Buy/Sell: {market_data['foreigner_net']}"
-            )
+            market_info_lines.append(f"Foreigner Net Buy/Sell: {market_data['foreigner_net']}")
 
         market_info = "\n".join(market_info_lines)
 
@@ -249,8 +241,7 @@ class GeminiClient:
             market_info += f"\n\n{external_context}"
 
         json_format = (
-            '{"action": "BUY"|"SELL"|"HOLD", '
-            '"confidence": <int 0-100>, "rationale": "<string>"}'
+            '{"action": "BUY"|"SELL"|"HOLD", "confidence": <int 0-100>, "rationale": "<string>"}'
         )
         return (
             f"You are a professional {market_name} trading analyst.\n"
@@ -289,15 +280,12 @@ class GeminiClient:
 
         # Add foreigner net if non-zero
         if market_data.get("foreigner_net", 0) != 0:
-            market_info_lines.append(
-                f"Foreigner Net Buy/Sell: {market_data['foreigner_net']}"
-            )
+            market_info_lines.append(f"Foreigner Net Buy/Sell: {market_data['foreigner_net']}")
 
         market_info = "\n".join(market_info_lines)
 
         json_format = (
-            '{"action": "BUY"|"SELL"|"HOLD", '
-            '"confidence": <int 0-100>, "rationale": "<string>"}'
+            '{"action": "BUY"|"SELL"|"HOLD", "confidence": <int 0-100>, "rationale": "<string>"}'
         )
         return (
             f"You are a professional {market_name} trading analyst.\n"
@@ -339,25 +327,19 @@ class GeminiClient:
             data = json.loads(cleaned)
         except json.JSONDecodeError:
             logger.warning("Malformed JSON from Gemini — defaulting to HOLD")
-            return TradeDecision(
-                action="HOLD", confidence=0, rationale="Malformed JSON response"
-            )
+            return TradeDecision(action="HOLD", confidence=0, rationale="Malformed JSON response")
 
         # Validate required fields
         if not all(k in data for k in ("action", "confidence", "rationale")):
             logger.warning("Missing fields in Gemini response — defaulting to HOLD")
             # Preserve raw text in rationale so prompt_override callers (e.g. pre_market_planner)
             # can extract their own JSON format from decision.rationale (#245)
-            return TradeDecision(
-                action="HOLD", confidence=0, rationale=raw
-            )
+            return TradeDecision(action="HOLD", confidence=0, rationale=raw)
 
         action = str(data["action"]).upper()
         if action not in VALID_ACTIONS:
             logger.warning("Invalid action '%s' from Gemini — defaulting to HOLD", action)
-            return TradeDecision(
-                action="HOLD", confidence=0, rationale=f"Invalid action: {action}"
-            )
+            return TradeDecision(action="HOLD", confidence=0, rationale=f"Invalid action: {action}")
 
         confidence = int(data["confidence"])
         rationale = str(data["rationale"])
@@ -445,9 +427,7 @@ class GeminiClient:
         # not a parsed TradeDecision. Skip parse_response to avoid spurious
         # "Missing fields" warnings and return the raw response directly. (#247)
         if "prompt_override" in market_data:
-            logger.info(
-                "Gemini raw response received (prompt_override, tokens=%d)", token_count
-            )
+            logger.info("Gemini raw response received (prompt_override, tokens=%d)", token_count)
             # Not a trade decision — don't inflate _total_decisions metrics
             return TradeDecision(
                 action="HOLD", confidence=0, rationale=raw, token_count=token_count
@@ -546,9 +526,7 @@ class GeminiClient:
     # Batch Decision Making (for daily trading mode)
     # ------------------------------------------------------------------
 
-    async def decide_batch(
-        self, stocks_data: list[dict[str, Any]]
-    ) -> dict[str, TradeDecision]:
+    async def decide_batch(self, stocks_data: list[dict[str, Any]]) -> dict[str, TradeDecision]:
         """Make decisions for multiple stocks in a single API call.
 
         This is designed for daily trading mode to minimize API usage

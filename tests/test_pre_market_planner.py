@@ -78,9 +78,7 @@ def _gemini_response_json(
                 "rationale": "Near circuit breaker",
             }
         ]
-    return json.dumps(
-        {"market_outlook": outlook, "global_rules": global_rules, "stocks": stocks}
-    )
+    return json.dumps({"market_outlook": outlook, "global_rules": global_rules, "stocks": stocks})
 
 
 def _make_planner(
@@ -564,8 +562,12 @@ class TestBuildPrompt:
     def test_prompt_contains_cross_market(self) -> None:
         planner = _make_planner()
         cross = CrossMarketContext(
-            market="US", date="2026-02-07", total_pnl=1.5,
-            win_rate=60, index_change_pct=0.8, lessons=["Cut losses early"],
+            market="US",
+            date="2026-02-07",
+            total_pnl=1.5,
+            win_rate=60,
+            index_change_pct=0.8,
+            lessons=["Cut losses early"],
         )
 
         prompt = planner._build_prompt("KR", [_candidate()], {}, None, cross)
@@ -683,9 +685,7 @@ class TestSmartFallbackPlaybook:
         )
 
     def test_momentum_candidate_gets_buy_on_volume(self) -> None:
-        candidates = [
-            _candidate(code="CHOW", signal="momentum", volume_ratio=13.64, rsi=100.0)
-        ]
+        candidates = [_candidate(code="CHOW", signal="momentum", volume_ratio=13.64, rsi=100.0)]
         settings = self._make_settings()
 
         pb = PreMarketPlanner._smart_fallback_playbook(
@@ -707,9 +707,7 @@ class TestSmartFallbackPlaybook:
         assert sell_sc.condition.price_change_pct_below == -3.0
 
     def test_oversold_candidate_gets_buy_on_rsi(self) -> None:
-        candidates = [
-            _candidate(code="005930", signal="oversold", rsi=22.0, volume_ratio=3.5)
-        ]
+        candidates = [_candidate(code="005930", signal="oversold", rsi=22.0, volume_ratio=3.5)]
         settings = self._make_settings()
 
         pb = PreMarketPlanner._smart_fallback_playbook(
@@ -776,9 +774,7 @@ class TestSmartFallbackPlaybook:
     def test_empty_candidates_returns_empty_playbook(self) -> None:
         settings = self._make_settings()
 
-        pb = PreMarketPlanner._smart_fallback_playbook(
-            date(2026, 2, 17), "US_AMEX", [], settings
-        )
+        pb = PreMarketPlanner._smart_fallback_playbook(date(2026, 2, 17), "US_AMEX", [], settings)
 
         assert pb.stock_count == 0
 
@@ -814,19 +810,14 @@ class TestSmartFallbackPlaybook:
         planner = _make_planner()
         planner._gemini.decide = AsyncMock(side_effect=ConnectionError("429 quota exceeded"))
         # momentum candidate
-        candidates = [
-            _candidate(code="CHOW", signal="momentum", volume_ratio=13.64, rsi=100.0)
-        ]
+        candidates = [_candidate(code="CHOW", signal="momentum", volume_ratio=13.64, rsi=100.0)]
 
-        pb = await planner.generate_playbook(
-            "US_AMEX", candidates, today=date(2026, 2, 18)
-        )
+        pb = await planner.generate_playbook("US_AMEX", candidates, today=date(2026, 2, 18))
 
         # Should NOT be all-SELL defensive; should have BUY for momentum
         assert pb.stock_count == 1
         buy_scenarios = [
-            s for s in pb.stock_playbooks[0].scenarios
-            if s.action == ScenarioAction.BUY
+            s for s in pb.stock_playbooks[0].scenarios if s.action == ScenarioAction.BUY
         ]
         assert len(buy_scenarios) == 1
         assert buy_scenarios[0].condition.volume_ratio_above == 2.0  # VOL_MULTIPLIER default

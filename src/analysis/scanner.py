@@ -104,6 +104,7 @@ class MarketScanner:
 
             # Store in L7 real-time layer
             from datetime import UTC, datetime
+
             timeframe = datetime.now(UTC).isoformat()
             self.context_store.set_context(
                 ContextLayer.L7_REALTIME,
@@ -158,12 +159,8 @@ class MarketScanner:
         top_movers = valid_metrics[: self.top_n]
 
         # Detect breakouts and breakdowns
-        breakouts = [
-            m.stock_code for m in valid_metrics if self.analyzer.is_breakout(m)
-        ]
-        breakdowns = [
-            m.stock_code for m in valid_metrics if self.analyzer.is_breakdown(m)
-        ]
+        breakouts = [m.stock_code for m in valid_metrics if self.analyzer.is_breakout(m)]
+        breakdowns = [m.stock_code for m in valid_metrics if self.analyzer.is_breakdown(m)]
 
         logger.info(
             "%s scan complete: %d scanned, top momentum=%.1f, %d breakouts, %d breakdowns",
@@ -228,10 +225,9 @@ class MarketScanner:
 
         # If we removed too many, backfill from current watchlist
         if len(updated) < len(current_watchlist):
-            backfill = [
-                code for code in current_watchlist
-                if code not in updated
-            ][: len(current_watchlist) - len(updated)]
+            backfill = [code for code in current_watchlist if code not in updated][
+                : len(current_watchlist) - len(updated)
+            ]
             updated.extend(backfill)
 
         logger.info(

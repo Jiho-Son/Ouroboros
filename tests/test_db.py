@@ -1,7 +1,7 @@
 """Tests for database helper functions."""
 
-import tempfile
 import os
+import tempfile
 
 from src.db import get_latest_buy_trade, get_open_position, init_db, log_trade
 
@@ -204,7 +204,8 @@ def test_mode_migration_adds_column_to_existing_db() -> None:
         assert "strategy_pnl" in columns
         assert "fx_pnl" in columns
         migrated = conn.execute(
-            "SELECT pnl, strategy_pnl, fx_pnl, session_id FROM trades WHERE stock_code='AAPL' LIMIT 1"
+            "SELECT pnl, strategy_pnl, fx_pnl, session_id "
+            "FROM trades WHERE stock_code='AAPL' LIMIT 1"
         ).fetchone()
         assert migrated is not None
         assert migrated[0] == 123.45
@@ -407,9 +408,7 @@ def test_decision_logs_session_id_migration_backfills_unknown() -> None:
         conn = init_db(db_path)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(decision_logs)").fetchall()}
         assert "session_id" in columns
-        row = conn.execute(
-            "SELECT session_id FROM decision_logs WHERE decision_id='d1'"
-        ).fetchone()
+        row = conn.execute("SELECT session_id FROM decision_logs WHERE decision_id='d1'").fetchone()
         assert row is not None
         assert row[0] == "UNKNOWN"
         conn.close()

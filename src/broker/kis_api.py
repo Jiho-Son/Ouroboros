@@ -58,7 +58,7 @@ class LeakyBucket:
 
     def __init__(self, rate: float) -> None:
         """Args:
-            rate: Maximum requests per second.
+        rate: Maximum requests per second.
         """
         self._rate = rate
         self._interval = 1.0 / rate
@@ -103,7 +103,8 @@ class KISBroker:
                 ssl_ctx.verify_mode = ssl.CERT_NONE
                 connector = aiohttp.TCPConnector(ssl=ssl_ctx)
             self._session = aiohttp.ClientSession(
-                timeout=timeout, connector=connector,
+                timeout=timeout,
+                connector=connector,
             )
         return self._session
 
@@ -224,16 +225,12 @@ class KISBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    raise ConnectionError(
-                        f"get_orderbook failed ({resp.status}): {text}"
-                    )
+                    raise ConnectionError(f"get_orderbook failed ({resp.status}): {text}")
                 return await resp.json()
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching orderbook: {exc}") from exc
 
-    async def get_current_price(
-        self, stock_code: str
-    ) -> tuple[float, float, float]:
+    async def get_current_price(self, stock_code: str) -> tuple[float, float, float]:
         """Fetch current price data for a domestic stock.
 
         Uses the ``inquire-price`` API (FHKST01010100), which works in both
@@ -265,9 +262,7 @@ class KISBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    raise ConnectionError(
-                        f"get_current_price failed ({resp.status}): {text}"
-                    )
+                    raise ConnectionError(f"get_current_price failed ({resp.status}): {text}")
                 data = await resp.json()
                 out = data.get("output", {})
                 return (
@@ -276,9 +271,7 @@ class KISBroker:
                     _f(out.get("frgn_ntby_qty")),
                 )
         except (TimeoutError, aiohttp.ClientError) as exc:
-            raise ConnectionError(
-                f"Network error fetching current price: {exc}"
-            ) from exc
+            raise ConnectionError(f"Network error fetching current price: {exc}") from exc
 
     async def get_balance(self) -> dict[str, Any]:
         """Fetch current account balance and holdings."""
@@ -308,9 +301,7 @@ class KISBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    raise ConnectionError(
-                        f"get_balance failed ({resp.status}): {text}"
-                    )
+                    raise ConnectionError(f"get_balance failed ({resp.status}): {text}")
                 return await resp.json()
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching balance: {exc}") from exc
@@ -369,9 +360,7 @@ class KISBroker:
             async with session.post(url, headers=headers, json=body) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    raise ConnectionError(
-                        f"send_order failed ({resp.status}): {text}"
-                    )
+                    raise ConnectionError(f"send_order failed ({resp.status}): {text}")
                 data = await resp.json()
                 logger.info(
                     "Order submitted",
@@ -449,9 +438,7 @@ class KISBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    raise ConnectionError(
-                        f"fetch_market_rankings failed ({resp.status}): {text}"
-                    )
+                    raise ConnectionError(f"fetch_market_rankings failed ({resp.status}): {text}")
                 data = await resp.json()
 
             # Parse response - output is a list of ranked stocks
@@ -465,14 +452,16 @@ class KISBroker:
 
             rankings = []
             for item in data.get("output", [])[:limit]:
-                rankings.append({
-                    "stock_code": item.get("stck_shrn_iscd") or item.get("mksc_shrn_iscd", ""),
-                    "name": item.get("hts_kor_isnm", ""),
-                    "price": _safe_float(item.get("stck_prpr", "0")),
-                    "volume": _safe_float(item.get("acml_vol", "0")),
-                    "change_rate": _safe_float(item.get("prdy_ctrt", "0")),
-                    "volume_increase_rate": _safe_float(item.get("vol_inrt", "0")),
-                })
+                rankings.append(
+                    {
+                        "stock_code": item.get("stck_shrn_iscd") or item.get("mksc_shrn_iscd", ""),
+                        "name": item.get("hts_kor_isnm", ""),
+                        "price": _safe_float(item.get("stck_prpr", "0")),
+                        "volume": _safe_float(item.get("acml_vol", "0")),
+                        "change_rate": _safe_float(item.get("prdy_ctrt", "0")),
+                        "volume_increase_rate": _safe_float(item.get("vol_inrt", "0")),
+                    }
+                )
             return rankings
 
         except (TimeoutError, aiohttp.ClientError) as exc:
@@ -522,9 +511,7 @@ class KISBroker:
                 data = await resp.json()
                 return data.get("output", []) or []
         except (TimeoutError, aiohttp.ClientError) as exc:
-            raise ConnectionError(
-                f"Network error fetching domestic pending orders: {exc}"
-            ) from exc
+            raise ConnectionError(f"Network error fetching domestic pending orders: {exc}") from exc
 
     async def cancel_domestic_order(
         self,
@@ -575,14 +562,10 @@ class KISBroker:
             async with session.post(url, headers=headers, json=body) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    raise ConnectionError(
-                        f"cancel_domestic_order failed ({resp.status}): {text}"
-                    )
+                    raise ConnectionError(f"cancel_domestic_order failed ({resp.status}): {text}")
                 return cast(dict[str, Any], await resp.json())
         except (TimeoutError, aiohttp.ClientError) as exc:
-            raise ConnectionError(
-                f"Network error cancelling domestic order: {exc}"
-            ) from exc
+            raise ConnectionError(f"Network error cancelling domestic order: {exc}") from exc
 
     async def get_daily_prices(
         self,
@@ -609,6 +592,7 @@ class KISBroker:
 
         # Calculate date range (today and N days ago)
         from datetime import datetime, timedelta
+
         end_date = datetime.now().strftime("%Y%m%d")
         start_date = (datetime.now() - timedelta(days=days + 10)).strftime("%Y%m%d")
 
@@ -627,9 +611,7 @@ class KISBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
-                    raise ConnectionError(
-                        f"get_daily_prices failed ({resp.status}): {text}"
-                    )
+                    raise ConnectionError(f"get_daily_prices failed ({resp.status}): {text}")
                 data = await resp.json()
 
             # Parse response
@@ -643,14 +625,16 @@ class KISBroker:
 
             prices = []
             for item in data.get("output2", []):
-                prices.append({
-                    "date": item.get("stck_bsop_date", ""),
-                    "open": _safe_float(item.get("stck_oprc", "0")),
-                    "high": _safe_float(item.get("stck_hgpr", "0")),
-                    "low": _safe_float(item.get("stck_lwpr", "0")),
-                    "close": _safe_float(item.get("stck_clpr", "0")),
-                    "volume": _safe_float(item.get("acml_vol", "0")),
-                })
+                prices.append(
+                    {
+                        "date": item.get("stck_bsop_date", ""),
+                        "open": _safe_float(item.get("stck_oprc", "0")),
+                        "high": _safe_float(item.get("stck_hgpr", "0")),
+                        "low": _safe_float(item.get("stck_lwpr", "0")),
+                        "close": _safe_float(item.get("stck_clpr", "0")),
+                        "volume": _safe_float(item.get("acml_vol", "0")),
+                    }
+                )
 
             # Sort oldest to newest (KIS returns newest first)
             prices.reverse()

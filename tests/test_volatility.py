@@ -80,9 +80,7 @@ class TestVolatilityAnalyzer:
         # ATR should be roughly the average true range
         assert 3.0 <= atr <= 6.0
 
-    def test_calculate_atr_insufficient_data(
-        self, volatility_analyzer: VolatilityAnalyzer
-    ) -> None:
+    def test_calculate_atr_insufficient_data(self, volatility_analyzer: VolatilityAnalyzer) -> None:
         """Test ATR with insufficient data returns 0."""
         high_prices = [110.0, 112.0]
         low_prices = [105.0, 107.0]
@@ -120,17 +118,13 @@ class TestVolatilityAnalyzer:
         surge = volatility_analyzer.calculate_volume_surge(1000.0, 0.0)
         assert surge == 1.0
 
-    def test_calculate_pv_divergence_bullish(
-        self, volatility_analyzer: VolatilityAnalyzer
-    ) -> None:
+    def test_calculate_pv_divergence_bullish(self, volatility_analyzer: VolatilityAnalyzer) -> None:
         """Test bullish price-volume divergence."""
         # Price up + Volume up = bullish
         divergence = volatility_analyzer.calculate_pv_divergence(5.0, 2.0)
         assert divergence > 0.0
 
-    def test_calculate_pv_divergence_bearish(
-        self, volatility_analyzer: VolatilityAnalyzer
-    ) -> None:
+    def test_calculate_pv_divergence_bearish(self, volatility_analyzer: VolatilityAnalyzer) -> None:
         """Test bearish price-volume divergence."""
         # Price up + Volume down = bearish divergence
         divergence = volatility_analyzer.calculate_pv_divergence(5.0, 0.5)
@@ -144,9 +138,7 @@ class TestVolatilityAnalyzer:
         divergence = volatility_analyzer.calculate_pv_divergence(-5.0, 2.0)
         assert divergence < 0.0
 
-    def test_calculate_momentum_score(
-        self, volatility_analyzer: VolatilityAnalyzer
-    ) -> None:
+    def test_calculate_momentum_score(self, volatility_analyzer: VolatilityAnalyzer) -> None:
         """Test momentum score calculation."""
         score = volatility_analyzer.calculate_momentum_score(
             price_change_1m=5.0,
@@ -500,9 +492,7 @@ class TestMarketScanner:
         # Should keep all current stocks since they're all in top movers
         assert set(updated) == set(current_watchlist)
 
-    def test_get_updated_watchlist_max_replacements(
-        self, scanner: MarketScanner
-    ) -> None:
+    def test_get_updated_watchlist_max_replacements(self, scanner: MarketScanner) -> None:
         """Test that max_replacements limit is respected."""
         current_watchlist = ["000660", "035420", "005490"]
 
@@ -555,8 +545,6 @@ class TestMarketScanner:
         # Track peak concurrency
         active_count = 0
         peak_count = 0
-
-        original_scan = scanner.scan_stock
 
         async def tracking_scan(code: str, market: Any) -> VolatilityMetrics:
             nonlocal active_count, peak_count

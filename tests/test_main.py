@@ -4,45 +4,45 @@ from datetime import UTC, date, datetime
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
-import src.main as main_module
 
+import src.main as main_module
 from src.config import Settings
 from src.context.layer import ContextLayer
 from src.context.scheduler import ScheduleResult
-from src.core.order_policy import OrderPolicyRejected
+from src.core.order_policy import OrderPolicyRejected, get_session_info
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
 from src.db import init_db, log_trade
 from src.evolution.scorecard import DailyScorecard
 from src.logging.decision_logger import DecisionLogger
 from src.main import (
-    KILL_SWITCH,
+    _RUNTIME_EXIT_PEAKS,
+    _RUNTIME_EXIT_STATES,
     _SESSION_RISK_LAST_BY_MARKET,
     _SESSION_RISK_OVERRIDES_BY_MARKET,
     _SESSION_RISK_PROFILES_MAP,
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL,
+    KILL_SWITCH,
+    _apply_dashboard_flag,
     _apply_staged_exit_override_for_hold,
     _compute_kr_atr_value,
-    _estimate_pred_down_prob_from_rsi,
-    _inject_staged_exit_features,
-    _RUNTIME_EXIT_PEAKS,
-    _RUNTIME_EXIT_STATES,
-    _should_force_exit_for_overnight,
-    _should_block_overseas_buy_for_fx_buffer,
-    _trigger_emergency_kill_switch,
-    _apply_dashboard_flag,
+    _compute_kr_dynamic_stop_loss_pct,
     _determine_order_quantity,
+    _estimate_pred_down_prob_from_rsi,
     _extract_avg_price_from_balance,
     _extract_held_codes_from_balance,
     _extract_held_qty_from_balance,
     _handle_market_close,
-    _retry_connection,
+    _inject_staged_exit_features,
     _resolve_market_setting,
     _resolve_sell_qty_for_pnl,
+    _retry_connection,
     _run_context_scheduler,
     _run_evolution_loop,
+    _should_block_overseas_buy_for_fx_buffer,
+    _should_force_exit_for_overnight,
     _start_dashboard_server,
     _stoploss_cooldown_minutes,
-    _compute_kr_dynamic_stop_loss_pct,
+    _trigger_emergency_kill_switch,
     handle_domestic_pending_orders,
     handle_overseas_pending_orders,
     process_blackout_recovery_orders,
@@ -336,10 +336,7 @@ async def test_inject_staged_exit_features_sets_pred_down_prob_and_atr_for_kr() 
 
     broker = MagicMock()
     broker.get_daily_prices = AsyncMock(
-        return_value=[
-            {"high": 102.0 + i, "low": 98.0 + i, "close": 100.0 + i}
-            for i in range(40)
-        ]
+        return_value=[{"high": 102.0 + i, "low": 98.0 + i, "close": 100.0 + i} for i in range(40)]
     )
 
     await _inject_staged_exit_features(
@@ -483,9 +480,7 @@ class TestExtractHeldQtyFromBalance:
 
     def test_overseas_returns_ord_psbl_qty_first(self) -> None:
         """ord_psbl_qty (주문가능수량) takes priority over ovrs_cblc_qty."""
-        balance = {
-            "output1": [{"ovrs_pdno": "AAPL", "ord_psbl_qty": "8", "ovrs_cblc_qty": "10"}]
-        }
+        balance = {"output1": [{"ovrs_pdno": "AAPL", "ord_psbl_qty": "8", "ovrs_cblc_qty": "10"}]}
         assert _extract_held_qty_from_balance(balance, "AAPL", is_domestic=False) == 8
 
     def test_overseas_fallback_to_ovrs_cblc_qty_when_ord_psbl_qty_absent(self) -> None:
@@ -809,9 +804,7 @@ class TestTradingCycleTelegramIntegration:
     def mock_criticality_assessor(self) -> MagicMock:
         """Create mock criticality assessor."""
         assessor = MagicMock()
-        assessor.assess_market_conditions = MagicMock(
-            return_value=MagicMock(value="NORMAL")
-        )
+        assessor.assess_market_conditions = MagicMock(return_value=MagicMock(value="NORMAL"))
         assessor.get_timeout = MagicMock(return_value=5.0)
         return assessor
 
@@ -1199,9 +1192,7 @@ class TestOverseasBalanceParsing:
     def mock_overseas_broker_with_list(self) -> MagicMock:
         """Create mock overseas broker returning list format."""
         broker = MagicMock()
-        broker.get_overseas_price = AsyncMock(
-            return_value={"output": {"last": "150.50"}}
-        )
+        broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "150.50"}})
         broker.get_overseas_balance = AsyncMock(
             return_value={
                 "output2": [
@@ -1221,9 +1212,7 @@ class TestOverseasBalanceParsing:
     def mock_overseas_broker_with_dict(self) -> MagicMock:
         """Create mock overseas broker returning dict format."""
         broker = MagicMock()
-        broker.get_overseas_price = AsyncMock(
-            return_value={"output": {"last": "150.50"}}
-        )
+        broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "150.50"}})
         broker.get_overseas_balance = AsyncMock(
             return_value={
                 "output2": {
@@ -1241,9 +1230,7 @@ class TestOverseasBalanceParsing:
     def mock_overseas_broker_with_empty(self) -> MagicMock:
         """Create mock overseas broker returning empty output2."""
         broker = MagicMock()
-        broker.get_overseas_price = AsyncMock(
-            return_value={"output": {"last": "150.50"}}
-        )
+        broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "150.50"}})
         broker.get_overseas_balance = AsyncMock(return_value={"output2": []})
         broker.get_overseas_buying_power = AsyncMock(
             return_value={"output": {"ovrs_ord_psbl_amt": "0.00"}}
@@ -1327,9 +1314,7 @@ class TestOverseasBalanceParsing:
     def mock_criticality_assessor(self) -> MagicMock:
         """Create mock criticality assessor."""
         assessor = MagicMock()
-        assessor.assess_market_conditions = MagicMock(
-            return_value=MagicMock(value="NORMAL")
-        )
+        assessor.assess_market_conditions = MagicMock(return_value=MagicMock(value="NORMAL"))
         assessor.get_timeout = MagicMock(return_value=5.0)
         return assessor
 
@@ -1492,9 +1477,7 @@ class TestOverseasBalanceParsing:
     def mock_overseas_broker_with_buy_scenario(self) -> MagicMock:
         """Create mock overseas broker that returns a valid price for BUY orders."""
         broker = MagicMock()
-        broker.get_overseas_price = AsyncMock(
-            return_value={"output": {"last": "182.50"}}
-        )
+        broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "182.50"}})
         broker.get_overseas_balance = AsyncMock(
             return_value={
                 "output2": [
@@ -1615,9 +1598,7 @@ class TestOverseasBalanceParsing:
         overseas_broker.get_overseas_buying_power = AsyncMock(
             return_value={"output": {"ovrs_ord_psbl_amt": "50000.00"}}
         )
-        overseas_broker.send_overseas_order = AsyncMock(
-            return_value={"rt_cd": "0", "msg1": "OK"}
-        )
+        overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
 
         sell_engine = MagicMock(spec=ScenarioEngine)
         sell_engine.evaluate = MagicMock(return_value=_make_sell_match("AAPL"))
@@ -1709,8 +1690,10 @@ class TestOverseasBalanceParsing:
         )
 
         overseas_broker.send_overseas_order.assert_called_once()
-        sent_price = overseas_broker.send_overseas_order.call_args[1].get("price") or \
-            overseas_broker.send_overseas_order.call_args[0][4]
+        sent_price = (
+            overseas_broker.send_overseas_order.call_args[1].get("price")
+            or overseas_broker.send_overseas_order.call_args[0][4]
+        )
         # 50.1234 * 1.002 = 50.2235... rounded to 2 decimals = 50.22
         assert sent_price == round(50.1234 * 1.002, 2), (
             f"Expected 2-decimal price {round(50.1234 * 1.002, 2)} but got {sent_price} (#252)"
@@ -1753,25 +1736,33 @@ class TestOverseasBalanceParsing:
         engine = MagicMock(spec=ScenarioEngine)
         engine.evaluate = MagicMock(return_value=_make_buy_match())
 
-        await trading_cycle(
-            broker=mock_domestic_broker,
-            overseas_broker=overseas_broker,
-            scenario_engine=engine,
-            playbook=mock_playbook,
-            risk=mock_risk,
-            db_conn=db_conn,
-            decision_logger=decision_logger,
-            context_store=mock_context_store,
-            criticality_assessor=mock_criticality_assessor,
-            telegram=mock_telegram,
-            market=mock_overseas_market,
-            stock_code="PENNYX",
-            scan_candidates={},
-        )
+        with patch(
+            "src.main._resolve_market_setting",
+            side_effect=lambda **kwargs: (
+                0.1 if kwargs.get("key") == "US_MIN_PRICE" else kwargs.get("default")
+            ),
+        ):
+            await trading_cycle(
+                broker=mock_domestic_broker,
+                overseas_broker=overseas_broker,
+                scenario_engine=engine,
+                playbook=mock_playbook,
+                risk=mock_risk,
+                db_conn=db_conn,
+                decision_logger=decision_logger,
+                context_store=mock_context_store,
+                criticality_assessor=mock_criticality_assessor,
+                telegram=mock_telegram,
+                market=mock_overseas_market,
+                stock_code="PENNYX",
+                scan_candidates={},
+            )
 
         overseas_broker.send_overseas_order.assert_called_once()
-        sent_price = overseas_broker.send_overseas_order.call_args[1].get("price") or \
-            overseas_broker.send_overseas_order.call_args[0][4]
+        sent_price = (
+            overseas_broker.send_overseas_order.call_args[1].get("price")
+            or overseas_broker.send_overseas_order.call_args[0][4]
+        )
         # 0.5678 * 1.002 = 0.56893... rounded to 4 decimals = 0.5689
         assert sent_price == round(0.5678 * 1.002, 4), (
             f"Expected 4-decimal price {round(0.5678 * 1.002, 4)} but got {sent_price} (#252)"
@@ -1821,7 +1812,10 @@ class TestScenarioEngineIntegration:
 
     @pytest.mark.asyncio
     async def test_scenario_engine_called_with_enriched_market_data(
-        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
     ) -> None:
         """Test scenario engine receives market_data enriched with scanner metrics."""
         from src.analysis.smart_scanner import ScanCandidate
@@ -1831,9 +1825,14 @@ class TestScenarioEngineIntegration:
         playbook = _make_playbook()
 
         candidate = ScanCandidate(
-            stock_code="005930", name="Samsung", price=50000,
-            volume=1000000, volume_ratio=3.5, rsi=25.0,
-            signal="oversold", score=85.0,
+            stock_code="005930",
+            name="Samsung",
+            price=50000,
+            volume=1000000,
+            volume_ratio=3.5,
+            rsi=25.0,
+            signal="oversold",
+            score=85.0,
         )
 
         with (
@@ -1877,7 +1876,10 @@ class TestScenarioEngineIntegration:
 
     @pytest.mark.asyncio
     async def test_trading_cycle_sets_l7_context_keys(
-        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
     ) -> None:
         """Test L7 context is written with market-scoped keys."""
         from src.analysis.smart_scanner import ScanCandidate
@@ -1888,9 +1890,14 @@ class TestScenarioEngineIntegration:
         context_store = MagicMock(get_latest_timeframe=MagicMock(return_value=None))
 
         candidate = ScanCandidate(
-            stock_code="005930", name="Samsung", price=50000,
-            volume=1000000, volume_ratio=3.5, rsi=25.0,
-            signal="oversold", score=85.0,
+            stock_code="005930",
+            name="Samsung",
+            price=50000,
+            volume=1000000,
+            volume_ratio=3.5,
+            rsi=25.0,
+            signal="oversold",
+            score=85.0,
         )
 
         with patch("src.main.log_trade"):
@@ -1940,7 +1947,10 @@ class TestScenarioEngineIntegration:
 
     @pytest.mark.asyncio
     async def test_scan_candidates_market_scoped(
-        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
     ) -> None:
         """Test scan_candidates uses market-scoped lookup, ignoring other markets."""
         from src.analysis.smart_scanner import ScanCandidate
@@ -1950,9 +1960,14 @@ class TestScenarioEngineIntegration:
 
         # Candidate stored under US market — should NOT be found for KR market
         us_candidate = ScanCandidate(
-            stock_code="005930", name="Overlap", price=100,
-            volume=500000, volume_ratio=5.0, rsi=15.0,
-            signal="oversold", score=90.0,
+            stock_code="005930",
+            name="Overlap",
+            price=100,
+            volume=500000,
+            volume_ratio=5.0,
+            rsi=15.0,
+            signal="oversold",
+            score=90.0,
         )
 
         with patch("src.main.log_trade"):
@@ -1982,7 +1997,10 @@ class TestScenarioEngineIntegration:
 
     @pytest.mark.asyncio
     async def test_scenario_engine_called_without_scanner_data(
-        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
     ) -> None:
         """Test scenario engine works when stock has no scan candidate."""
         engine = MagicMock(spec=ScenarioEngine)
@@ -2020,7 +2038,9 @@ class TestScenarioEngineIntegration:
 
     @pytest.mark.asyncio
     async def test_holding_overseas_stock_derives_volume_ratio_from_price_api(
-        self, mock_broker: MagicMock, mock_telegram: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_telegram: MagicMock,
     ) -> None:
         """Test overseas holding stocks derive volume_ratio from get_overseas_price high/low."""
         engine = MagicMock(spec=ScenarioEngine)
@@ -2035,15 +2055,17 @@ class TestScenarioEngineIntegration:
 
         os_broker = MagicMock()
         # price_change_pct=5.0, high=106, low=94 → intraday_range=12% → volume_ratio=max(1,6)=6
-        os_broker.get_overseas_price = AsyncMock(return_value={
-            "output": {"last": "100.0", "rate": "5.0", "high": "106.0", "low": "94.0"}
-        })
-        os_broker.get_overseas_balance = AsyncMock(return_value={
-            "output2": [{"frcr_evlu_tota": "10000", "frcr_buy_amt_smtl": "9000"}]
-        })
-        os_broker.get_overseas_buying_power = AsyncMock(return_value={
-            "output": {"ovrs_ord_psbl_amt": "500"}
-        })
+        os_broker.get_overseas_price = AsyncMock(
+            return_value={
+                "output": {"last": "100.0", "rate": "5.0", "high": "106.0", "low": "94.0"}
+            }
+        )
+        os_broker.get_overseas_balance = AsyncMock(
+            return_value={"output2": [{"frcr_evlu_tota": "10000", "frcr_buy_amt_smtl": "9000"}]}
+        )
+        os_broker.get_overseas_buying_power = AsyncMock(
+            return_value={"output": {"ovrs_ord_psbl_amt": "500"}}
+        )
 
         with patch("src.main.log_trade"):
             await trading_cycle(
@@ -2075,7 +2097,10 @@ class TestScenarioEngineIntegration:
 
     @pytest.mark.asyncio
     async def test_scenario_matched_notification_sent(
-        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
     ) -> None:
         """Test telegram notification sent when a scenario matches."""
         # Create a match with matched_scenario (not None)
@@ -2125,7 +2150,10 @@ class TestScenarioEngineIntegration:
 
     @pytest.mark.asyncio
     async def test_no_scenario_matched_notification_on_default_hold(
-        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
     ) -> None:
         """Test no scenario notification when default HOLD is returned."""
         engine = MagicMock(spec=ScenarioEngine)
@@ -2156,7 +2184,10 @@ class TestScenarioEngineIntegration:
 
     @pytest.mark.asyncio
     async def test_decision_logger_receives_scenario_match_details(
-        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
     ) -> None:
         """Test decision logger context includes scenario match details."""
         match = ScenarioMatch(
@@ -2193,13 +2224,16 @@ class TestScenarioEngineIntegration:
 
         decision_logger.log_decision.assert_called_once()
         call_kwargs = decision_logger.log_decision.call_args.kwargs
-        assert call_kwargs["session_id"] == "KRX_REG"
+        assert call_kwargs["session_id"] == get_session_info(mock_market).session_id
         assert "scenario_match" in call_kwargs["context_snapshot"]
         assert call_kwargs["context_snapshot"]["scenario_match"]["rsi"] == 45.0
 
     @pytest.mark.asyncio
     async def test_reduce_all_does_not_execute_order(
-        self, mock_broker: MagicMock, mock_market: MagicMock, mock_telegram: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
     ) -> None:
         """Test REDUCE_ALL action does not trigger order execution."""
         match = ScenarioMatch(
@@ -2340,7 +2374,9 @@ async def test_stoploss_reentry_cooldown_blocks_buy_when_active() -> None:
     broker.get_balance = AsyncMock(
         return_value={
             "output1": [],
-            "output2": [{"tot_evlu_amt": "100000", "dnca_tot_amt": "50000", "pchs_amt_smtl_amt": "50000"}],
+            "output2": [
+                {"tot_evlu_amt": "100000", "dnca_tot_amt": "50000", "pchs_amt_smtl_amt": "50000"}
+            ],
         }
     )
     broker.send_order = AsyncMock(return_value={"msg1": "OK"})
@@ -2359,7 +2395,9 @@ async def test_stoploss_reentry_cooldown_blocks_buy_when_active() -> None:
         risk=MagicMock(validate_order=MagicMock(), check_circuit_breaker=MagicMock()),
         db_conn=db_conn,
         decision_logger=DecisionLogger(db_conn),
-        context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None), set_context=MagicMock()),
+        context_store=MagicMock(
+            get_latest_timeframe=MagicMock(return_value=None), set_context=MagicMock()
+        ),
         criticality_assessor=MagicMock(
             assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
             get_timeout=MagicMock(return_value=5.0),
@@ -2389,7 +2427,9 @@ async def test_stoploss_reentry_cooldown_allows_buy_after_expiry() -> None:
     broker.get_balance = AsyncMock(
         return_value={
             "output1": [],
-            "output2": [{"tot_evlu_amt": "100000", "dnca_tot_amt": "50000", "pchs_amt_smtl_amt": "50000"}],
+            "output2": [
+                {"tot_evlu_amt": "100000", "dnca_tot_amt": "50000", "pchs_amt_smtl_amt": "50000"}
+            ],
         }
     )
     broker.send_order = AsyncMock(return_value={"msg1": "OK"})
@@ -2408,7 +2448,9 @@ async def test_stoploss_reentry_cooldown_allows_buy_after_expiry() -> None:
         risk=MagicMock(validate_order=MagicMock(), check_circuit_breaker=MagicMock()),
         db_conn=db_conn,
         decision_logger=DecisionLogger(db_conn),
-        context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None), set_context=MagicMock()),
+        context_store=MagicMock(
+            get_latest_timeframe=MagicMock(return_value=None), set_context=MagicMock()
+        ),
         criticality_assessor=MagicMock(
             assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
             get_timeout=MagicMock(return_value=5.0),
@@ -3419,6 +3461,7 @@ def test_start_dashboard_server_returns_none_when_uvicorn_missing() -> None:
         DASHBOARD_ENABLED=True,
     )
     import builtins
+
     real_import = builtins.__import__
 
     def mock_import(name: str, *args: object, **kwargs: object) -> object:
@@ -3446,8 +3489,13 @@ class TestBuyCooldown:
         broker.get_current_price = AsyncMock(return_value=(100.0, 1.0, 0.0))
         broker.get_balance = AsyncMock(
             return_value={
-                "output2": [{"tot_evlu_amt": "1000000", "dnca_tot_amt": "500000",
-                             "pchs_amt_smtl_amt": "500000"}]
+                "output2": [
+                    {
+                        "tot_evlu_amt": "1000000",
+                        "dnca_tot_amt": "500000",
+                        "pchs_amt_smtl_amt": "500000",
+                    }
+                ]
             }
         )
         broker.send_order = AsyncMock(return_value={"msg1": "OK"})
@@ -3475,13 +3523,22 @@ class TestBuyCooldown:
     def mock_overseas_broker(self) -> MagicMock:
         broker = MagicMock()
         broker.get_overseas_price = AsyncMock(
-            return_value={"output": {"last": "1.0", "rate": "0.0",
-                                     "high": "1.05", "low": "0.95", "tvol": "1000000"}}
+            return_value={
+                "output": {
+                    "last": "1.0",
+                    "rate": "0.0",
+                    "high": "1.05",
+                    "low": "0.95",
+                    "tvol": "1000000",
+                }
+            }
         )
-        broker.get_overseas_balance = AsyncMock(return_value={
-            "output1": [],
-            "output2": [{"frcr_evlu_tota": "50000", "frcr_buy_amt_smtl": "0"}],
-        })
+        broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output1": [],
+                "output2": [{"frcr_evlu_tota": "50000", "frcr_buy_amt_smtl": "0"}],
+            }
+        )
         broker.get_overseas_buying_power = AsyncMock(
             return_value={"output": {"ovrs_ord_psbl_amt": "50000"}}
         )
@@ -3501,7 +3558,9 @@ class TestBuyCooldown:
 
     @pytest.mark.asyncio
     async def test_cooldown_set_on_insufficient_balance(
-        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_overseas_broker: MagicMock,
         mock_overseas_market: MagicMock,
     ) -> None:
         """BUY cooldown entry is created after 주문가능금액 rejection."""
@@ -3509,7 +3568,12 @@ class TestBuyCooldown:
         engine.evaluate = MagicMock(return_value=self._make_buy_match_overseas("MLECW"))
         buy_cooldown: dict[str, float] = {}
 
-        with patch("src.main.log_trade"):
+        with patch("src.main.log_trade"), patch(
+            "src.main._resolve_market_setting",
+            side_effect=lambda **kwargs: (
+                0.1 if kwargs.get("key") == "US_MIN_PRICE" else kwargs.get("default")
+            ),
+        ):
             await trading_cycle(
                 broker=mock_broker,
                 overseas_broker=mock_overseas_broker,
@@ -3540,7 +3604,9 @@ class TestBuyCooldown:
 
     @pytest.mark.asyncio
     async def test_cooldown_skips_buy(
-        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_overseas_broker: MagicMock,
         mock_overseas_market: MagicMock,
     ) -> None:
         """BUY is skipped when cooldown is active for the stock."""
@@ -3548,10 +3614,9 @@ class TestBuyCooldown:
         engine.evaluate = MagicMock(return_value=self._make_buy_match_overseas("MLECW"))
 
         import asyncio
+
         # Set an active cooldown (expires far in the future)
-        buy_cooldown: dict[str, float] = {
-            "US_NASDAQ:MLECW": asyncio.get_event_loop().time() + 600
-        }
+        buy_cooldown: dict[str, float] = {"US_NASDAQ:MLECW": asyncio.get_event_loop().time() + 600}
 
         with patch("src.main.log_trade"):
             await trading_cycle(
@@ -3584,7 +3649,9 @@ class TestBuyCooldown:
 
     @pytest.mark.asyncio
     async def test_cooldown_not_set_on_other_errors(
-        self, mock_broker: MagicMock, mock_overseas_market: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_overseas_market: MagicMock,
     ) -> None:
         """Cooldown is NOT set for non-balance-related rejections."""
         engine = MagicMock(spec=ScenarioEngine)
@@ -3592,13 +3659,22 @@ class TestBuyCooldown:
         # Different rejection reason
         overseas_broker = MagicMock()
         overseas_broker.get_overseas_price = AsyncMock(
-            return_value={"output": {"last": "1.0", "rate": "0.0",
-                                     "high": "1.05", "low": "0.95", "tvol": "1000000"}}
+            return_value={
+                "output": {
+                    "last": "1.0",
+                    "rate": "0.0",
+                    "high": "1.05",
+                    "low": "0.95",
+                    "tvol": "1000000",
+                }
+            }
         )
-        overseas_broker.get_overseas_balance = AsyncMock(return_value={
-            "output1": [],
-            "output2": [{"frcr_evlu_tota": "50000", "frcr_buy_amt_smtl": "0"}],
-        })
+        overseas_broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output1": [],
+                "output2": [{"frcr_evlu_tota": "50000", "frcr_buy_amt_smtl": "0"}],
+            }
+        )
         overseas_broker.get_overseas_buying_power = AsyncMock(
             return_value={"output": {"ovrs_ord_psbl_amt": "50000"}}
         )
@@ -3638,14 +3714,21 @@ class TestBuyCooldown:
 
     @pytest.mark.asyncio
     async def test_no_cooldown_param_still_works(
-        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock,
+        self,
+        mock_broker: MagicMock,
+        mock_overseas_broker: MagicMock,
         mock_overseas_market: MagicMock,
     ) -> None:
         """trading_cycle works normally when buy_cooldown is None (default)."""
         engine = MagicMock(spec=ScenarioEngine)
         engine.evaluate = MagicMock(return_value=self._make_buy_match_overseas("MLECW"))
 
-        with patch("src.main.log_trade"):
+        with patch("src.main.log_trade"), patch(
+            "src.main._resolve_market_setting",
+            side_effect=lambda **kwargs: (
+                0.1 if kwargs.get("key") == "US_MIN_PRICE" else kwargs.get("default")
+            ),
+        ):
             await trading_cycle(
                 broker=mock_broker,
                 overseas_broker=mock_overseas_broker,
@@ -3722,6 +3805,7 @@ class TestMarketOutlookConfidenceThreshold:
         self, confidence: int, stock_code: str = "005930"
     ) -> ScenarioMatch:
         from src.strategy.models import StockScenario
+
         scenario = StockScenario(
             condition=StockCondition(rsi_below=30),
             action=ScenarioAction.BUY,
@@ -3736,10 +3820,9 @@ class TestMarketOutlookConfidenceThreshold:
             rationale="Test buy",
         )
 
-    def _make_playbook_with_outlook(
-        self, outlook_str: str, market: str = "KR"
-    ) -> DayPlaybook:
+    def _make_playbook_with_outlook(self, outlook_str: str, market: str = "KR") -> DayPlaybook:
         from src.strategy.models import MarketOutlook
+
         outlook_map = {
             "bearish": MarketOutlook.BEARISH,
             "bullish": MarketOutlook.BULLISH,
@@ -3991,7 +4074,15 @@ async def test_buy_suppressed_when_open_position_exists() -> None:
 
     overseas_broker = MagicMock()
     overseas_broker.get_overseas_price = AsyncMock(
-        return_value={"output": {"last": "51.0", "rate": "2.0", "high": "52.0", "low": "50.0", "tvol": "1000000"}}
+        return_value={
+            "output": {
+                "last": "51.0",
+                "rate": "2.0",
+                "high": "52.0",
+                "low": "50.0",
+                "tvol": "1000000",
+            }
+        }
     )
     overseas_broker.get_overseas_balance = AsyncMock(
         return_value={
@@ -4058,7 +4149,15 @@ async def test_buy_proceeds_when_no_open_position() -> None:
 
     overseas_broker = MagicMock()
     overseas_broker.get_overseas_price = AsyncMock(
-        return_value={"output": {"last": "100.0", "rate": "1.0", "high": "101.0", "low": "99.0", "tvol": "500000"}}
+        return_value={
+            "output": {
+                "last": "100.0",
+                "rate": "1.0",
+                "high": "101.0",
+                "low": "99.0",
+                "tvol": "500000",
+            }
+        }
     )
     overseas_broker.get_overseas_balance = AsyncMock(
         return_value={
@@ -4160,9 +4259,7 @@ class TestOverseasBrokerIntegration:
         )
 
         overseas_broker = MagicMock()
-        overseas_broker.get_overseas_price = AsyncMock(
-            return_value={"output": {"last": "182.50"}}
-        )
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "182.50"}})
         # 브로커: 여전히 AAPL 10주 보유 중 (SELL 미체결)
         overseas_broker.get_overseas_balance = AsyncMock(
             return_value={
@@ -4236,9 +4333,7 @@ class TestOverseasBrokerIntegration:
         # DB: 레코드 없음 (신규 포지션)
 
         overseas_broker = MagicMock()
-        overseas_broker.get_overseas_price = AsyncMock(
-            return_value={"output": {"last": "182.50"}}
-        )
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "182.50"}})
         # 브로커: AAPL 미보유
         overseas_broker.get_overseas_balance = AsyncMock(
             return_value={
@@ -4306,9 +4401,7 @@ class TestOverseasBrokerIntegration:
         db_conn = init_db(":memory:")
 
         overseas_broker = MagicMock()
-        overseas_broker.get_overseas_price = AsyncMock(
-            return_value={"output": {"last": "182.50"}}
-        )
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "182.50"}})
         overseas_broker.get_overseas_balance = AsyncMock(
             return_value={
                 "output1": [],
@@ -4387,6 +4480,7 @@ class TestRetryConnection:
     @pytest.mark.asyncio
     async def test_success_on_first_attempt(self) -> None:
         """Returns the result immediately when the first call succeeds."""
+
         async def ok() -> str:
             return "data"
 
@@ -4596,9 +4690,7 @@ class TestDailyCBBaseline:
             return_value=self._make_domestic_balance(tot_evlu_amt=55000.0)
         )
         # Price data for the stock
-        broker.get_current_price = AsyncMock(
-            return_value=(100.0, 1.5, 100.0)
-        )
+        broker.get_current_price = AsyncMock(return_value=(100.0, 1.5, 100.0))
 
         market = MagicMock()
         market.name = "KR"
@@ -4643,8 +4735,10 @@ class TestDailyCBBaseline:
         async def _passthrough(fn, *a, label: str = "", **kw):  # type: ignore[override]
             return await fn(*a, **kw)
 
-        with patch("src.main.get_open_markets", return_value=[market]), \
-             patch("src.main._retry_connection", new=_passthrough):
+        with (
+            patch("src.main.get_open_markets", return_value=[market]),
+            patch("src.main._retry_connection", new=_passthrough),
+        ):
             result = await run_daily_session(
                 broker=broker,
                 overseas_broker=MagicMock(),
@@ -4720,8 +4814,10 @@ class TestDailyCBBaseline:
         async def _passthrough(fn, *a, label: str = "", **kw):  # type: ignore[override]
             return await fn(*a, **kw)
 
-        with patch("src.main.get_open_markets", return_value=[market]), \
-             patch("src.main._retry_connection", new=_passthrough):
+        with (
+            patch("src.main.get_open_markets", return_value=[market]),
+            patch("src.main._retry_connection", new=_passthrough),
+        ):
             result = await run_daily_session(
                 broker=broker,
                 overseas_broker=MagicMock(),
@@ -4844,8 +4940,10 @@ async def test_run_daily_session_applies_staged_exit_override_on_hold() -> None:
     async def _passthrough(fn, *a, label: str = "", **kw):  # type: ignore[override]
         return await fn(*a, **kw)
 
-    with patch("src.main.get_open_markets", return_value=[market]), \
-         patch("src.main._retry_connection", new=_passthrough):
+    with (
+        patch("src.main.get_open_markets", return_value=[market]),
+        patch("src.main._retry_connection", new=_passthrough),
+    ):
         await run_daily_session(
             broker=broker,
             overseas_broker=MagicMock(),
@@ -5032,17 +5130,14 @@ class TestSyncPositionsFromBroker:
         db_conn = init_db(":memory:")
 
         broker = MagicMock()
-        broker.get_balance = AsyncMock(
-            return_value=self._domestic_balance("005930", qty=7)
-        )
+        broker.get_balance = AsyncMock(return_value=self._domestic_balance("005930", qty=7))
         overseas_broker = MagicMock()
 
-        synced = await sync_positions_from_broker(
-            broker, overseas_broker, db_conn, settings
-        )
+        synced = await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
 
         assert synced == 1
         from src.db import get_open_position
+
         pos = get_open_position(db_conn, "005930", "KR")
         assert pos is not None
         assert pos["quantity"] == 7
@@ -5066,14 +5161,10 @@ class TestSyncPositionsFromBroker:
         )
 
         broker = MagicMock()
-        broker.get_balance = AsyncMock(
-            return_value=self._domestic_balance("005930", qty=5)
-        )
+        broker.get_balance = AsyncMock(return_value=self._domestic_balance("005930", qty=5))
         overseas_broker = MagicMock()
 
-        synced = await sync_positions_from_broker(
-            broker, overseas_broker, db_conn, settings
-        )
+        synced = await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
 
         assert synced == 0
 
@@ -5089,12 +5180,11 @@ class TestSyncPositionsFromBroker:
             return_value=self._overseas_balance("AAPL", qty=10)
         )
 
-        synced = await sync_positions_from_broker(
-            broker, overseas_broker, db_conn, settings
-        )
+        synced = await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
 
         assert synced == 1
         from src.db import get_open_position
+
         pos = get_open_position(db_conn, "AAPL", "US_NASDAQ")
         assert pos is not None
         assert pos["quantity"] == 10
@@ -5106,14 +5196,10 @@ class TestSyncPositionsFromBroker:
         db_conn = init_db(":memory:")
 
         broker = MagicMock()
-        broker.get_balance = AsyncMock(
-            return_value={"output1": [], "output2": [{}]}
-        )
+        broker.get_balance = AsyncMock(return_value={"output1": [], "output2": [{}]})
         overseas_broker = MagicMock()
 
-        synced = await sync_positions_from_broker(
-            broker, overseas_broker, db_conn, settings
-        )
+        synced = await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
 
         assert synced == 0
 
@@ -5124,14 +5210,10 @@ class TestSyncPositionsFromBroker:
         db_conn = init_db(":memory:")
 
         broker = MagicMock()
-        broker.get_balance = AsyncMock(
-            side_effect=ConnectionError("KIS unreachable")
-        )
+        broker.get_balance = AsyncMock(side_effect=ConnectionError("KIS unreachable"))
         overseas_broker = MagicMock()
 
-        synced = await sync_positions_from_broker(
-            broker, overseas_broker, db_conn, settings
-        )
+        synced = await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
 
         assert synced == 0  # Failure treated as no-op
 
@@ -5151,9 +5233,7 @@ class TestSyncPositionsFromBroker:
             return_value={"output1": [], "output2": [{}]}
         )
 
-        await sync_positions_from_broker(
-            broker, overseas_broker, db_conn, settings
-        )
+        await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
 
         # Two distinct exchange codes (NASD, NYSE) → 2 calls
         assert overseas_broker.get_overseas_balance.call_count == 2
@@ -5166,7 +5246,9 @@ class TestSyncPositionsFromBroker:
 
         balance = {
             "output1": [{"pdno": "005930", "ord_psbl_qty": "5", "pchs_avg_pric": "68000.0"}],
-            "output2": [{"tot_evlu_amt": "1000000", "dnca_tot_amt": "500000", "pchs_amt_smtl_amt": "500000"}],
+            "output2": [
+                {"tot_evlu_amt": "1000000", "dnca_tot_amt": "500000", "pchs_amt_smtl_amt": "500000"}
+            ],
         }
         broker = MagicMock()
         broker.get_balance = AsyncMock(return_value=balance)
@@ -5175,6 +5257,7 @@ class TestSyncPositionsFromBroker:
         await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
 
         from src.db import get_open_position
+
         pos = get_open_position(db_conn, "005930", "KR")
         assert pos is not None
         assert pos["price"] == 68000.0
@@ -5196,6 +5279,7 @@ class TestSyncPositionsFromBroker:
         await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
 
         from src.db import get_open_position
+
         pos = get_open_position(db_conn, "AAPL", "US_NASDAQ")
         assert pos is not None
         assert pos["price"] == 170.0
@@ -5209,7 +5293,9 @@ class TestSyncPositionsFromBroker:
         # No pchs_avg_pric in output1
         balance = {
             "output1": [{"pdno": "005930", "ord_psbl_qty": "5"}],
-            "output2": [{"tot_evlu_amt": "1000000", "dnca_tot_amt": "500000", "pchs_amt_smtl_amt": "500000"}],
+            "output2": [
+                {"tot_evlu_amt": "1000000", "dnca_tot_amt": "500000", "pchs_amt_smtl_amt": "500000"}
+            ],
         }
         broker = MagicMock()
         broker.get_balance = AsyncMock(return_value=balance)
@@ -5218,6 +5304,7 @@ class TestSyncPositionsFromBroker:
         await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
 
         from src.db import get_open_position
+
         pos = get_open_position(db_conn, "005930", "KR")
         assert pos is not None
         assert pos["price"] == 0.0
@@ -5345,12 +5432,8 @@ class TestHandleOverseasPendingOrders:
             "ovrs_excg_cd": "NASD",
         }
         overseas_broker = MagicMock()
-        overseas_broker.get_overseas_pending_orders = AsyncMock(
-            return_value=[pending_order]
-        )
-        overseas_broker.cancel_overseas_order = AsyncMock(
-            return_value={"rt_cd": "0", "msg1": "OK"}
-        )
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
 
         sell_resubmit_counts: dict[str, int] = {}
         buy_cooldown: dict[str, float] = {}
@@ -5385,18 +5468,10 @@ class TestHandleOverseasPendingOrders:
             "ovrs_excg_cd": "NASD",
         }
         overseas_broker = MagicMock()
-        overseas_broker.get_overseas_pending_orders = AsyncMock(
-            return_value=[pending_order]
-        )
-        overseas_broker.cancel_overseas_order = AsyncMock(
-            return_value={"rt_cd": "0", "msg1": "OK"}
-        )
-        overseas_broker.get_overseas_price = AsyncMock(
-            return_value={"output": {"last": "200.0"}}
-        )
-        overseas_broker.send_overseas_order = AsyncMock(
-            return_value={"rt_cd": "0", "msg1": "OK"}
-        )
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "200.0"}})
+        overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
 
         sell_resubmit_counts: dict[str, int] = {}
 
@@ -5427,9 +5502,7 @@ class TestHandleOverseasPendingOrders:
             "ovrs_excg_cd": "NASD",
         }
         overseas_broker = MagicMock()
-        overseas_broker.get_overseas_pending_orders = AsyncMock(
-            return_value=[pending_order]
-        )
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
         overseas_broker.cancel_overseas_order = AsyncMock(
             return_value={"rt_cd": "1", "msg1": "Error"}  # failure
         )
@@ -5458,12 +5531,8 @@ class TestHandleOverseasPendingOrders:
             "ovrs_excg_cd": "NASD",
         }
         overseas_broker = MagicMock()
-        overseas_broker.get_overseas_pending_orders = AsyncMock(
-            return_value=[pending_order]
-        )
-        overseas_broker.cancel_overseas_order = AsyncMock(
-            return_value={"rt_cd": "0", "msg1": "OK"}
-        )
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
         overseas_broker.send_overseas_order = AsyncMock()
 
         # Already resubmitted once
@@ -5536,9 +5605,7 @@ class TestHandleDomesticPendingOrders:
         }
         broker = MagicMock()
         broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
-        broker.cancel_domestic_order = AsyncMock(
-            return_value={"rt_cd": "0", "msg1": "OK"}
-        )
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
 
         sell_resubmit_counts: dict[str, int] = {}
         buy_cooldown: dict[str, float] = {}
@@ -5577,17 +5644,13 @@ class TestHandleDomesticPendingOrders:
         }
         broker = MagicMock()
         broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
-        broker.cancel_domestic_order = AsyncMock(
-            return_value={"rt_cd": "0", "msg1": "OK"}
-        )
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
         broker.get_current_price = AsyncMock(return_value=(50000.0, 0.0, 0.0))
         broker.send_order = AsyncMock(return_value={"rt_cd": "0"})
 
         sell_resubmit_counts: dict[str, int] = {}
 
-        await handle_domestic_pending_orders(
-            broker, telegram, settings, sell_resubmit_counts
-        )
+        await handle_domestic_pending_orders(broker, telegram, settings, sell_resubmit_counts)
 
         broker.cancel_domestic_order.assert_called_once()
         broker.send_order.assert_called_once()
@@ -5621,9 +5684,7 @@ class TestHandleDomesticPendingOrders:
 
         sell_resubmit_counts: dict[str, int] = {}
 
-        await handle_domestic_pending_orders(
-            broker, telegram, settings, sell_resubmit_counts
-        )
+        await handle_domestic_pending_orders(broker, telegram, settings, sell_resubmit_counts)
 
         broker.send_order.assert_not_called()
         telegram.notify_unfilled_order.assert_not_called()
@@ -5643,17 +5704,13 @@ class TestHandleDomesticPendingOrders:
         }
         broker = MagicMock()
         broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
-        broker.cancel_domestic_order = AsyncMock(
-            return_value={"rt_cd": "0", "msg1": "OK"}
-        )
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
         broker.send_order = AsyncMock()
 
         # Already resubmitted once
         sell_resubmit_counts: dict[str, int] = {"KR:005930": 1}
 
-        await handle_domestic_pending_orders(
-            broker, telegram, settings, sell_resubmit_counts
-        )
+        await handle_domestic_pending_orders(broker, telegram, settings, sell_resubmit_counts)
 
         broker.cancel_domestic_order.assert_called_once()
         broker.send_order.assert_not_called()
@@ -5867,9 +5924,7 @@ class TestOverseasGhostPositionClose:
         current_price = 1.5
         # ord_psbl_qty=5 means the code passes the qty check and a SELL is sent
         balance_data = {
-            "output1": [
-                {"ovrs_pdno": stock_code, "ord_psbl_qty": "5", "ovrs_cblc_qty": "5"}
-            ],
+            "output1": [{"ovrs_pdno": stock_code, "ord_psbl_qty": "5", "ovrs_cblc_qty": "5"}],
             "output2": [{"tot_evlu_amt": "10000"}],
         }
         sell_result = {"rt_cd": "1", "msg1": "모의투자 잔고내역이 없습니다"}
@@ -5905,9 +5960,11 @@ class TestOverseasGhostPositionClose:
         settings.POSITION_SIZING_ENABLED = False
         settings.PAPER_OVERSEAS_CASH = 0
 
-        with patch("src.main.log_trade") as mock_log_trade, patch(
-            "src.main.get_open_position", return_value=None
-        ), patch("src.main.get_latest_buy_trade", return_value=None):
+        with (
+            patch("src.main.log_trade") as mock_log_trade,
+            patch("src.main.get_open_position", return_value=None),
+            patch("src.main.get_latest_buy_trade", return_value=None),
+        ):
             await trading_cycle(
                 broker=domestic_broker,
                 overseas_broker=overseas_broker,
@@ -5976,8 +6033,9 @@ class TestOverseasGhostPositionClose:
 
         db_conn = MagicMock()
 
-        with patch("src.main.log_trade") as mock_log_trade, patch(
-            "src.main.get_open_position", return_value=None
+        with (
+            patch("src.main.log_trade") as mock_log_trade,
+            patch("src.main.get_open_position", return_value=None),
         ):
             await trading_cycle(
                 broker=domestic_broker,
@@ -6168,7 +6226,10 @@ async def test_us_min_price_filter_boundary(price: float, should_block: bool) ->
         return_value={"output": {"last": str(price), "rate": "0.0"}}
     )
     overseas_broker.get_overseas_balance = AsyncMock(
-        return_value={"output1": [], "output2": [{"frcr_evlu_tota": "10000", "frcr_buy_amt_smtl": "0"}]}
+        return_value={
+            "output1": [],
+            "output2": [{"frcr_evlu_tota": "10000", "frcr_buy_amt_smtl": "0"}],
+        }
     )
     overseas_broker.get_overseas_buying_power = AsyncMock(
         return_value={"output": {"ovrs_ord_psbl_amt": "10000"}}

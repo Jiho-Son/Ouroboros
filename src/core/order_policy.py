@@ -15,7 +15,7 @@ from src.markets.schedule import MarketInfo
 _LOW_LIQUIDITY_SESSIONS = {"NXT_AFTER", "US_PRE", "US_DAY", "US_AFTER"}
 
 
-class OrderPolicyRejected(Exception):
+class OrderPolicyRejectedError(Exception):
     """Raised when an order violates session policy."""
 
     def __init__(self, message: str, *, session_id: str, market_code: str) -> None:
@@ -61,7 +61,9 @@ def classify_session_id(market: MarketInfo, now: datetime | None = None) -> str:
 
 def get_session_info(market: MarketInfo, now: datetime | None = None) -> SessionInfo:
     session_id = classify_session_id(market, now)
-    return SessionInfo(session_id=session_id, is_low_liquidity=session_id in _LOW_LIQUIDITY_SESSIONS)
+    return SessionInfo(
+        session_id=session_id, is_low_liquidity=session_id in _LOW_LIQUIDITY_SESSIONS
+    )
 
 
 def validate_order_policy(
@@ -76,7 +78,7 @@ def validate_order_policy(
 
     is_market_order = price <= 0
     if info.is_low_liquidity and is_market_order:
-        raise OrderPolicyRejected(
+        raise OrderPolicyRejectedError(
             f"Market order is forbidden in low-liquidity session ({info.session_id})",
             session_id=info.session_id,
             market_code=market.code,
@@ -84,10 +86,14 @@ def validate_order_policy(
 
     # Guard against accidental unsupported actions.
     if order_type not in {"BUY", "SELL"}:
-        raise OrderPolicyRejected(
+        raise OrderPolicyRejectedError(
             f"Unsupported order_type={order_type}",
             session_id=info.session_id,
             market_code=market.code,
         )
 
     return info
+
+
+# Backward compatibility alias
+OrderPolicyRejected = OrderPolicyRejectedError

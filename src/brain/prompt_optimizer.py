@@ -179,7 +179,8 @@ class PromptOptimizer:
             # Minimal instructions
             prompt = (
                 f"{market_name} trader. Analyze:\n{data_str}\n\n"
-                'Return JSON: {"action":"BUY"|"SELL"|"HOLD","confidence":<0-100>,"rationale":"<text>"}\n'
+                "Return JSON: "
+                '{"action":"BUY"|"SELL"|"HOLD","confidence":<0-100>,"rationale":"<text>"}\n'
                 "Rules: action=BUY/SELL/HOLD, confidence=0-100, rationale=concise. No markdown."
             )
         else:

@@ -26,12 +26,12 @@ from src.context.aggregator import ContextAggregator
 from src.context.layer import ContextLayer
 from src.context.scheduler import ContextScheduler
 from src.context.store import ContextStore
-from src.core.criticality import CriticalityAssessor
 from src.core.blackout_manager import (
     BlackoutOrderManager,
     QueuedOrderIntent,
     parse_blackout_windows_kst,
 )
+from src.core.criticality import CriticalityAssessor
 from src.core.kill_switch import KillSwitchOrchestrator
 from src.core.order_policy import (
     OrderPolicyRejected,
@@ -52,12 +52,16 @@ from src.evolution.optimizer import EvolutionOptimizer
 from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
 from src.markets.schedule import MARKETS, MarketInfo, get_next_market_open, get_open_markets
-from src.notifications.telegram_client import NotificationFilter, TelegramClient, TelegramCommandHandler
-from src.strategy.models import DayPlaybook, MarketOutlook
+from src.notifications.telegram_client import (
+    NotificationFilter,
+    TelegramClient,
+    TelegramCommandHandler,
+)
 from src.strategy.exit_rules import ExitRuleConfig, ExitRuleInput, evaluate_exit
+from src.strategy.models import DayPlaybook, MarketOutlook
 from src.strategy.playbook_store import PlaybookStore
-from src.strategy.pre_market_planner import PreMarketPlanner
 from src.strategy.position_state_machine import PositionState
+from src.strategy.pre_market_planner import PreMarketPlanner
 from src.strategy.scenario_engine import ScenarioEngine
 
 logger = logging.getLogger(__name__)
@@ -350,9 +354,7 @@ async def _inject_staged_exit_features(
         return
 
     if "pred_down_prob" not in market_data:
-        market_data["pred_down_prob"] = _estimate_pred_down_prob_from_rsi(
-            market_data.get("rsi")
-        )
+        market_data["pred_down_prob"] = _estimate_pred_down_prob_from_rsi(market_data.get("rsi"))
 
     existing_atr = safe_float(market_data.get("atr_value"), 0.0)
     if existing_atr > 0:
@@ -389,7 +391,7 @@ async def _retry_connection(coro_factory: Any, *args: Any, label: str = "", **kw
             return await coro_factory(*args, **kwargs)
         except ConnectionError as exc:
             if attempt < MAX_CONNECTION_RETRIES:
-                wait_secs = 2 ** attempt
+                wait_secs = 2**attempt
                 logger.warning(
                     "Connection error %s (attempt %d/%d), retrying in %ds: %s",
                     label,
@@ -413,7 +415,7 @@ async def sync_positions_from_broker(
     broker: Any,
     overseas_broker: Any,
     db_conn: Any,
-    settings: "Settings",
+    settings: Settings,
 ) -> int:
     """Sync open positions from the live broker into the local DB at startup.
 
@@ -441,9 +443,7 @@ async def sync_positions_from_broker(
                 if market.exchange_code in seen_exchange_codes:
                     continue
                 seen_exchange_codes.add(market.exchange_code)
-                balance_data = await overseas_broker.get_overseas_balance(
-                    market.exchange_code
-                )
+                balance_data = await overseas_broker.get_overseas_balance(market.exchange_code)
                 log_market = market_code  # e.g. "US_NASDAQ"
         except ConnectionError as exc:
             logger.warning(
@@ -453,9 +453,7 @@ async def sync_positions_from_broker(
             )
             continue
 
-        held_codes = _extract_held_codes_from_balance(
-            balance_data, is_domestic=market.is_domestic
-        )
+        held_codes = _extract_held_codes_from_balance(balance_data, is_domestic=market.is_domestic)
         for stock_code in held_codes:
             if get_open_position(db_conn, stock_code, log_market):
                 continue  # already tracked
@@ -487,9 +485,7 @@ async def sync_positions_from_broker(
             synced += 1
 
     if synced:
-        logger.info(
-            "Startup sync complete: %d position(s) synced from broker", synced
-        )
+        logger.info("Startup sync complete: %d position(s) synced from broker", synced)
     else:
         logger.info("Startup sync: no new positions to sync from broker")
     return synced
@@ -859,15 +855,9 @@ def _apply_staged_exit_override_for_hold(
 
     pnl_pct = (current_price - entry_price) / entry_price * 100.0
     if exit_eval.reason == "hard_stop":
-        rationale = (
-            f"Stop-loss triggered ({pnl_pct:.2f}% <= "
-            f"{stop_loss_threshold:.2f}%)"
-        )
+        rationale = f"Stop-loss triggered ({pnl_pct:.2f}% <= {stop_loss_threshold:.2f}%)"
     elif exit_eval.reason == "arm_take_profit":
-        rationale = (
-            f"Take-profit triggered ({pnl_pct:.2f}% >= "
-            f"{arm_pct:.2f}%)"
-        )
+        rationale = f"Take-profit triggered ({pnl_pct:.2f}% >= {arm_pct:.2f}%)"
     elif exit_eval.reason == "atr_trailing_stop":
         rationale = "ATR trailing-stop triggered"
     elif exit_eval.reason == "be_lock_threat":
@@ -978,7 +968,10 @@ def _maybe_queue_order_intent(
     )
     if queued:
         logger.warning(
-            "Blackout active: queued order intent %s %s (%s) qty=%d price=%.4f source=%s pending=%d",
+            (
+                "Blackout active: queued order intent %s %s (%s) "
+                "qty=%d price=%.4f source=%s pending=%d"
+            ),
             order_type,
             stock_code,
             market.code,
@@ -1071,7 +1064,10 @@ async def process_blackout_recovery_orders(
                 )
                 if queued_price <= 0 or current_price <= 0:
                     logger.info(
-                        "Drop queued intent by price revalidation (invalid price): %s %s (%s) queued=%.4f current=%.4f",
+                        (
+                            "Drop queued intent by price revalidation (invalid price): "
+                            "%s %s (%s) queued=%.4f current=%.4f"
+                        ),
                         intent.order_type,
                         intent.stock_code,
                         market.code,
@@ -1082,7 +1078,10 @@ async def process_blackout_recovery_orders(
                 drift_pct = abs(current_price - queued_price) / queued_price * 100.0
                 if drift_pct > max_drift_pct:
                     logger.info(
-                        "Drop queued intent by price revalidation: %s %s (%s) queued=%.4f current=%.4f drift=%.2f%% max=%.2f%%",
+                        (
+                            "Drop queued intent by price revalidation: %s %s (%s) "
+                            "queued=%.4f current=%.4f drift=%.2f%% max=%.2f%%"
+                        ),
                         intent.order_type,
                         intent.stock_code,
                         market.code,
@@ -1375,24 +1374,18 @@ async def trading_cycle(
     # 1. Fetch market data
     price_output: dict[str, Any] = {}  # Populated for overseas markets; used for fallback metrics
     if market.is_domestic:
-        current_price, price_change_pct, foreigner_net = await broker.get_current_price(
-            stock_code
-        )
+        current_price, price_change_pct, foreigner_net = await broker.get_current_price(stock_code)
         balance_data = await broker.get_balance()
 
         output2 = balance_data.get("output2", [{}])
         total_eval = safe_float(output2[0].get("tot_evlu_amt", "0")) if output2 else 0
         total_cash = safe_float(
-            balance_data.get("output2", [{}])[0].get("dnca_tot_amt", "0")
-            if output2
-            else "0"
+            balance_data.get("output2", [{}])[0].get("dnca_tot_amt", "0") if output2 else "0"
         )
         purchase_total = safe_float(output2[0].get("pchs_amt_smtl_amt", "0")) if output2 else 0
     else:
         # Overseas market
-        price_data = await overseas_broker.get_overseas_price(
-            market.exchange_code, stock_code
-        )
+        price_data = await overseas_broker.get_overseas_price(market.exchange_code, stock_code)
         balance_data = await overseas_broker.get_overseas_balance(market.exchange_code)
 
         output2 = balance_data.get("output2", [{}])
@@ -1459,11 +1452,7 @@ async def trading_cycle(
             total_cash = settings.PAPER_OVERSEAS_CASH
 
     # Calculate daily P&L %
-    pnl_pct = (
-        ((total_eval - purchase_total) / purchase_total * 100)
-        if purchase_total > 0
-        else 0.0
-    )
+    pnl_pct = ((total_eval - purchase_total) / purchase_total * 100) if purchase_total > 0 else 0.0
 
     market_data: dict[str, Any] = {
         "stock_code": stock_code,
@@ -1491,11 +1480,13 @@ async def trading_cycle(
         market_data["rsi"] = max(0.0, min(100.0, 50.0 + price_change_pct * 2.0))
         if price_output and current_price > 0:
             pr_high = safe_float(
-                price_output.get("high") or price_output.get("ovrs_hgpr")
+                price_output.get("high")
+                or price_output.get("ovrs_hgpr")
                 or price_output.get("stck_hgpr")
             )
             pr_low = safe_float(
-                price_output.get("low") or price_output.get("ovrs_lwpr")
+                price_output.get("low")
+                or price_output.get("ovrs_lwpr")
                 or price_output.get("stck_lwpr")
             )
             if pr_high > 0 and pr_low > 0 and pr_high >= pr_low:
@@ -1512,9 +1503,7 @@ async def trading_cycle(
     if open_pos and current_price > 0:
         entry_price = safe_float(open_pos.get("price"), 0.0)
         if entry_price > 0:
-            market_data["unrealized_pnl_pct"] = (
-                (current_price - entry_price) / entry_price * 100
-            )
+            market_data["unrealized_pnl_pct"] = (current_price - entry_price) / entry_price * 100
         entry_ts = open_pos.get("timestamp")
         if entry_ts:
             try:
@@ -1745,16 +1734,19 @@ async def trading_cycle(
             stock_playbook=stock_playbook,
             settings=settings,
         )
-        if open_position and decision.action == "HOLD" and _should_force_exit_for_overnight(
+        if (
+            open_position
+            and decision.action == "HOLD"
+            and _should_force_exit_for_overnight(
                 market=market,
                 settings=settings,
+            )
         ):
             decision = TradeDecision(
                 action="SELL",
                 confidence=max(decision.confidence, 85),
                 rationale=(
-                    "Forced exit by overnight policy"
-                    " (session close window / kill switch priority)"
+                    "Forced exit by overnight policy (session close window / kill switch priority)"
                 ),
             )
             logger.info(
@@ -1834,9 +1826,7 @@ async def trading_cycle(
             return
 
         broker_held_qty = (
-            _extract_held_qty_from_balance(
-                balance_data, stock_code, is_domestic=market.is_domestic
-            )
+            _extract_held_qty_from_balance(balance_data, stock_code, is_domestic=market.is_domestic)
             if decision.action == "SELL"
             else 0
         )
@@ -1871,7 +1861,10 @@ async def trading_cycle(
         )
         if fx_blocked:
             logger.warning(
-                "Skip BUY %s (%s): FX buffer guard (remaining=%.2f, required=%.2f, cash=%.2f, order=%.2f)",
+                (
+                    "Skip BUY %s (%s): FX buffer guard "
+                    "(remaining=%.2f, required=%.2f, cash=%.2f, order=%.2f)"
+                ),
                 stock_code,
                 market.name,
                 remaining_cash,
@@ -2068,8 +2061,7 @@ async def trading_cycle(
                         action="SELL",
                         confidence=0,
                         rationale=(
-                            "[ghost-close] Broker reported no balance;"
-                            " position closed without fill"
+                            "[ghost-close] Broker reported no balance; position closed without fill"
                         ),
                         quantity=0,
                         price=0.0,
@@ -2275,17 +2267,13 @@ async def handle_domestic_pending_orders(
                             outcome="cancelled",
                         )
                     except Exception as notify_exc:
-                        logger.warning(
-                            "notify_unfilled_order failed: %s", notify_exc
-                        )
+                        logger.warning("notify_unfilled_order failed: %s", notify_exc)
                 else:
                     # First unfilled SELL → resubmit at last * 0.996 (-0.4%).
                     try:
                         last_price, _, _ = await broker.get_current_price(stock_code)
                         if last_price <= 0:
-                            raise ValueError(
-                                f"Invalid price ({last_price}) for {stock_code}"
-                            )
+                            raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
                         new_price = kr_round_down(last_price * 0.996)
                         validate_order_policy(
                             market=MARKETS["KR"],
@@ -2298,9 +2286,7 @@ async def handle_domestic_pending_orders(
                             quantity=psbl_qty,
                             price=new_price,
                         )
-                        sell_resubmit_counts[key] = (
-                            sell_resubmit_counts.get(key, 0) + 1
-                        )
+                        sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                         try:
                             await telegram.notify_unfilled_order(
                                 stock_code=stock_code,
@@ -2311,9 +2297,7 @@ async def handle_domestic_pending_orders(
                                 new_price=float(new_price),
                             )
                         except Exception as notify_exc:
-                            logger.warning(
-                                "notify_unfilled_order failed: %s", notify_exc
-                            )
+                            logger.warning("notify_unfilled_order failed: %s", notify_exc)
                     except Exception as exc:
                         logger.error(
                             "SELL resubmit failed for KR %s: %s",
@@ -2381,9 +2365,7 @@ async def handle_overseas_pending_orders(
         try:
             orders = await overseas_broker.get_overseas_pending_orders(exchange_code)
         except Exception as exc:
-            logger.warning(
-                "Failed to fetch pending orders for %s: %s", exchange_code, exc
-            )
+            logger.warning("Failed to fetch pending orders for %s: %s", exchange_code, exc)
             continue
 
         for order in orders:
@@ -2448,26 +2430,21 @@ async def handle_overseas_pending_orders(
                                 outcome="cancelled",
                             )
                         except Exception as notify_exc:
-                            logger.warning(
-                                "notify_unfilled_order failed: %s", notify_exc
-                            )
+                            logger.warning("notify_unfilled_order failed: %s", notify_exc)
                     else:
                         # First unfilled SELL → resubmit at last * 0.996 (-0.4%).
                         try:
                             price_data = await overseas_broker.get_overseas_price(
                                 order_exchange, stock_code
                             )
-                            last_price = float(
-                                price_data.get("output", {}).get("last", "0") or "0"
-                            )
+                            last_price = float(price_data.get("output", {}).get("last", "0") or "0")
                             if last_price <= 0:
-                                raise ValueError(
-                                    f"Invalid price ({last_price}) for {stock_code}"
-                                )
+                                raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
                             new_price = round(last_price * 0.996, 4)
                             market_info = next(
                                 (
-                                    m for m in MARKETS.values()
+                                    m
+                                    for m in MARKETS.values()
                                     if m.exchange_code == order_exchange and not m.is_domestic
                                 ),
                                 None,
@@ -2485,9 +2462,7 @@ async def handle_overseas_pending_orders(
                                 quantity=nccs_qty,
                                 price=new_price,
                             )
-                            sell_resubmit_counts[key] = (
-                                sell_resubmit_counts.get(key, 0) + 1
-                            )
+                            sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                             try:
                                 await telegram.notify_unfilled_order(
                                     stock_code=stock_code,
@@ -2498,9 +2473,7 @@ async def handle_overseas_pending_orders(
                                     new_price=new_price,
                                 )
                             except Exception as notify_exc:
-                                logger.warning(
-                                    "notify_unfilled_order failed: %s", notify_exc
-                                )
+                                logger.warning("notify_unfilled_order failed: %s", notify_exc)
                         except Exception as exc:
                             logger.error(
                                 "SELL resubmit failed for %s %s: %s",
@@ -2659,13 +2632,16 @@ async def run_daily_session(
                     logger.warning("Playbook notification failed: %s", exc)
                 logger.info(
                     "Generated playbook for %s: %d stocks, %d scenarios",
-                    market.code, playbook.stock_count, playbook.scenario_count,
+                    market.code,
+                    playbook.stock_count,
+                    playbook.scenario_count,
                 )
             except Exception as exc:
                 logger.error("Playbook generation failed for %s: %s", market.code, exc)
                 try:
                     await telegram.notify_playbook_failed(
-                        market=market.code, reason=str(exc)[:200],
+                        market=market.code,
+                        reason=str(exc)[:200],
                     )
                 except Exception as notify_exc:
                     logger.warning("Playbook failed notification error: %s", notify_exc)
@@ -2676,12 +2652,10 @@ async def run_daily_session(
         for stock_code in watchlist:
             try:
                 if market.is_domestic:
-                    current_price, price_change_pct, foreigner_net = (
-                        await _retry_connection(
-                            broker.get_current_price,
-                            stock_code,
-                            label=stock_code,
-                        )
+                    current_price, price_change_pct, foreigner_net = await _retry_connection(
+                        broker.get_current_price,
+                        stock_code,
+                        label=stock_code,
                     )
                 else:
                     price_data = await _retry_connection(
@@ -2690,9 +2664,7 @@ async def run_daily_session(
                         stock_code,
                         label=f"{stock_code}@{market.exchange_code}",
                     )
-                    current_price = safe_float(
-                        price_data.get("output", {}).get("last", "0")
-                    )
+                    current_price = safe_float(price_data.get("output", {}).get("last", "0"))
                     # Fallback: if price API returns 0, use scanner candidate price
                     if current_price <= 0:
                         cand_lookup = candidate_map.get(stock_code)
@@ -2704,9 +2676,7 @@ async def run_daily_session(
                             )
                             current_price = cand_lookup.price
                     foreigner_net = 0.0
-                    price_change_pct = safe_float(
-                        price_data.get("output", {}).get("rate", "0")
-                    )
+                    price_change_pct = safe_float(price_data.get("output", {}).get("rate", "0"))
                     # Fall back to scanner candidate price if API returns 0.
                     if current_price <= 0:
                         cand_lookup = candidate_map.get(stock_code)
@@ -2769,15 +2739,9 @@ async def run_daily_session(
 
         if market.is_domestic:
             output2 = balance_data.get("output2", [{}])
-            total_eval = safe_float(
-                output2[0].get("tot_evlu_amt", "0")
-            ) if output2 else 0
-            total_cash = safe_float(
-                output2[0].get("dnca_tot_amt", "0")
-            ) if output2 else 0
-            purchase_total = safe_float(
-                output2[0].get("pchs_amt_smtl_amt", "0")
-            ) if output2 else 0
+            total_eval = safe_float(output2[0].get("tot_evlu_amt", "0")) if output2 else 0
+            total_cash = safe_float(output2[0].get("dnca_tot_amt", "0")) if output2 else 0
+            purchase_total = safe_float(output2[0].get("pchs_amt_smtl_amt", "0")) if output2 else 0
         else:
             output2 = balance_data.get("output2", [{}])
             if isinstance(output2, list) and output2:
@@ -2788,18 +2752,15 @@ async def run_daily_session(
                 balance_info = {}
 
             total_eval = safe_float(balance_info.get("frcr_evlu_tota", "0") or "0")
-            purchase_total = safe_float(
-                balance_info.get("frcr_buy_amt_smtl", "0") or "0"
-            )
+            purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
 
             # Fetch available foreign currency cash via inquire-psamount (TTTS3007R/VTTS3007R).
-            # TTTS3012R output2 does not include a cash/deposit field — frcr_dncl_amt_2 does not exist.
+            # TTTS3012R output2 does not include a cash/deposit field.
+            # frcr_dncl_amt_2 does not exist.
             # Use the first stock with a valid price as the reference for the buying power query.
             # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 매수가능금액조회' 시트
             total_cash = 0.0
-            ref_stock = next(
-                (s for s in stocks_data if s.get("current_price", 0) > 0), None
-            )
+            ref_stock = next((s for s in stocks_data if s.get("current_price", 0) > 0), None)
             if ref_stock:
                 try:
                     ps_data = await overseas_broker.get_overseas_buying_power(
@@ -2819,11 +2780,7 @@ async def run_daily_session(
 
             # Paper mode fallback: VTS overseas balance API often fails for many accounts.
             # Only activate in paper mode — live mode must use real balance from KIS.
-            if (
-                total_cash <= 0
-                and settings.MODE == "paper"
-                and settings.PAPER_OVERSEAS_CASH > 0
-            ):
+            if total_cash <= 0 and settings.MODE == "paper" and settings.PAPER_OVERSEAS_CASH > 0:
                 total_cash = settings.PAPER_OVERSEAS_CASH
 
         # Capture the day's opening portfolio value on the first market processed
@@ -2856,13 +2813,17 @@ async def run_daily_session(
         # Evaluate scenarios for each stock (local, no API calls)
         logger.info(
             "Evaluating %d stocks against playbook for %s",
-            len(stocks_data), market.name,
+            len(stocks_data),
+            market.name,
         )
         for stock_data in stocks_data:
             stock_code = stock_data["stock_code"]
             stock_playbook = playbook.get_stock_playbook(stock_code)
             match = scenario_engine.evaluate(
-                playbook, stock_code, stock_data, portfolio_data,
+                playbook,
+                stock_code,
+                stock_data,
+                portfolio_data,
             )
             decision = TradeDecision(
                 action=match.action.value,
@@ -2969,9 +2930,13 @@ async def run_daily_session(
                     stock_playbook=stock_playbook,
                     settings=settings,
                 )
-                if daily_open and decision.action == "HOLD" and _should_force_exit_for_overnight(
-                    market=market,
-                    settings=settings,
+                if (
+                    daily_open
+                    and decision.action == "HOLD"
+                    and _should_force_exit_for_overnight(
+                        market=market,
+                        settings=settings,
+                    )
                 ):
                     decision = TradeDecision(
                         action="SELL",
@@ -3063,16 +3028,21 @@ async def run_daily_session(
                     )
                     continue
                 order_amount = stock_data["current_price"] * quantity
-                fx_blocked, remaining_cash, required_buffer = _should_block_overseas_buy_for_fx_buffer(
-                    market=market,
-                    action=decision.action,
-                    total_cash=total_cash,
-                    order_amount=order_amount,
-                    settings=settings,
+                fx_blocked, remaining_cash, required_buffer = (
+                    _should_block_overseas_buy_for_fx_buffer(
+                        market=market,
+                        action=decision.action,
+                        total_cash=total_cash,
+                        order_amount=order_amount,
+                        settings=settings,
+                    )
                 )
                 if fx_blocked:
                     logger.warning(
-                        "Skip BUY %s (%s): FX buffer guard (remaining=%.2f, required=%.2f, cash=%.2f, order=%.2f)",
+                        (
+                            "Skip BUY %s (%s): FX buffer guard "
+                            "(remaining=%.2f, required=%.2f, cash=%.2f, order=%.2f)"
+                        ),
                         stock_code,
                         market.name,
                         remaining_cash,
@@ -3090,7 +3060,10 @@ async def run_daily_session(
                     if now < daily_cooldown_until:
                         remaining = int(daily_cooldown_until - now)
                         logger.info(
-                            "Skip BUY %s (%s): insufficient-balance cooldown active (%ds remaining)",
+                            (
+                                "Skip BUY %s (%s): insufficient-balance cooldown active "
+                                "(%ds remaining)"
+                            ),
                             stock_code,
                             market.name,
                             remaining,
@@ -3149,13 +3122,9 @@ async def run_daily_session(
                         # Use limit orders (지정가) for domestic stocks.
                         # KRX tick rounding applied via kr_round_down.
                         if decision.action == "BUY":
-                            order_price = kr_round_down(
-                                stock_data["current_price"] * 1.002
-                            )
+                            order_price = kr_round_down(stock_data["current_price"] * 1.002)
                         else:
-                            order_price = kr_round_down(
-                                stock_data["current_price"] * 0.998
-                            )
+                            order_price = kr_round_down(stock_data["current_price"] * 0.998)
                         try:
                             validate_order_policy(
                                 market=market,
@@ -3260,9 +3229,7 @@ async def run_daily_session(
                         except Exception as exc:
                             logger.warning("Telegram notification failed: %s", exc)
                 except Exception as exc:
-                    logger.error(
-                        "Order execution failed for %s: %s", stock_code, exc
-                    )
+                    logger.error("Order execution failed for %s: %s", stock_code, exc)
                     continue
 
                 if decision.action == "SELL" and order_succeeded:
@@ -3286,7 +3253,9 @@ async def run_daily_session(
                             accuracy=1 if trade_pnl > 0 else 0,
                         )
                         if trade_pnl < 0:
-                            cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
+                            cooldown_key = _stoploss_cooldown_key(
+                                market=market, stock_code=stock_code
+                            )
                             cooldown_minutes = _stoploss_cooldown_minutes(
                                 settings,
                                 market=market,
@@ -3369,7 +3338,8 @@ async def _handle_market_close(
 
 
 def _run_context_scheduler(
-    scheduler: ContextScheduler, now: datetime | None = None,
+    scheduler: ContextScheduler,
+    now: datetime | None = None,
 ) -> None:
     """Run periodic context scheduler tasks and log when anything executes."""
     result = scheduler.run_if_due(now=now)
@@ -3438,6 +3408,7 @@ def _start_dashboard_server(settings: Settings) -> threading.Thread | None:
     # reported synchronously (avoids the misleading "started" → "failed" log pair).
     try:
         import uvicorn  # noqa: F401
+
         from src.dashboard import create_dashboard_app  # noqa: F401
     except ImportError as exc:
         logger.warning("Dashboard server unavailable (missing dependency): %s", exc)
@@ -3446,6 +3417,7 @@ def _start_dashboard_server(settings: Settings) -> threading.Thread | None:
     def _serve() -> None:
         try:
             import uvicorn
+
             from src.dashboard import create_dashboard_app
 
             app = create_dashboard_app(settings.DB_PATH, mode=settings.MODE)
@@ -3586,8 +3558,7 @@ async def run(settings: Settings) -> None:
         pause_trading.set()
         logger.info("Trading resumed via Telegram command")
         await telegram.send_message(
-            "<b>▶️ Trading Resumed</b>\n\n"
-            "Trading operations have been restarted."
+            "<b>▶️ Trading Resumed</b>\n\nTrading operations have been restarted."
         )
 
     async def handle_status() -> None:
@@ -3630,9 +3601,7 @@ async def run(settings: Settings) -> None:
 
         except Exception as exc:
             logger.error("Error in /status handler: %s", exc)
-            await telegram.send_message(
-                "<b>⚠️ Error</b>\n\nFailed to retrieve trading status."
-            )
+            await telegram.send_message("<b>⚠️ Error</b>\n\nFailed to retrieve trading status.")
 
     async def handle_positions() -> None:
         """Handle /positions command - show account summary."""
@@ -3643,8 +3612,7 @@ async def run(settings: Settings) -> None:
 
             if not output2:
                 await telegram.send_message(
-                    "<b>💼 Account Summary</b>\n\n"
-                    "No balance information available."
+                    "<b>💼 Account Summary</b>\n\nNo balance information available."
                 )
                 return
 
@@ -3673,9 +3641,7 @@ async def run(settings: Settings) -> None:
 
         except Exception as exc:
             logger.error("Error in /positions handler: %s", exc)
-            await telegram.send_message(
-                "<b>⚠️ Error</b>\n\nFailed to retrieve positions."
-            )
+            await telegram.send_message("<b>⚠️ Error</b>\n\nFailed to retrieve positions.")
 
     async def handle_report() -> None:
         """Handle /report command - show daily summary metrics."""
@@ -3719,9 +3685,7 @@ async def run(settings: Settings) -> None:
             )
         except Exception as exc:
             logger.error("Error in /report handler: %s", exc)
-            await telegram.send_message(
-                "<b>⚠️ Error</b>\n\nFailed to generate daily report."
-            )
+            await telegram.send_message("<b>⚠️ Error</b>\n\nFailed to generate daily report.")
 
     async def handle_scenarios() -> None:
         """Handle /scenarios command - show today's playbook scenarios."""
@@ -3770,9 +3734,7 @@ async def run(settings: Settings) -> None:
             await telegram.send_message("\n".join(lines).strip())
         except Exception as exc:
             logger.error("Error in /scenarios handler: %s", exc)
-            await telegram.send_message(
-                "<b>⚠️ Error</b>\n\nFailed to retrieve scenarios."
-            )
+            await telegram.send_message("<b>⚠️ Error</b>\n\nFailed to retrieve scenarios.")
 
     async def handle_review() -> None:
         """Handle /review command - show recent scorecards."""
@@ -3788,9 +3750,7 @@ async def run(settings: Settings) -> None:
             ).fetchall()
 
             if not rows:
-                await telegram.send_message(
-                    "<b>📝 Recent Reviews</b>\n\nNo scorecards available."
-                )
+                await telegram.send_message("<b>📝 Recent Reviews</b>\n\nNo scorecards available.")
                 return
 
             lines = ["<b>📝 Recent Reviews</b>", ""]
@@ -3808,9 +3768,7 @@ async def run(settings: Settings) -> None:
             await telegram.send_message("\n".join(lines))
         except Exception as exc:
             logger.error("Error in /review handler: %s", exc)
-            await telegram.send_message(
-                "<b>⚠️ Error</b>\n\nFailed to retrieve reviews."
-            )
+            await telegram.send_message("<b>⚠️ Error</b>\n\nFailed to retrieve reviews.")
 
     async def handle_notify(args: list[str]) -> None:
         """Handle /notify [key] [on|off] — query or change notification filters."""
@@ -3845,8 +3803,7 @@ async def run(settings: Settings) -> None:
             else:
                 valid = ", ".join(list(status.keys()) + ["all"])
                 await telegram.send_message(
-                    f"❌ 알 수 없는 키: <code>{key}</code>\n"
-                    f"유효한 키: {valid}"
+                    f"❌ 알 수 없는 키: <code>{key}</code>\n유효한 키: {valid}"
                 )
             return
 
@@ -3858,30 +3815,22 @@ async def run(settings: Settings) -> None:
         value = toggle == "on"
         if telegram.set_notification(key, value):
             icon = "✅" if value else "❌"
-            label = f"전체 알림" if key == "all" else f"<code>{key}</code> 알림"
+            label = "전체 알림" if key == "all" else f"<code>{key}</code> 알림"
             state = "켜짐" if value else "꺼짐"
             await telegram.send_message(f"{icon} {label} → {state}")
             logger.info("Notification filter changed via Telegram: %s=%s", key, value)
         else:
             valid = ", ".join(list(telegram.filter_status().keys()) + ["all"])
-            await telegram.send_message(
-                f"❌ 알 수 없는 키: <code>{key}</code>\n"
-                f"유효한 키: {valid}"
-            )
+            await telegram.send_message(f"❌ 알 수 없는 키: <code>{key}</code>\n유효한 키: {valid}")
 
     async def handle_dashboard() -> None:
         """Handle /dashboard command - show dashboard URL if enabled."""
         if not settings.DASHBOARD_ENABLED:
-            await telegram.send_message(
-                "<b>🖥️ Dashboard</b>\n\nDashboard is not enabled."
-            )
+            await telegram.send_message("<b>🖥️ Dashboard</b>\n\nDashboard is not enabled.")
             return
 
         url = f"http://{settings.DASHBOARD_HOST}:{settings.DASHBOARD_PORT}"
-        await telegram.send_message(
-            "<b>🖥️ Dashboard</b>\n\n"
-            f"<b>URL:</b> {url}"
-        )
+        await telegram.send_message(f"<b>🖥️ Dashboard</b>\n\n<b>URL:</b> {url}")
 
     command_handler.register_command("help", handle_help)
     command_handler.register_command("stop", handle_stop)
@@ -4182,9 +4131,7 @@ async def run(settings: Settings) -> None:
                                 )
 
                                 # Store candidates per market for selection context logging
-                                scan_candidates[market.code] = {
-                                    c.stock_code: c for c in candidates
-                                }
+                                scan_candidates[market.code] = {c.stock_code: c for c in candidates}
 
                                 logger.info(
                                     "Smart Scanner: Found %d candidates for %s: %s",
@@ -4194,9 +4141,7 @@ async def run(settings: Settings) -> None:
                                 )
 
                                 # Get market-local date for playbook keying
-                                market_today = datetime.now(
-                                    market.timezone
-                                ).date()
+                                market_today = datetime.now(market.timezone).date()
 
                                 # Load or generate playbook (1 Gemini call per market per day)
                                 if market.code not in playbooks:
@@ -4234,7 +4179,8 @@ async def run(settings: Settings) -> None:
                                         except Exception as exc:
                                             logger.error(
                                                 "Playbook generation failed for %s: %s",
-                                                market.code, exc,
+                                                market.code,
+                                                exc,
                                             )
                                             try:
                                                 await telegram.notify_playbook_failed(
@@ -4279,7 +4225,8 @@ async def run(settings: Settings) -> None:
                     except Exception as exc:
                         logger.warning(
                             "Failed to fetch holdings for %s: %s — skipping holdings merge",
-                            market.name, exc,
+                            market.name,
+                            exc,
                         )
                         held_codes = []
 
@@ -4288,7 +4235,8 @@ async def run(settings: Settings) -> None:
                     if extra_held:
                         logger.info(
                             "Holdings added to loop for %s (not in scanner): %s",
-                            market.name, extra_held,
+                            market.name,
+                            extra_held,
                         )
 
                     if not stock_codes:

@@ -8,12 +8,12 @@ Defines the data contracts for the proactive strategy system:
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
 
-class ScenarioAction(str, Enum):
+class ScenarioAction(StrEnum):
     """Actions that can be taken by scenarios."""
 
     BUY = "BUY"
@@ -22,7 +22,7 @@ class ScenarioAction(str, Enum):
     REDUCE_ALL = "REDUCE_ALL"
 
 
-class MarketOutlook(str, Enum):
+class MarketOutlook(StrEnum):
     """AI's assessment of market direction."""
 
     BULLISH = "bullish"
@@ -32,7 +32,7 @@ class MarketOutlook(str, Enum):
     BEARISH = "bearish"
 
 
-class PlaybookStatus(str, Enum):
+class PlaybookStatus(StrEnum):
     """Lifecycle status of a playbook."""
 
     PENDING = "pending"
