@@ -128,6 +128,84 @@ def _resolve_sell_qty_for_pnl(*, sell_qty: int | None, buy_qty: int | None) -> i
     return max(0, int(buy_qty or 0))
 
 
+def _extract_fx_rate_from_sources(*sources: dict[str, Any] | None) -> float | None:
+    """Best-effort FX rate extraction from broker payloads."""
+    # KIS overseas payloads expose exchange-rate fields with varying key names
+    # across endpoints/responses (price, balance, buying power). Keep this list
+    # centralised so schema drifts can be patched in one place.
+    rate_keys = (
+        "frst_bltn_exrt",
+        "bass_exrt",
+        "ovrs_exrt",
+        "aply_xchg_rt",
+        "xchg_rt",
+        "exchange_rate",
+        "fx_rate",
+    )
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in rate_keys:
+            rate = safe_float(source.get(key), 0.0)
+            if rate > 0:
+                return rate
+    return None
+
+
+def _split_trade_pnl_components(
+    *,
+    market: MarketInfo,
+    trade_pnl: float,
+    buy_price: float,
+    sell_price: float,
+    quantity: int,
+    buy_fx_rate: float | None = None,
+    sell_fx_rate: float | None = None,
+) -> tuple[float, float]:
+    """Split total trade pnl into strategy/fx components.
+
+    For overseas symbols, use buy/sell FX rates when both are available.
+    Otherwise preserve backward-compatible behaviour (all strategy pnl).
+    """
+    if trade_pnl == 0.0:
+        return 0.0, 0.0
+    if market.is_domestic:
+        return trade_pnl, 0.0
+
+    if (
+        buy_fx_rate is not None
+        and sell_fx_rate is not None
+        and buy_fx_rate > 0
+        and sell_fx_rate > 0
+        and quantity > 0
+        and buy_price > 0
+        and sell_price > 0
+    ):
+        buy_notional = buy_price * quantity
+        fx_return = (sell_fx_rate - buy_fx_rate) / buy_fx_rate
+        fx_pnl = buy_notional * fx_return
+        strategy_pnl = trade_pnl - fx_pnl
+        return strategy_pnl, fx_pnl
+
+    return trade_pnl, 0.0
+
+
+def _extract_buy_fx_rate(buy_trade: dict[str, Any] | None) -> float | None:
+    if not buy_trade:
+        return None
+    raw_ctx = buy_trade.get("selection_context")
+    if not isinstance(raw_ctx, str) or not raw_ctx.strip():
+        return None
+    try:
+        decoded = json.loads(raw_ctx)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(decoded, dict):
+        return None
+    rate = safe_float(decoded.get("fx_rate"), 0.0)
+    return rate if rate > 0 else None
+
+
 def _compute_kr_dynamic_stop_loss_pct(
     *,
     market: MarketInfo | None = None,
@@ -1372,6 +1450,7 @@ async def trading_cycle(
     _session_risk_overrides(market=market, settings=settings)
 
     # 1. Fetch market data
+    balance_info: dict[str, Any] = {}
     price_output: dict[str, Any] = {}  # Populated for overseas markets; used for fallback metrics
     if market.is_domestic:
         current_price, price_change_pct, foreigner_net = await broker.get_current_price(stock_code)
@@ -1394,8 +1473,6 @@ async def trading_cycle(
             balance_info = output2[0]
         elif isinstance(output2, dict):
             balance_info = output2
-        else:
-            balance_info = {}
 
         total_eval = safe_float(balance_info.get("frcr_evlu_tota", "0") or "0")
         purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
@@ -1815,6 +1892,9 @@ async def trading_cycle(
     quantity = 0
     trade_price = current_price
     trade_pnl = 0.0
+    buy_trade: dict[str, Any] | None = None
+    buy_price = 0.0
+    sell_qty = 0
     if decision.action in ("BUY", "SELL"):
         if KILL_SWITCH.new_orders_blocked and decision.action == "BUY":
             logger.critical(
@@ -2129,6 +2209,26 @@ async def trading_cycle(
             "signal": candidate.signal,
             "score": candidate.score,
         }
+    sell_fx_rate = _extract_fx_rate_from_sources(price_output, balance_info)
+    if sell_fx_rate is not None and not market.is_domestic:
+        if selection_context is None:
+            selection_context = {"fx_rate": sell_fx_rate}
+        else:
+            selection_context["fx_rate"] = sell_fx_rate
+
+    strategy_pnl: float | None = None
+    fx_pnl: float | None = None
+    if decision.action == "SELL" and order_succeeded:
+        buy_fx_rate = _extract_buy_fx_rate(buy_trade)
+        strategy_pnl, fx_pnl = _split_trade_pnl_components(
+            market=market,
+            trade_pnl=trade_pnl,
+            buy_price=buy_price,
+            sell_price=trade_price,
+            quantity=sell_qty or quantity,
+            buy_fx_rate=buy_fx_rate,
+            sell_fx_rate=sell_fx_rate,
+        )
 
     log_trade(
         conn=db_conn,
@@ -2139,6 +2239,8 @@ async def trading_cycle(
         quantity=quantity,
         price=trade_price,
         pnl=trade_pnl,
+        strategy_pnl=strategy_pnl,
+        fx_pnl=fx_pnl,
         market=market.code,
         exchange_code=market.exchange_code,
         session_id=runtime_session_id,
@@ -2737,6 +2839,7 @@ async def run_daily_session(
             )
             continue
 
+        balance_info: dict[str, Any] = {}
         if market.is_domestic:
             output2 = balance_data.get("output2", [{}])
             total_eval = safe_float(output2[0].get("tot_evlu_amt", "0")) if output2 else 0
@@ -2991,6 +3094,9 @@ async def run_daily_session(
             quantity = 0
             trade_price = stock_data["current_price"]
             trade_pnl = 0.0
+            buy_trade: dict[str, Any] | None = None
+            buy_price = 0.0
+            sell_qty = 0
             order_succeeded = True
             if decision.action in ("BUY", "SELL"):
                 if KILL_SWITCH.new_orders_blocked and decision.action == "BUY":
@@ -3273,6 +3379,30 @@ async def run_daily_session(
             # Log trade (skip if order was rejected by API)
             if decision.action in ("BUY", "SELL") and not order_succeeded:
                 continue
+            strategy_pnl: float | None = None
+            fx_pnl: float | None = None
+            selection_context: dict[str, Any] | None = None
+            if decision.action == "SELL" and order_succeeded:
+                buy_fx_rate = _extract_buy_fx_rate(buy_trade)
+                sell_fx_rate = _extract_fx_rate_from_sources(balance_info, stock_data)
+                strategy_pnl, fx_pnl = _split_trade_pnl_components(
+                    market=market,
+                    trade_pnl=trade_pnl,
+                    buy_price=buy_price,
+                    sell_price=trade_price,
+                    quantity=sell_qty or quantity,
+                    buy_fx_rate=buy_fx_rate,
+                    sell_fx_rate=sell_fx_rate,
+                )
+                if sell_fx_rate is not None and not market.is_domestic:
+                    # Daily path does not carry scanner candidate metrics, so this
+                    # context intentionally stores FX snapshot only.
+                    selection_context = {"fx_rate": sell_fx_rate}
+            elif not market.is_domestic:
+                snapshot_fx_rate = _extract_fx_rate_from_sources(balance_info, stock_data)
+                if snapshot_fx_rate is not None:
+                    # BUY/HOLD in daily path: persist FX snapshot for later SELL split.
+                    selection_context = {"fx_rate": snapshot_fx_rate}
             log_trade(
                 conn=db_conn,
                 stock_code=stock_code,
@@ -3282,9 +3412,12 @@ async def run_daily_session(
                 quantity=quantity,
                 price=trade_price,
                 pnl=trade_pnl,
+                strategy_pnl=strategy_pnl,
+                fx_pnl=fx_pnl,
                 market=market.code,
                 exchange_code=market.exchange_code,
                 session_id=runtime_session_id,
+                selection_context=selection_context,
                 decision_id=decision_id,
                 mode=settings.MODE,
             )

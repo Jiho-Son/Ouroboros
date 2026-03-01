@@ -48,7 +48,7 @@ Updated: 2026-03-02
 | REQ-V3-004 | 블랙아웃 큐 + 복구 시 재검증 | ⚠️ 부분 | 큐 포화 시 intent 유실 경로 존재 (`#371`), 재검증 강화를 `#328`에서 추적 |
 | REQ-V3-005 | 저유동 세션 시장가 금지 | ✅ 완료 | `src/core/order_policy.py` |
 | REQ-V3-006 | 보수적 백테스트 체결 (불리 방향) | ✅ 완료 | `src/analysis/backtest_execution_model.py` |
-| REQ-V3-007 | FX 손익 분리 (전략 PnL vs 환율 PnL) | ⚠️ 부분 | 스키마 존재, 런타임 분리 계산/전달 미적용 (`#370`) |
+| REQ-V3-007 | FX 손익 분리 (전략 PnL vs 환율 PnL) | ⚠️ 부분 | 런타임 분리 계산/전달 적용 (`#370`), buy-side `fx_rate` 미관측 시 `fx_pnl=0` fallback |
 | REQ-V3-008 | 오버나잇 예외 vs Kill Switch 우선순위 | ✅ 완료 | `src/main.py` — `_should_force_exit_for_overnight()`, `_apply_staged_exit_override_for_hold()` |
 
 ### 1.4 운영 거버넌스: 부분 완료 (2026-03-02 재평가)
@@ -107,10 +107,12 @@ Updated: 2026-03-02
   - `max_holding_bars` deprecated 경고 유지 (하위 호환)
 - **요구사항**: REQ-V2-005 / v3 확장
 
-### GAP-6 (신규): FX PnL 분리 미완료 (MEDIUM — 부분 구현)
+### GAP-6 (신규): FX PnL 분리 부분 해소 (MEDIUM)
 
 - **위치**: `src/db.py` (`fx_pnl`, `strategy_pnl` 컬럼 존재)
-- **문제**: 스키마와 함수는 존재하지만 런타임 경로에서 `strategy_pnl`/`fx_pnl` 분리 계산 전달이 누락됨 (`#370`)
+- **현 상태**: 런타임 SELL 경로에서 `strategy_pnl`/`fx_pnl` 분리 계산 및 전달을 적용함 (`#370`).
+- **운영 메모**: `trading_cycle`은 scanner 기반 `selection_context`에 `fx_rate`를 추가하고, `run_daily_session`은 scanner 컨텍스트 없이 `fx_rate` 스냅샷만 기록한다.
+- **잔여**: 과거 BUY 레코드에 `fx_rate`가 없으면 해외 구간도 `fx_pnl=0` fallback으로 기록됨.
 - **영향**: USD 거래에서 환율 손익과 전략 손익이 분리되지 않아 성과 분석 부정확
 - **요구사항**: REQ-V3-007
 
