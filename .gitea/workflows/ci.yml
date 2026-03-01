@@ -47,6 +47,9 @@ jobs:
       - name: Validate Ouroboros docs
         run: python3 scripts/validate_ouroboros_docs.py
 
+      - name: Validate docs sync
+        run: python3 scripts/validate_docs_sync.py
+
       - name: Lint
         run: ruff check src/ tests/
 

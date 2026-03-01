@@ -69,6 +69,27 @@ def test_validate_summary_docs_reference_core_docs(monkeypatch) -> None:
     assert errors == []
 
 
+def test_validate_summary_docs_reference_core_docs_reports_missing_links(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    errors: list[str] = []
+    fake_docs = {
+        str(module.REQUIRED_FILES["README.md"]): "docs/workflow.md",
+        str(module.REQUIRED_FILES["CLAUDE.md"]): "docs/workflow.md",
+    }
+
+    def fake_read(path: Path) -> str:
+        return fake_docs[str(path)]
+
+    monkeypatch.setattr(module, "_read", fake_read)
+    module.validate_summary_docs_reference_core_docs(errors)
+
+    assert any("README.md" in err and "docs/commands.md" in err for err in errors)
+    assert any("README.md" in err and "docs/testing.md" in err for err in errors)
+    assert any("CLAUDE.md" in err and "docs/commands.md" in err for err in errors)
+
+
 def test_validate_commands_endpoint_duplicates_reports_duplicates(monkeypatch) -> None:
     module = _load_module()
     errors: list[str] = []

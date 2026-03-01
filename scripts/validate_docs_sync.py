@@ -54,11 +54,7 @@ def validate_summary_docs_reference_core_docs(errors: list[str]) -> None:
         "CLAUDE.md": ("docs/workflow.md", "docs/commands.md"),
     }
     for file_name, links in required_links.items():
-        doc_path = (
-            REQUIRED_FILES["README.md"]
-            if file_name == "README.md"
-            else REQUIRED_FILES["CLAUDE.md"]
-        )
+        doc_path = REQUIRED_FILES[file_name]
         text = _read(doc_path)
         for link in links:
             if link not in text:
@@ -110,8 +106,13 @@ def main() -> int:
     claude_text = _read(REQUIRED_FILES["CLAUDE.md"])
     validate_links_resolve(REQUIRED_FILES["README.md"], readme_text, errors)
     validate_links_resolve(REQUIRED_FILES["CLAUDE.md"], claude_text, errors)
-    validate_links_resolve(REQUIRED_FILES["commands"], _read(REQUIRED_FILES["commands"]), errors)
+    validate_links_resolve(
+        REQUIRED_FILES["commands"], _read(REQUIRED_FILES["commands"]), errors
+    )
     validate_links_resolve(REQUIRED_FILES["testing"], _read(REQUIRED_FILES["testing"]), errors)
+    validate_links_resolve(
+        REQUIRED_FILES["workflow"], _read(REQUIRED_FILES["workflow"]), errors
+    )
 
     validate_summary_docs_reference_core_docs(errors)
     validate_commands_endpoint_duplicates(errors)
