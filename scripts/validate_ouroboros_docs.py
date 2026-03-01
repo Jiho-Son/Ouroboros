@@ -51,27 +51,33 @@ def validate_metadata(path: Path, text: str, errors: list[str], doc_ids: dict[st
         doc_ids[doc_id] = path
 
 
-def validate_plan_source_link(path: Path, link: str, errors: list[str]) -> None:
+def validate_plan_source_link(path: Path, link: str, errors: list[str]) -> bool:
     normalized = link.strip()
-    match = PLAN_LINK_PATTERN.search(normalized)
+    # Ignore in-page anchors and parse the filesystem part for validation.
+    link_path = normalized.split("#", 1)[0].strip()
+    if not link_path:
+        return False
+    match = PLAN_LINK_PATTERN.search(link_path)
     if not match:
-        return
+        return False
 
     version = match.group("version")
     expected_target = ALLOWED_PLAN_TARGETS[version]
-    if normalized.startswith("/"):
+    if link_path.startswith("/"):
         errors.append(
             f"{path}: invalid plan link path -> {link} "
             f"(use ./source/ouroboros_plan_v{version}.txt)"
         )
-        return
+        return True
 
-    resolved_target = (path.parent / normalized).resolve()
+    resolved_target = (path.parent / link_path).resolve()
     if resolved_target != expected_target:
         errors.append(
             f"{path}: invalid plan link path -> {link} "
             f"(must resolve to docs/ouroboros/source/ouroboros_plan_v{version}.txt)"
         )
+        return True
+    return False
 
 
 def validate_links(path: Path, text: str, errors: list[str]) -> None:
@@ -79,11 +85,13 @@ def validate_links(path: Path, text: str, errors: list[str]) -> None:
         link = m.group("link").strip()
         if not link or link.startswith("http") or link.startswith("#"):
             continue
-        validate_plan_source_link(path, link, errors)
-        if link.startswith("/"):
-            target = Path(link)
+        if validate_plan_source_link(path, link, errors):
+            continue
+        link_path = link.split("#", 1)[0].strip()
+        if link_path.startswith("/"):
+            target = Path(link_path)
         else:
-            target = (path.parent / link).resolve()
+            target = (path.parent / link_path).resolve()
         if not target.exists():
             errors.append(f"{path}: broken link -> {link}")
 
