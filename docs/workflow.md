@@ -70,6 +70,22 @@ Gitea 이슈/PR/코멘트 작업 전에 모든 에이전트는 아래를 먼저 
 
 Issue/PR 본문 작성 시 줄바꿈(`\n`)이 문자열 그대로 저장되는 문제가 반복될 수 있다. 원인은 `-d "...\n..."` 형태에서 쉘/CLI가 이스케이프를 실제 개행으로 해석하지 않기 때문이다.
 
+코멘트도 동일한 문제가 자주 발생하므로, 코멘트는 파일 기반 래퍼를 표준으로 사용한다.
+
+```bash
+# 권장: 파일/STDIN 기반 코멘트 등록 (줄바꿈 보존)
+cat > /tmp/review.md <<'EOF'
+리뷰 반영 완료했습니다.
+
+- 항목 1
+- 항목 2
+EOF
+
+scripts/tea_comment.sh 374 /tmp/review.md
+# 또는
+cat /tmp/review.md | scripts/tea_comment.sh 374 -
+```
+
 권장 패턴:
 
 ```bash
