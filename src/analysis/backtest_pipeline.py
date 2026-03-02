@@ -94,14 +94,6 @@ def run_v2_backtest_pipeline(
         else sorted({bar.session_id for bar in bars})
     )
     validate_backtest_cost_model(model=cost_model, required_sessions=resolved_sessions)
-    execution_model = BacktestExecutionModel(
-        ExecutionAssumptions(
-            slippage_bps_by_session=cost_model.slippage_bps_by_session or {},
-            failure_rate_by_session=cost_model.failure_rate_by_session or {},
-            partial_fill_rate_by_session=cost_model.partial_fill_rate_by_session or {},
-            seed=0,
-        )
-    )
 
     highs = [float(bar.high) for bar in bars]
     lows = [float(bar.low) for bar in bars]
@@ -156,7 +148,7 @@ def run_v2_backtest_pipeline(
         execution_model = _build_execution_model(cost_model=cost_model, fold_seed=fold_idx)
         execution_return_model = _build_execution_model(
             cost_model=cost_model,
-            fold_seed=fold_idx,
+            fold_seed=fold_idx + 1000,
         )
         b0_pred = _baseline_b0_pred(train_labels)
         m1_pred = _m1_pred(train_labels)
