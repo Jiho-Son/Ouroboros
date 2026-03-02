@@ -92,6 +92,25 @@ def validate_testing_doc_has_dynamic_count_guidance(errors: list[str]) -> None:
         )
 
 
+def validate_pr_body_postcheck_guidance(errors: list[str]) -> None:
+    required_tokens = {
+        "commands": (
+            "PR Body Post-Check (Mandatory)",
+            "python3 scripts/validate_pr_body.py --pr <PR_NUMBER>",
+        ),
+        "workflow": (
+            "PR 생성 직후 본문 무결성 검증(필수)",
+            "python3 scripts/validate_pr_body.py --pr <PR_NUMBER>",
+        ),
+    }
+    for key, tokens in required_tokens.items():
+        path = REQUIRED_FILES[key]
+        text = _read(path)
+        for token in tokens:
+            if token not in text:
+                errors.append(f"{path}: missing PR body post-check guidance token -> {token}")
+
+
 def main() -> int:
     errors: list[str] = []
 
@@ -117,6 +136,7 @@ def main() -> int:
     validate_summary_docs_reference_core_docs(errors)
     validate_commands_endpoint_duplicates(errors)
     validate_testing_doc_has_dynamic_count_guidance(errors)
+    validate_pr_body_postcheck_guidance(errors)
 
     if errors:
         print("[FAIL] docs sync validation failed")
@@ -128,6 +148,7 @@ def main() -> int:
     print("[OK] summary docs link to core docs and links resolve")
     print("[OK] commands endpoint rows have no duplicates")
     print("[OK] testing doc includes dynamic count guidance")
+    print("[OK] PR body post-check guidance exists in commands/workflow docs")
     return 0
 
 

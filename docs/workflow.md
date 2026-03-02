@@ -128,6 +128,16 @@ tea pr create \
   --description "$PR_BODY"
 ```
 
+PR 생성 직후 본문 무결성 검증(필수):
+
+```bash
+python3 scripts/validate_pr_body.py --pr <PR_NUMBER>
+```
+
+강제 규칙:
+- 검증 실패(`\n` 리터럴, 코드펜스 불균형, 헤더/리스트 누락) 상태에서는 리뷰/머지 금지
+- 본문 수정 후 같은 명령으로 재검증 통과 필요
+
 금지 패턴:
 
 - `-d "line1\nline2"` (웹 UI에 `\n` 문자 그대로 노출될 수 있음)

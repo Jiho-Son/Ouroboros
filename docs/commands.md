@@ -59,6 +59,18 @@ scripts/tea_comment.sh 374 /tmp/comment.md
 - `scripts/tea_comment.sh` accepts stdin with `-` as body source.
 - The helper fails fast when body looks like escaped-newline text only.
 
+#### PR Body Post-Check (Mandatory)
+
+PR 생성 직후 본문이 `\n` 문자열로 깨지지 않았는지 반드시 확인한다.
+
+```bash
+python3 scripts/validate_pr_body.py --pr <PR_NUMBER>
+```
+
+검증 실패 시:
+- PR 본문을 API patch 또는 파일 기반 본문으로 즉시 수정
+- 같은 명령으로 재검증 통과 후에만 리뷰/머지 진행
+
 #### ❌ TTY Error - Interactive Confirmation Fails
 ```bash
 ~/bin/tea issues create --repo X --title "Y" --description "Z"
