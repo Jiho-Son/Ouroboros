@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import re
 import subprocess
 import sys
@@ -12,11 +13,31 @@ from pathlib import Path
 
 HEADER_PATTERN = re.compile(r"^##\s+\S+", re.MULTILINE)
 LIST_ITEM_PATTERN = re.compile(r"^\s*(?:-|\*|\d+\.)\s+\S+", re.MULTILINE)
+FENCED_CODE_PATTERN = re.compile(r"```.*?```", re.DOTALL)
+INLINE_CODE_PATTERN = re.compile(r"`[^`]*`")
+
+
+def _strip_code_segments(text: str) -> str:
+    without_fences = FENCED_CODE_PATTERN.sub("", text)
+    return INLINE_CODE_PATTERN.sub("", without_fences)
+
+
+def resolve_tea_binary() -> str:
+    tea_from_path = shutil.which("tea")
+    if tea_from_path:
+        return tea_from_path
+
+    tea_home = Path.home() / "bin" / "tea"
+    if tea_home.exists():
+        return str(tea_home)
+
+    raise RuntimeError("tea binary not found (checked PATH and ~/bin/tea)")
 
 
 def validate_pr_body_text(text: str) -> list[str]:
     errors: list[str] = []
-    if "\\n" in text and "\n" not in text:
+    searchable = _strip_code_segments(text)
+    if "\\n" in searchable:
         errors.append("body contains escaped newline sequence (\\n)")
     if text.count("```") % 2 != 0:
         errors.append("body has unbalanced fenced code blocks (``` count is odd)")
@@ -28,10 +49,11 @@ def validate_pr_body_text(text: str) -> list[str]:
 
 
 def fetch_pr_body(pr_number: int) -> str:
+    tea_binary = resolve_tea_binary()
     try:
         completed = subprocess.run(
             [
-                "tea",
+                tea_binary,
                 "api",
                 "-R",
                 "origin",
