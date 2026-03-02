@@ -40,7 +40,8 @@ def evaluate_exit_first(inp: StateTransitionInput) -> bool:
 
     EXITED must be evaluated before any promotion.
     """
-    return inp.hard_stop_hit or inp.trailing_stop_hit or inp.model_exit_signal or inp.be_lock_threat
+    # model_exit_signal is assist-only and must not trigger EXIT directly.
+    return inp.hard_stop_hit or inp.trailing_stop_hit or inp.be_lock_threat
 
 
 def promote_state(current: PositionState, inp: StateTransitionInput) -> PositionState:
@@ -60,6 +61,9 @@ def promote_state(current: PositionState, inp: StateTransitionInput) -> Position
     if inp.unrealized_pnl_pct >= inp.arm_pct:
         target = PositionState.ARMED
     elif inp.unrealized_pnl_pct >= inp.be_arm_pct:
+        target = PositionState.BE_LOCK
+    elif inp.model_exit_signal:
+        # Model signal assists risk posture by tightening to BE_LOCK.
         target = PositionState.BE_LOCK
 
     return target if _STATE_RANK[target] > _STATE_RANK[current] else current

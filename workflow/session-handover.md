@@ -105,3 +105,19 @@
 - next_ticket: #368
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: TASK-V2-012 구현 갭 보완을 위해 cost guard + execution-adjusted fold metric + 회귀 테스트를 함께 반영한다.
+
+### 2026-03-02 | session=codex-v3-stream-next-ticket-369
+- branch: feature/v3-session-policy-stream
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #369, #370, #371, #374, #375, #376, #377, #381
+- next_ticket: #369
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: 구현 티켓은 코드/테스트/문서(요구사항 원장/구현감사/PR traceability) 동시 반영을 기본 원칙으로 진행한다.
+
+### 2026-03-02 | session=codex-issue369-start
+- branch: feature/issue-369-model-exit-signal-spec-sync
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #369
+- next_ticket: #369
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: v2 사양 기준으로 model_exit_signal을 직접 청산 트리거가 아닌 보조 트리거로 정합화하고 테스트/문서를 동기화한다.

@@ -9,7 +9,7 @@ Updated: 2026-03-02
 # v2/v3 구현 감사 및 수익률 분석 보고서
 
 작성일: 2026-02-28
-최종 업데이트: 2026-03-02 (#373 상태표 정합화 반영)
+최종 업데이트: 2026-03-02 (#369 model 보조 트리거 사양 정합화 반영)
 대상 기간: 2026-02-25 ~ 2026-02-28 (실거래)
 분석 브랜치: `feature/v3-session-policy-stream`
 
@@ -32,7 +32,7 @@ Updated: 2026-03-02
 | REQ-V2-001 | 4-상태 매도 상태기계 (HOLDING→BE_LOCK→ARMED→EXITED) | `src/strategy/position_state_machine.py` | ✅ 완료 |
 | REQ-V2-002 | 즉시 최상위 상태 승격 (갭 대응) | `position_state_machine.py:51-70` | ✅ 완료 |
 | REQ-V2-003 | EXITED 우선 평가 | `position_state_machine.py:38-48` | ✅ 완료 |
-| REQ-V2-004 | 4중 청산 로직 (Hard/BE/ATR Trailing/Model) | `src/strategy/exit_rules.py` | ⚠️ 부분 (`#369`) |
+| REQ-V2-004 | 4중 청산 로직 (Hard/BE/ATR Trailing/Model assist-only, 직접 EXIT 미트리거) | `src/strategy/exit_rules.py` | ✅ 완료 |
 | REQ-V2-005 | Triple Barrier 라벨링 | `src/analysis/triple_barrier.py` | ✅ 완료 |
 | REQ-V2-006 | Walk-Forward + Purge/Embargo 검증 | `src/analysis/walk_forward_split.py` | ✅ 완료 |
 | REQ-V2-007 | 비용/슬리피지/체결실패 모델 필수 | `src/analysis/backtest_cost_guard.py`, `src/analysis/backtest_pipeline.py` | ✅ 완료 |
