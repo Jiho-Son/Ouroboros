@@ -33,6 +33,9 @@ ALLOWED_PLAN_TARGETS = {
     "2": (DOC_DIR / "source" / "ouroboros_plan_v2.txt").resolve(),
     "3": (DOC_DIR / "source" / "ouroboros_plan_v3.txt").resolve(),
 }
+ISSUE_REF_PATTERN = re.compile(r"#(?P<issue>\d+)")
+ISSUE_DONE_PATTERN = re.compile(r"(?:✅|머지|해소|완료)")
+ISSUE_PENDING_PATTERN = re.compile(r"(?:잔여|오픈 상태|추적)")
 
 
 def iter_docs() -> list[Path]:
@@ -119,6 +122,38 @@ def collect_req_traceability(
                 req_to_test.setdefault(req_id, set()).add(item_id)
 
 
+def validate_issue_status_consistency(path: Path, text: str, errors: list[str]) -> None:
+    issue_done_lines: dict[str, list[int]] = {}
+    issue_pending_lines: dict[str, list[int]] = {}
+
+    for line_no, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        issue_ids = [m.group("issue") for m in ISSUE_REF_PATTERN.finditer(line)]
+        if not issue_ids:
+            continue
+
+        is_pending = bool(ISSUE_PENDING_PATTERN.search(line))
+        is_done = bool(ISSUE_DONE_PATTERN.search(line)) and not is_pending
+        if not is_pending and not is_done:
+            continue
+
+        for issue_id in issue_ids:
+            if is_done:
+                issue_done_lines.setdefault(issue_id, []).append(line_no)
+            if is_pending:
+                issue_pending_lines.setdefault(issue_id, []).append(line_no)
+
+    conflicted_issues = sorted(set(issue_done_lines) & set(issue_pending_lines))
+    for issue_id in conflicted_issues:
+        errors.append(
+            f"{path}: conflicting status for issue #{issue_id} "
+            f"(done at lines {issue_done_lines[issue_id]}, "
+            f"pending at lines {issue_pending_lines[issue_id]})"
+        )
+
+
 def main() -> int:
     if not DOC_DIR.exists():
         print(f"ERROR: missing directory {DOC_DIR}")
@@ -140,6 +175,8 @@ def main() -> int:
         text = path.read_text(encoding="utf-8")
         validate_metadata(path, text, errors, doc_ids)
         validate_links(path, text, errors)
+        if path.name == "80_implementation_audit.md":
+            validate_issue_status_consistency(path, text, errors)
         collect_ids(path, text, defs, refs)
         collect_req_traceability(text, req_to_task, req_to_test)
 
