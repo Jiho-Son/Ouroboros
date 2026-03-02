@@ -1,6 +1,6 @@
 <!--
 Doc-ID: DOC-REQ-001
-Version: 1.0.11
+Version: 1.0.12
 Status: active
 Owner: strategy
 Updated: 2026-03-02
@@ -38,3 +38,7 @@ Updated: 2026-03-02
 - `REQ-OPS-002`: 문서의 수치 정책은 원장에서만 변경한다.
 - `REQ-OPS-003`: 구현 태스크는 반드시 테스트 태스크를 동반한다.
 - `REQ-OPS-004`: 원본 계획 문서(`v2`, `v3`)는 `docs/ouroboros/source/` 경로를 단일 기준으로 사용한다.
+
+## 변경 이력
+
+- 2026-03-02: `v1.0.12` 문서 검증 게이트 강화(#390) 반영에 따라 정책 문서 동기화 체크를 수행했다. (`REQ-OPS-002`)
