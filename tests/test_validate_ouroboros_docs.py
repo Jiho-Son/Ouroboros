@@ -87,7 +87,7 @@ def test_validate_issue_status_consistency_reports_conflicts() -> None:
     path = Path("docs/ouroboros/80_implementation_audit.md").resolve()
     text = "\n".join(
         [
-            "| REQ-V3-004 | 상태 | 부분 | `#328` 추적 |",
+            "| REQ-V3-004 | 상태 | 부분 | `#328` 잔여 |",
             "| 항목 | 상태 | ✅ 완료 | `#328` 머지 |",
         ]
     )
@@ -103,6 +103,17 @@ def test_validate_issue_status_consistency_allows_done_only() -> None:
     errors: list[str] = []
     path = Path("docs/ouroboros/80_implementation_audit.md").resolve()
     text = "| 항목 | 상태 | ✅ 완료 | `#371` 머지 |"
+
+    module.validate_issue_status_consistency(path, text, errors)
+
+    assert errors == []
+
+
+def test_validate_issue_status_consistency_allows_pending_only() -> None:
+    module = _load_module()
+    errors: list[str] = []
+    path = Path("docs/ouroboros/80_implementation_audit.md").resolve()
+    text = "| 항목 | 상태 | 부분 | `#390` 추적 이슈 |"
 
     module.validate_issue_status_consistency(path, text, errors)
 

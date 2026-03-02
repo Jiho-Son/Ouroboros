@@ -35,7 +35,7 @@ ALLOWED_PLAN_TARGETS = {
 }
 ISSUE_REF_PATTERN = re.compile(r"#(?P<issue>\d+)")
 ISSUE_DONE_PATTERN = re.compile(r"(?:✅|머지|해소|완료)")
-ISSUE_PENDING_PATTERN = re.compile(r"(?:잔여|오픈 상태|추적)")
+ISSUE_PENDING_PATTERN = re.compile(r"(?:잔여|오픈 상태|추적 이슈)")
 
 
 def iter_docs() -> list[Path]:
