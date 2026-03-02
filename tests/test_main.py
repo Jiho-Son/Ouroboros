@@ -7154,3 +7154,27 @@ async def test_trigger_emergency_kill_switch_records_cancel_failure() -> None:
         )
 
     assert any(err.startswith("cancel_pending_orders:") for err in report.errors)
+
+
+@pytest.mark.asyncio
+async def test_refresh_order_state_failure_summary_includes_more_count() -> None:
+    broker = MagicMock()
+    broker.get_balance = AsyncMock(side_effect=RuntimeError("domestic down"))
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_balance = AsyncMock(side_effect=RuntimeError("overseas down"))
+
+    markets = []
+    for code, exchange in [("KR", "KRX"), ("US_PRE", "NASD"), ("US_DAY", "NYSE"), ("JP", "TKSE")]:
+        market = MagicMock()
+        market.code = code
+        market.exchange_code = exchange
+        market.is_domestic = code == "KR"
+        markets.append(market)
+
+    with pytest.raises(RuntimeError, match=r"\(\+1 more\)$") as exc_info:
+        await main_module._refresh_order_state_for_kill_switch(
+            broker=broker,
+            overseas_broker=overseas_broker,
+            markets=markets,
+        )
+    assert "KR/KRX" in str(exc_info.value)

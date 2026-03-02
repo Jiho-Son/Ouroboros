@@ -1375,7 +1375,10 @@ async def _cancel_pending_orders_for_kill_switch(
                 )
 
     if failures:
-        raise RuntimeError("; ".join(failures[:3]))
+        summary = "; ".join(failures[:3])
+        if len(failures) > 3:
+            summary = f"{summary} (+{len(failures) - 3} more)"
+        raise RuntimeError(summary)
 
 
 async def _refresh_order_state_for_kill_switch(
@@ -1384,6 +1387,7 @@ async def _refresh_order_state_for_kill_switch(
     overseas_broker: OverseasBroker,
     markets: list[MarketInfo],
 ) -> None:
+    failures: list[str] = []
     seen_overseas: set[str] = set()
     for market in markets:
         try:
@@ -1399,6 +1403,12 @@ async def _refresh_order_state_for_kill_switch(
                 market.exchange_code,
                 exc,
             )
+            failures.append(f"{market.code}/{market.exchange_code}: {exc}")
+    if failures:
+        summary = "; ".join(failures[:3])
+        if len(failures) > 3:
+            summary = f"{summary} (+{len(failures) - 3} more)"
+        raise RuntimeError(summary)
 
 
 def _reduce_risk_for_kill_switch() -> None:

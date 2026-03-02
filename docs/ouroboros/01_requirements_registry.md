@@ -1,6 +1,6 @@
 <!--
 Doc-ID: DOC-REQ-001
-Version: 1.0.10
+Version: 1.0.11
 Status: active
 Owner: strategy
 Updated: 2026-03-02
@@ -19,7 +19,7 @@ Updated: 2026-03-02
 - `REQ-V2-005`: 라벨링은 Triple Barrier(Upper/Lower/Time) 방식이어야 한다.
 - `REQ-V2-006`: 검증은 Walk-forward + Purge/Embargo를 강제한다.
 - `REQ-V2-007`: 백테스트는 비용/슬리피지/체결실패를 반영하지 않으면 채택 불가다.
-- `REQ-V2-008`: Kill Switch는 신규주문차단 -> 미체결취소 -> 재조회 -> 리스크축소 -> 스냅샷 순서다.
+- `REQ-V2-008`: Kill Switch는 신규주문차단 -> 미체결취소 -> 재조회(실패 시 최대 3회, 1s/2s backoff 재시도, 성공 시 즉시 중단) -> 리스크축소 -> 스냅샷 순서다.
 
 ## v3 핵심 요구사항
 
