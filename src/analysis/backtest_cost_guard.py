@@ -45,6 +45,7 @@ def validate_backtest_cost_model(
         raise ValueError(
             f"missing failure_rate_by_session for sessions: {', '.join(missing_failure)}"
         )
+
     missing_partial_fill = [s for s in required_sessions if s not in partial_fill]
     if missing_partial_fill:
         raise ValueError(

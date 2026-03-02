@@ -89,3 +89,19 @@
 - next_ticket: #316
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: 모니터 판정을 liveness 중심에서 policy invariant(FORBIDDEN) 중심으로 전환
+
+### 2026-03-01 | session=codex-v3-stream-next-ticket
+- branch: feature/v3-session-policy-stream
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #368, #369, #370, #371, #374, #375, #376, #377, #381
+- next_ticket: #368
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: 비블로킹 소견은 합당성(정확성/안정성/유지보수성) 기준으로 반영하고, 미반영 시 근거를 코멘트로 남긴다.
+
+### 2026-03-01 | session=codex-issue368-start
+- branch: feature/issue-368-backtest-cost-execution
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #368
+- next_ticket: #368
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: TASK-V2-012 구현 갭 보완을 위해 cost guard + execution-adjusted fold metric + 회귀 테스트를 함께 반영한다.
