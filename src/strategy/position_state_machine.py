@@ -62,5 +62,8 @@ def promote_state(current: PositionState, inp: StateTransitionInput) -> Position
         target = PositionState.ARMED
     elif inp.unrealized_pnl_pct >= inp.be_arm_pct:
         target = PositionState.BE_LOCK
+    elif inp.model_exit_signal:
+        # Model signal assists risk posture by tightening to BE_LOCK.
+        target = PositionState.BE_LOCK
 
     return target if _STATE_RANK[target] > _STATE_RANK[current] else current

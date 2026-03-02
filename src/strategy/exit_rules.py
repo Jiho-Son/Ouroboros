@@ -85,6 +85,8 @@ def evaluate_exit(
         reason = "atr_trailing_stop"
     elif be_lock_threat:
         reason = "be_lock_threat"
+    elif model_exit_signal and next_state == PositionState.BE_LOCK:
+        reason = "model_assist_be_lock"
     elif take_profit_hit:
         # Backward-compatible immediate profit-taking path.
         reason = "arm_take_profit"

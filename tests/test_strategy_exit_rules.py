@@ -22,12 +22,12 @@ def test_take_profit_exit_for_backward_compatibility() -> None:
     assert out.reason == "arm_take_profit"
 
 
-def test_model_assist_signal_does_not_exit_directly() -> None:
+def test_model_assist_signal_promotes_be_lock_without_direct_exit() -> None:
     out = evaluate_exit(
-        current_state=PositionState.ARMED,
-        config=ExitRuleConfig(model_prob_threshold=0.62, arm_pct=10.0),
+        current_state=PositionState.HOLDING,
+        config=ExitRuleConfig(model_prob_threshold=0.62, be_arm_pct=1.2, arm_pct=10.0),
         inp=ExitRuleInput(
-            current_price=101.0,
+            current_price=100.5,
             entry_price=100.0,
             peak_price=105.0,
             pred_down_prob=0.8,
@@ -35,4 +35,5 @@ def test_model_assist_signal_does_not_exit_directly() -> None:
         ),
     )
     assert out.should_exit is False
-    assert out.reason == "hold"
+    assert out.state == PositionState.BE_LOCK
+    assert out.reason == "model_assist_be_lock"
