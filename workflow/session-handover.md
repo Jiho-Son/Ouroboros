@@ -121,3 +121,19 @@
 - next_ticket: #369
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: v2 사양 기준으로 model_exit_signal을 직접 청산 트리거가 아닌 보조 트리거로 정합화하고 테스트/문서를 동기화한다.
+
+### 2026-03-02 | session=codex-v3-stream-next-ticket-377
+- branch: feature/v3-session-policy-stream
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #377, #370, #371, #375, #376, #381
+- next_ticket: #377
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: kill switch refresh 재시도 정책(횟수/간격/중단조건)을 코드/테스트/요구사항 원장/감사 문서에 동시 반영한다.
+
+### 2026-03-02 | session=codex-issue377-start
+- branch: feature/issue-377-kill-switch-refresh-retry
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #377
+- next_ticket: #377
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: refresh 단계를 최대 3회(초기+재시도2), 실패 시 지수 백오프로 재시도하고 성공 시 즉시 중단, 소진 시 오류를 기록한 뒤 다음 단계를 계속 수행한다.

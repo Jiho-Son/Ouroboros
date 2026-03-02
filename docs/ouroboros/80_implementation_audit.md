@@ -36,7 +36,7 @@ Updated: 2026-03-02
 | REQ-V2-005 | Triple Barrier 라벨링 | `src/analysis/triple_barrier.py` | ✅ 완료 |
 | REQ-V2-006 | Walk-Forward + Purge/Embargo 검증 | `src/analysis/walk_forward_split.py` | ✅ 완료 |
 | REQ-V2-007 | 비용/슬리피지/체결실패 모델 필수 | `src/analysis/backtest_cost_guard.py`, `src/analysis/backtest_pipeline.py` | ✅ 완료 |
-| REQ-V2-008 | Kill Switch 실행 순서 (Block→Cancel→Refresh→Reduce→Snapshot) | `src/core/kill_switch.py` | ⚠️ 부분 (`#377`) |
+| REQ-V2-008 | Kill Switch 실행 순서 (Block→Cancel→Refresh(retry)→Reduce→Snapshot) | `src/core/kill_switch.py` | ✅ 완료 |
 
 ### 1.3 v3 구현 상태: 부분 완료 (2026-03-02 기준)
 
