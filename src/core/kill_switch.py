@@ -73,7 +73,7 @@ class KillSwitchOrchestrator:
                 if result is False:
                     raise RuntimeError("step returned False")
                 return
-            except Exception as exc:  # pragma: no cover - intentionally resilient
+            except Exception as exc:
                 last_exc = exc
                 if attempt >= attempts:
                     break
