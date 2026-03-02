@@ -121,3 +121,44 @@ def test_validate_testing_doc_has_dynamic_count_guidance(monkeypatch) -> None:
     monkeypatch.setattr(module, "_read", fake_read)
     module.validate_testing_doc_has_dynamic_count_guidance(errors)
     assert errors == []
+
+
+def test_validate_pr_body_postcheck_guidance_passes(monkeypatch) -> None:
+    module = _load_module()
+    errors: list[str] = []
+    fake_docs = {
+        str(module.REQUIRED_FILES["commands"]): (
+            "PR Body Post-Check (Mandatory)\n"
+            "python3 scripts/validate_pr_body.py --pr <PR_NUMBER>\n"
+        ),
+        str(module.REQUIRED_FILES["workflow"]): (
+            "PR 생성 직후 본문 무결성 검증(필수)\n"
+            "python3 scripts/validate_pr_body.py --pr <PR_NUMBER>\n"
+        ),
+    }
+
+    def fake_read(path: Path) -> str:
+        return fake_docs[str(path)]
+
+    monkeypatch.setattr(module, "_read", fake_read)
+    module.validate_pr_body_postcheck_guidance(errors)
+    assert errors == []
+
+
+def test_validate_pr_body_postcheck_guidance_reports_missing_tokens(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    errors: list[str] = []
+    fake_docs = {
+        str(module.REQUIRED_FILES["commands"]): "PR Body Post-Check (Mandatory)\n",
+        str(module.REQUIRED_FILES["workflow"]): "PR Body Post-Check\n",
+    }
+
+    def fake_read(path: Path) -> str:
+        return fake_docs[str(path)]
+
+    monkeypatch.setattr(module, "_read", fake_read)
+    module.validate_pr_body_postcheck_guidance(errors)
+    assert any("commands.md" in err for err in errors)
+    assert any("workflow.md" in err for err in errors)
