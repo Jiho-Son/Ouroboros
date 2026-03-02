@@ -106,7 +106,21 @@ def test_resolve_tea_binary_falls_back_to_home_bin(monkeypatch, tmp_path) -> Non
     tea_home = tmp_path / "bin" / "tea"
     tea_home.parent.mkdir(parents=True)
     tea_home.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    tea_home.chmod(0o755)
 
     monkeypatch.setattr(module.shutil, "which", lambda _: None)
     monkeypatch.setattr(module.Path, "home", lambda: tmp_path)
     assert module.resolve_tea_binary() == str(tea_home)
+
+
+def test_resolve_tea_binary_rejects_non_executable_home_bin(monkeypatch, tmp_path) -> None:
+    module = _load_module()
+    tea_home = tmp_path / "bin" / "tea"
+    tea_home.parent.mkdir(parents=True)
+    tea_home.write_text("not executable\n", encoding="utf-8")
+    tea_home.chmod(0o644)
+
+    monkeypatch.setattr(module.shutil, "which", lambda _: None)
+    monkeypatch.setattr(module.Path, "home", lambda: tmp_path)
+    with pytest.raises(RuntimeError):
+        module.resolve_tea_binary()

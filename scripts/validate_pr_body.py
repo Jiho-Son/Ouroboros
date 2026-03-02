@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import re
 import subprocess
@@ -28,7 +29,7 @@ def resolve_tea_binary() -> str:
         return tea_from_path
 
     tea_home = Path.home() / "bin" / "tea"
-    if tea_home.exists():
+    if tea_home.exists() and tea_home.is_file() and os.access(tea_home, os.X_OK):
         return str(tea_home)
 
     raise RuntimeError("tea binary not found (checked PATH and ~/bin/tea)")
@@ -63,7 +64,7 @@ def fetch_pr_body(pr_number: int) -> str:
             capture_output=True,
             text=True,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+    except (subprocess.CalledProcessError, FileNotFoundError, PermissionError) as exc:
         raise RuntimeError(f"failed to fetch PR #{pr_number}: {exc}") from exc
 
     try:
