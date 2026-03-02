@@ -28,3 +28,16 @@ def test_exited_has_priority_over_promotion() -> None:
         ),
     )
     assert state == PositionState.EXITED
+
+
+def test_model_signal_is_assist_only_not_direct_exit() -> None:
+    state = promote_state(
+        PositionState.ARMED,
+        StateTransitionInput(
+            unrealized_pnl_pct=1.0,
+            be_arm_pct=1.2,
+            arm_pct=2.8,
+            model_exit_signal=True,
+        ),
+    )
+    assert state == PositionState.ARMED

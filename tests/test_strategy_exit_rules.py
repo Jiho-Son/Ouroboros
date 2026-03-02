@@ -22,7 +22,7 @@ def test_take_profit_exit_for_backward_compatibility() -> None:
     assert out.reason == "arm_take_profit"
 
 
-def test_model_assist_exit_signal() -> None:
+def test_model_assist_signal_does_not_exit_directly() -> None:
     out = evaluate_exit(
         current_state=PositionState.ARMED,
         config=ExitRuleConfig(model_prob_threshold=0.62, arm_pct=10.0),
@@ -34,5 +34,5 @@ def test_model_assist_exit_signal() -> None:
             liquidity_weak=True,
         ),
     )
-    assert out.should_exit is True
-    assert out.reason == "model_liquidity_exit"
+    assert out.should_exit is False
+    assert out.reason == "hold"
