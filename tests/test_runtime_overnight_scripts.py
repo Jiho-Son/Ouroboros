@@ -50,6 +50,7 @@ def test_runtime_verify_monitor_detects_live_process_without_pid_files(tmp_path:
         log_text = _latest_runtime_log(log_dir)
         assert "app_alive=1" in log_text
         assert "[COVERAGE] LIVE_MODE=PASS source=process_liveness" in log_text
+        assert "[ANOMALY]" not in log_text
     finally:
         fake_live.terminate()
         fake_live.wait(timeout=5)
@@ -122,3 +123,29 @@ def test_run_overnight_writes_live_pid_and_watchdog_pid(tmp_path: Path) -> None:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
             pass
+
+
+def test_run_overnight_fails_when_process_exits_before_grace_period(tmp_path: Path) -> None:
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "LOG_DIR": str(log_dir),
+            "TMUX_AUTO": "false",
+            "STARTUP_GRACE_SEC": "1",
+            "APP_CMD": "false",
+        }
+    )
+    completed = subprocess.run(
+        ["bash", str(RUN_OVERNIGHT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode != 0
+    output = f"{completed.stdout}\n{completed.stderr}"
+    assert "startup failed:" in output

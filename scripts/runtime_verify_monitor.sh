@@ -9,6 +9,7 @@ INTERVAL_SEC="${INTERVAL_SEC:-60}"
 MAX_HOURS="${MAX_HOURS:-24}"
 MAX_LOOPS="${MAX_LOOPS:-0}"
 POLICY_TZ="${POLICY_TZ:-Asia/Seoul}"
+DASHBOARD_PORT="${DASHBOARD_PORT:-8080}"
 
 cd "$ROOT_DIR"
 
@@ -79,10 +80,16 @@ while true; do
   if [ "$app_alive" -eq 0 ] && [ -n "$live_pids" ]; then
     app_alive=1
   fi
-  ss -ltnp 2>/dev/null | rg -q ':8080' && port_alive=1
-  log "[HEARTBEAT] run_log=${latest_run:-none} app_alive=$app_alive watchdog_alive=$wd_alive port8080=$port_alive live_pids=${live_pids:-none}"
+  ss -ltnp 2>/dev/null | rg -q ":${DASHBOARD_PORT}\\b" && port_alive=1
+  log "[HEARTBEAT] run_log=${latest_run:-none} app_alive=$app_alive watchdog_alive=$wd_alive port=${DASHBOARD_PORT} alive=$port_alive live_pids=${live_pids:-none}"
 
-  if [ -z "$latest_run" ]; then
+  defer_log_checks=0
+  if [ -z "$latest_run" ] && [ "$app_alive" -eq 1 ]; then
+    defer_log_checks=1
+    log "[INFO] run log not yet available; defer log-based coverage checks"
+  fi
+
+  if [ -z "$latest_run" ] && [ "$defer_log_checks" -eq 0 ]; then
     log "[ANOMALY] no run log found"
   fi
 
@@ -98,7 +105,11 @@ while true; do
       not_observed=$((not_observed+1))
     fi
   fi
-  if [ -n "$latest_run" ]; then
+  if [ "$defer_log_checks" -eq 1 ]; then
+    for deferred in KR_LOOP NXT_PATH US_PRE_PATH US_DAY_PATH US_AFTER_PATH ORDER_POLICY_SESSION; do
+      log "[COVERAGE] ${deferred}=DEFERRED reason=no_run_log_process_alive"
+    done
+  elif [ -n "$latest_run" ]; then
     check_signal "KR_LOOP" "Processing market: Korea Exchange" "$latest_run" || not_observed=$((not_observed+1))
     check_signal "NXT_PATH" "NXT_PRE|NXT_AFTER|session=NXT_" "$latest_run" || not_observed=$((not_observed+1))
     check_signal "US_PRE_PATH" "US_PRE|session=US_PRE" "$latest_run" || not_observed=$((not_observed+1))
@@ -126,7 +137,9 @@ while true; do
     is_weekend=1
   fi
 
-  if [ "$is_weekend" -eq 1 ]; then
+  if [ "$defer_log_checks" -eq 1 ]; then
+    log "[FORBIDDEN] WEEKEND_KR_SESSION_ACTIVE=SKIP reason=no_run_log_process_alive"
+  elif [ "$is_weekend" -eq 1 ]; then
     # Weekend policy: KR regular session loop must never appear.
     if [ -n "$latest_run" ]; then
       check_forbidden "WEEKEND_KR_SESSION_ACTIVE" \

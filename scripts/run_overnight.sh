@@ -36,7 +36,20 @@ WATCHDOG_PID_FILE="$LOG_DIR/watchdog.pid"
 
 is_port_in_use() {
     local port="$1"
-    ss -ltn 2>/dev/null | grep -Eq ":${port}[[:space:]]"
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | grep -Eq ":${port}[[:space:]]"
+        return $?
+    fi
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+        return $?
+    fi
+    if command -v netstat >/dev/null 2>&1; then
+        netstat -ltn 2>/dev/null | grep -Eq "[:.]${port}[[:space:]]"
+        return $?
+    fi
+    # No supported socket inspection command found.
+    return 1
 }
 
 if [ -f "$PID_FILE" ]; then
@@ -53,7 +66,8 @@ if [[ "$APP_CMD" == *"--dashboard"* ]] && is_port_in_use "$dashboard_port"; then
     exit 1
 fi
 
-# `env` keeps inline VAR=value prefixes in APP_CMD working with `exec`.
+# `APP_CMD` is treated as a shell command string.
+# If executable paths include spaces, they must be quoted inside APP_CMD.
 nohup bash -lc "exec env $APP_CMD" >>"$RUN_LOG" 2>&1 &
 app_pid=$!
 echo "$app_pid" > "$PID_FILE"
