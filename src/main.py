@@ -2084,6 +2084,15 @@ async def trading_cycle(
                 quantity=quantity,
                 price=order_price,
             )
+            if result.get("rt_cd", "0") != "0":
+                order_succeeded = False
+                msg1 = result.get("msg1") or ""
+                logger.warning(
+                    "KR order not accepted for %s: rt_cd=%s msg=%s",
+                    stock_code,
+                    result.get("rt_cd"),
+                    msg1,
+                )
         else:
             # For overseas orders, always use limit orders (지정가):
             # - KIS market orders (ORD_DVSN=01) calculate quantity based on upper limit
@@ -3293,6 +3302,15 @@ async def run_daily_session(
                             quantity=quantity,
                             price=order_price,
                         )
+                        if result.get("rt_cd", "0") != "0":
+                            order_succeeded = False
+                            daily_msg1 = result.get("msg1") or ""
+                            logger.warning(
+                                "KR order not accepted for %s: rt_cd=%s msg=%s",
+                                stock_code,
+                                result.get("rt_cd"),
+                                daily_msg1,
+                            )
                     else:
                         # KIS VTS only accepts limit orders; use 0.5% premium for BUY
                         if decision.action == "BUY":

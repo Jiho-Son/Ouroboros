@@ -914,6 +914,46 @@ class TestTradingCycleTelegramIntegration:
         mock_telegram.notify_trade_execution.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_kr_rejected_order_does_not_notify_or_log_trade(
+        self,
+        mock_broker: MagicMock,
+        mock_overseas_broker: MagicMock,
+        mock_scenario_engine: MagicMock,
+        mock_playbook: DayPlaybook,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_market: MagicMock,
+    ) -> None:
+        """KR orders rejected by KIS should not trigger success side effects."""
+        mock_broker.send_order = AsyncMock(
+            return_value={"rt_cd": "1", "msg1": "장운영시간이 아닙니다."}
+        )
+
+        with patch("src.main.log_trade") as mock_log_trade:
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=mock_overseas_broker,
+                scenario_engine=mock_scenario_engine,
+                playbook=mock_playbook,
+                risk=mock_risk,
+                db_conn=mock_db,
+                decision_logger=mock_decision_logger,
+                context_store=mock_context_store,
+                criticality_assessor=mock_criticality_assessor,
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        mock_telegram.notify_trade_execution.assert_not_called()
+        mock_log_trade.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_fat_finger_notification_sent(
         self,
         mock_broker: MagicMock,
