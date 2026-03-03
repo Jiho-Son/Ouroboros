@@ -101,7 +101,8 @@ def test_run_overnight_writes_live_pid_and_watchdog_pid(tmp_path: Path) -> None:
             "TMUX_AUTO": "false",
             "STARTUP_GRACE_SEC": "1",
             "CHECK_INTERVAL": "2",
-            "APP_CMD": "sleep 10",
+            "APP_CMD_BIN": "sleep",
+            "APP_CMD_ARGS": "10",
         }
     )
     completed = subprocess.run(
@@ -137,7 +138,7 @@ def test_run_overnight_fails_when_process_exits_before_grace_period(tmp_path: Pa
             "LOG_DIR": str(log_dir),
             "TMUX_AUTO": "false",
             "STARTUP_GRACE_SEC": "1",
-            "APP_CMD": "false",
+            "APP_CMD_BIN": "false",
         }
     )
     completed = subprocess.run(

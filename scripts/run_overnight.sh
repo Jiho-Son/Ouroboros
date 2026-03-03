@@ -10,9 +10,20 @@ TMUX_ATTACH="${TMUX_ATTACH:-true}"
 TMUX_SESSION_PREFIX="${TMUX_SESSION_PREFIX:-ouroboros_overnight}"
 STARTUP_GRACE_SEC="${STARTUP_GRACE_SEC:-3}"
 dashboard_port="${DASHBOARD_PORT:-8080}"
+APP_CMD_BIN="${APP_CMD_BIN:-}"
+APP_CMD_ARGS="${APP_CMD_ARGS:-}"
+RUNS_DASHBOARD="false"
 
-if [ -z "${APP_CMD:-}" ]; then
+if [ -n "$APP_CMD_BIN" ]; then
+    USE_DEFAULT_APP_CMD="false"
+    USE_SAFE_CUSTOM_APP_CMD="true"
+    APP_CMD="${APP_CMD_BIN} ${APP_CMD_ARGS}"
+    if [[ " $APP_CMD_ARGS " == *" --dashboard "* ]]; then
+        RUNS_DASHBOARD="true"
+    fi
+elif [ -z "${APP_CMD:-}" ]; then
     USE_DEFAULT_APP_CMD="true"
+    USE_SAFE_CUSTOM_APP_CMD="false"
     if [ -x ".venv/bin/python" ]; then
         PYTHON_BIN=".venv/bin/python"
     elif command -v python3 >/dev/null 2>&1; then
@@ -25,8 +36,13 @@ if [ -z "${APP_CMD:-}" ]; then
     fi
 
     APP_CMD="$PYTHON_BIN -m src.main --mode=live --dashboard"
+    RUNS_DASHBOARD="true"
 else
     USE_DEFAULT_APP_CMD="false"
+    USE_SAFE_CUSTOM_APP_CMD="false"
+    if [[ "$APP_CMD" == *"--dashboard"* ]]; then
+        RUNS_DASHBOARD="true"
+    fi
 fi
 
 mkdir -p "$LOG_DIR"
@@ -64,7 +80,7 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] starting: $APP_CMD" | tee -a "$RUN_LOG"
-if [[ "$APP_CMD" == *"--dashboard"* ]] && is_port_in_use "$dashboard_port"; then
+if [ "$RUNS_DASHBOARD" = "true" ] && is_port_in_use "$dashboard_port"; then
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] startup failed: dashboard port ${dashboard_port} already in use" | tee -a "$RUN_LOG"
     exit 1
 fi
@@ -72,6 +88,15 @@ fi
 if [ "$USE_DEFAULT_APP_CMD" = "true" ]; then
     # Default path avoids shell word-splitting on executable paths.
     nohup env DASHBOARD_PORT="$dashboard_port" "$PYTHON_BIN" -m src.main --mode=live --dashboard >>"$RUN_LOG" 2>&1 &
+elif [ "$USE_SAFE_CUSTOM_APP_CMD" = "true" ]; then
+    # Safer custom path: executable path is handled as a single token.
+    if [ -n "$APP_CMD_ARGS" ]; then
+        # shellcheck disable=SC2206
+        app_args=( $APP_CMD_ARGS )
+        nohup env DASHBOARD_PORT="$dashboard_port" "$APP_CMD_BIN" "${app_args[@]}" >>"$RUN_LOG" 2>&1 &
+    else
+        nohup env DASHBOARD_PORT="$dashboard_port" "$APP_CMD_BIN" >>"$RUN_LOG" 2>&1 &
+    fi
 else
     # Custom APP_CMD is treated as a shell command string.
     # If executable paths include spaces, they must be quoted inside APP_CMD.
