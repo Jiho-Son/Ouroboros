@@ -14,6 +14,16 @@ APP_CMD_BIN="${APP_CMD_BIN:-}"
 APP_CMD_ARGS="${APP_CMD_ARGS:-}"
 RUNS_DASHBOARD="false"
 
+# Custom override contract:
+# 1) Preferred: APP_CMD_BIN + APP_CMD_ARGS
+#    - APP_CMD_BIN is treated as a single executable token.
+#    - APP_CMD_ARGS uses shell-style word splitting; quote/escape inside this
+#      variable is NOT preserved as a nested shell parse.
+# 2) Legacy fallback: APP_CMD (raw shell command string)
+#    - This path remains for backward compatibility.
+#    - When APP_CMD includes --dashboard, caller should include explicit
+#      DASHBOARD_PORT assignment in APP_CMD if non-default port is required.
+
 if [ -n "$APP_CMD_BIN" ]; then
     USE_DEFAULT_APP_CMD="false"
     USE_SAFE_CUSTOM_APP_CMD="true"
@@ -100,6 +110,7 @@ elif [ "$USE_SAFE_CUSTOM_APP_CMD" = "true" ]; then
 else
     # Custom APP_CMD is treated as a shell command string.
     # If executable paths include spaces, they must be quoted inside APP_CMD.
+    # Legacy compatibility path: caller owns quoting and env var injection.
     nohup bash -lc "exec env $APP_CMD" >>"$RUN_LOG" 2>&1 &
 fi
 app_pid=$!
