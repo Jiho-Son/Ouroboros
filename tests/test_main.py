@@ -1,5 +1,6 @@
 """Tests for main trading loop integration."""
 
+import asyncio
 from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -42,6 +43,7 @@ from src.main import (
     _retry_connection,
     _run_context_scheduler,
     _run_evolution_loop,
+    _run_markets_in_parallel,
     _should_block_overseas_buy_for_fx_buffer,
     _should_force_exit_for_overnight,
     _should_rescan_market,
@@ -173,6 +175,31 @@ class TestRealtimeSessionStateHelpers:
             rescan_interval=300.0,
             session_changed=False,
         )
+
+
+class TestMarketParallelRunner:
+    """Tests for market-level parallel processing helper."""
+
+    @pytest.mark.asyncio
+    async def test_run_markets_in_parallel_runs_all_markets(self) -> None:
+        processed: list[str] = []
+
+        async def _processor(market: str) -> None:
+            await asyncio.sleep(0.01)
+            processed.append(market)
+
+        await _run_markets_in_parallel(["KR", "US_NASDAQ", "US_NYSE"], _processor)
+        assert set(processed) == {"KR", "US_NASDAQ", "US_NYSE"}
+
+    @pytest.mark.asyncio
+    async def test_run_markets_in_parallel_propagates_errors(self) -> None:
+        async def _processor(market: str) -> None:
+            if market == "US_NASDAQ":
+                raise RuntimeError("boom")
+            await asyncio.sleep(0.01)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await _run_markets_in_parallel(["KR", "US_NASDAQ"], _processor)
 
     def test_returns_zero_when_field_absent(self) -> None:
         """Returns 0.0 when pchs_avg_pric key is missing entirely."""
