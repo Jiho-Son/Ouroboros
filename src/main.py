@@ -3550,6 +3550,20 @@ def _run_context_scheduler(
         )
 
 
+def _has_market_session_transition(
+    market_states: dict[str, str], market_code: str, session_id: str
+) -> bool:
+    """Return True when market session changed (or market has no prior state)."""
+    return market_states.get(market_code) != session_id
+
+
+def _should_rescan_market(
+    *, last_scan: float, now_timestamp: float, rescan_interval: float, session_changed: bool
+) -> bool:
+    """Force rescan on session transition; otherwise follow interval cadence."""
+    return session_changed or (now_timestamp - last_scan >= rescan_interval)
+
+
 async def _run_evolution_loop(
     evolution_optimizer: EvolutionOptimizer,
     telegram: TelegramClient,
@@ -4063,7 +4077,7 @@ async def run(settings: Settings) -> None:
     last_scan_time: dict[str, float] = {}
 
     # Track market open/close state for notifications
-    _market_states: dict[str, bool] = {}  # market_code -> is_open
+    _market_states: dict[str, str] = {}  # market_code -> session_id
 
     # Trading control events
     shutdown = asyncio.Event()
@@ -4181,8 +4195,8 @@ async def run(settings: Settings) -> None:
 
                 if not open_markets:
                     # Notify market close for any markets that were open
-                    for market_code, is_open in list(_market_states.items()):
-                        if is_open:
+                    for market_code, session_id in list(_market_states.items()):
+                        if session_id:
                             try:
                                 from src.markets.schedule import MARKETS
 
@@ -4199,7 +4213,7 @@ async def run(settings: Settings) -> None:
                                     )
                             except Exception as exc:
                                 logger.warning("Market close notification failed: %s", exc)
-                            _market_states[market_code] = False
+                            _market_states.pop(market_code, None)
                             # Clear playbook for closed market (new one generated next open)
                             playbooks.pop(market_code, None)
 
@@ -4245,13 +4259,16 @@ async def run(settings: Settings) -> None:
                         settings=settings,
                     )
 
-                    # Notify market open if it just opened
-                    if not _market_states.get(market.code, False):
+                    # Notify on market/session transition (e.g., US_PRE -> US_REG)
+                    session_changed = _has_market_session_transition(
+                        _market_states, market.code, session_info.session_id
+                    )
+                    if session_changed:
                         try:
                             await telegram.notify_market_open(market.name)
                         except Exception as exc:
                             logger.warning("Market open notification failed: %s", exc)
-                        _market_states[market.code] = True
+                        _market_states[market.code] = session_info.session_id
 
                     # Check and handle domestic pending (unfilled) limit orders.
                     if market.is_domestic:
@@ -4283,7 +4300,12 @@ async def run(settings: Settings) -> None:
                     now_timestamp = asyncio.get_event_loop().time()
                     last_scan = last_scan_time.get(market.code, 0.0)
                     rescan_interval = settings.RESCAN_INTERVAL_SECONDS
-                    if now_timestamp - last_scan >= rescan_interval:
+                    if _should_rescan_market(
+                        last_scan=last_scan,
+                        now_timestamp=now_timestamp,
+                        rescan_interval=rescan_interval,
+                        session_changed=session_changed,
+                    ):
                         try:
                             logger.info("Smart Scanner: Scanning %s market", market.name)
 

@@ -165,6 +165,17 @@ class TestGetOpenMarkets:
         )
         assert {m.code for m in extended} == {"US_NASDAQ", "US_NYSE", "US_AMEX"}
 
+    def test_get_open_markets_excludes_us_day_when_extended_enabled(self) -> None:
+        """US_DAY should be treated as non-tradable even in extended-session lookup."""
+        # Monday 2026-02-02 10:30 KST = 01:30 UTC (US_DAY by session classification)
+        test_time = datetime(2026, 2, 2, 1, 30, tzinfo=ZoneInfo("UTC"))
+        extended = get_open_markets(
+            enabled_markets=["US_NASDAQ", "US_NYSE", "US_AMEX"],
+            now=test_time,
+            include_extended_sessions=True,
+        )
+        assert extended == []
+
 
 class TestGetNextMarketOpen:
     """Test get_next_market_open function."""
@@ -214,8 +225,8 @@ class TestGetNextMarketOpen:
     def test_get_next_market_open_prefers_extended_session(self) -> None:
         """Extended lookup should return premarket open time before regular open."""
         # Monday 2026-02-02 07:00 EST = 12:00 UTC
-        # By v3 KST session rules, US is OFF only in KST 07:00-10:00 (UTC 22:00-01:00).
-        # At 12:00 UTC market is active, so next OFF->ON transition is 01:00 UTC next day.
+        # US_DAY is treated as non-tradable in extended lookup, so after entering
+        # US_DAY the next tradable OFF->ON transition is US_PRE at 09:00 UTC next day.
         test_time = datetime(2026, 2, 2, 12, 0, tzinfo=ZoneInfo("UTC"))
         market, next_open = get_next_market_open(
             enabled_markets=["US_NASDAQ"],
@@ -223,7 +234,7 @@ class TestGetNextMarketOpen:
             include_extended_sessions=True,
         )
         assert market.code == "US_NASDAQ"
-        assert next_open == datetime(2026, 2, 3, 1, 0, tzinfo=ZoneInfo("UTC"))
+        assert next_open == datetime(2026, 2, 3, 9, 0, tzinfo=ZoneInfo("UTC"))
 
 
 class TestExpandMarketCodes:
