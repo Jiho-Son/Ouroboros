@@ -207,7 +207,7 @@ def get_open_markets(
             from src.core.order_policy import classify_session_id
 
             session_id = classify_session_id(market, now)
-            return session_id not in {"KR_OFF", "US_OFF"}
+            return session_id not in {"KR_OFF", "US_OFF", "US_DAY"}
         return is_market_open(market, now)
 
     open_markets = [
@@ -254,10 +254,10 @@ def get_next_market_open(
         from src.core.order_policy import classify_session_id
 
         ts = start_utc.astimezone(ZoneInfo("UTC")).replace(second=0, microsecond=0)
-        prev_active = classify_session_id(market, ts) not in {"KR_OFF", "US_OFF"}
+        prev_active = classify_session_id(market, ts) not in {"KR_OFF", "US_OFF", "US_DAY"}
         for _ in range(7 * 24 * 60):
             ts = ts + timedelta(minutes=1)
-            active = classify_session_id(market, ts) not in {"KR_OFF", "US_OFF"}
+            active = classify_session_id(market, ts) not in {"KR_OFF", "US_OFF", "US_DAY"}
             if active and not prev_active:
                 return ts
             prev_active = active

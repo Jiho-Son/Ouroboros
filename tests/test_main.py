@@ -33,6 +33,7 @@ from src.main import (
     _extract_avg_price_from_balance,
     _extract_held_codes_from_balance,
     _extract_held_qty_from_balance,
+    _has_market_session_transition,
     _handle_market_close,
     _inject_staged_exit_features,
     _maybe_queue_order_intent,
@@ -41,6 +42,7 @@ from src.main import (
     _retry_connection,
     _run_context_scheduler,
     _run_evolution_loop,
+    _should_rescan_market,
     _should_block_overseas_buy_for_fx_buffer,
     _should_force_exit_for_overnight,
     _split_trade_pnl_components,
@@ -139,6 +141,38 @@ class TestExtractAvgPriceFromBalance:
         balance = {"output1": [{"ovrs_pdno": "AAPL", "pchs_avg_pric": "170.50"}]}
         result = _extract_avg_price_from_balance(balance, "AAPL", is_domestic=False)
         assert result == 170.5
+
+
+class TestRealtimeSessionStateHelpers:
+    """Tests for realtime loop session-transition/rescan helper logic."""
+
+    def test_has_market_session_transition_when_state_missing(self) -> None:
+        states: dict[str, str] = {}
+        assert _has_market_session_transition(states, "US_NASDAQ", "US_REG")
+
+    def test_has_market_session_transition_when_session_changes(self) -> None:
+        states = {"US_NASDAQ": "US_PRE"}
+        assert _has_market_session_transition(states, "US_NASDAQ", "US_REG")
+
+    def test_has_market_session_transition_false_when_same_session(self) -> None:
+        states = {"US_NASDAQ": "US_REG"}
+        assert not _has_market_session_transition(states, "US_NASDAQ", "US_REG")
+
+    def test_should_rescan_market_forces_on_session_transition(self) -> None:
+        assert _should_rescan_market(
+            last_scan=1000.0,
+            now_timestamp=1050.0,
+            rescan_interval=300.0,
+            session_changed=True,
+        )
+
+    def test_should_rescan_market_uses_interval_without_transition(self) -> None:
+        assert not _should_rescan_market(
+            last_scan=1000.0,
+            now_timestamp=1050.0,
+            rescan_interval=300.0,
+            session_changed=False,
+        )
 
     def test_returns_zero_when_field_absent(self) -> None:
         """Returns 0.0 when pchs_avg_pric key is missing entirely."""
