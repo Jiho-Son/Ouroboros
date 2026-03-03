@@ -12,6 +12,7 @@ STARTUP_GRACE_SEC="${STARTUP_GRACE_SEC:-3}"
 dashboard_port="${DASHBOARD_PORT:-8080}"
 
 if [ -z "${APP_CMD:-}" ]; then
+    USE_DEFAULT_APP_CMD="true"
     if [ -x ".venv/bin/python" ]; then
         PYTHON_BIN=".venv/bin/python"
     elif command -v python3 >/dev/null 2>&1; then
@@ -23,7 +24,9 @@ if [ -z "${APP_CMD:-}" ]; then
         exit 1
     fi
 
-    APP_CMD="DASHBOARD_PORT=$dashboard_port $PYTHON_BIN -m src.main --mode=live --dashboard"
+    APP_CMD="$PYTHON_BIN -m src.main --mode=live --dashboard"
+else
+    USE_DEFAULT_APP_CMD="false"
 fi
 
 mkdir -p "$LOG_DIR"
@@ -66,9 +69,14 @@ if [[ "$APP_CMD" == *"--dashboard"* ]] && is_port_in_use "$dashboard_port"; then
     exit 1
 fi
 
-# `APP_CMD` is treated as a shell command string.
-# If executable paths include spaces, they must be quoted inside APP_CMD.
-nohup bash -lc "exec env $APP_CMD" >>"$RUN_LOG" 2>&1 &
+if [ "$USE_DEFAULT_APP_CMD" = "true" ]; then
+    # Default path avoids shell word-splitting on executable paths.
+    nohup env DASHBOARD_PORT="$dashboard_port" "$PYTHON_BIN" -m src.main --mode=live --dashboard >>"$RUN_LOG" 2>&1 &
+else
+    # Custom APP_CMD is treated as a shell command string.
+    # If executable paths include spaces, they must be quoted inside APP_CMD.
+    nohup bash -lc "exec env $APP_CMD" >>"$RUN_LOG" 2>&1 &
+fi
 app_pid=$!
 echo "$app_pid" > "$PID_FILE"
 
@@ -82,11 +90,13 @@ echo "$watchdog_pid" > "$WATCHDOG_PID_FILE"
 sleep "$STARTUP_GRACE_SEC"
 if ! kill -0 "$app_pid" 2>/dev/null; then
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] startup failed: app process exited early (pid=$app_pid)" | tee -a "$RUN_LOG"
+    [ -n "${watchdog_pid:-}" ] && kill "$watchdog_pid" 2>/dev/null || true
     tail -n 20 "$RUN_LOG" || true
     exit 1
 fi
 if ! kill -0 "$watchdog_pid" 2>/dev/null; then
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] startup failed: watchdog exited early (pid=$watchdog_pid)" | tee -a "$WATCHDOG_LOG"
+    kill "$app_pid" 2>/dev/null || true
     tail -n 20 "$WATCHDOG_LOG" || true
     exit 1
 fi

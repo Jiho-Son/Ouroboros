@@ -6,6 +6,8 @@ import socket
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUN_OVERNIGHT = REPO_ROOT / "scripts" / "run_overnight.sh"
 RUNTIME_MONITOR = REPO_ROOT / "scripts" / "runtime_verify_monitor.sh"
@@ -149,3 +151,9 @@ def test_run_overnight_fails_when_process_exits_before_grace_period(tmp_path: Pa
     assert completed.returncode != 0
     output = f"{completed.stdout}\n{completed.stderr}"
     assert "startup failed:" in output
+
+    watchdog_pid_file = log_dir / "watchdog.pid"
+    if watchdog_pid_file.exists():
+        watchdog_pid = int(watchdog_pid_file.read_text(encoding="utf-8").strip())
+        with pytest.raises(ProcessLookupError):
+            os.kill(watchdog_pid, 0)

@@ -52,6 +52,24 @@ check_forbidden() {
   return 0
 }
 
+is_port_listening() {
+  local port="$1"
+
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn 2>/dev/null | grep -Eq ":${port}[[:space:]]"
+    return $?
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+    return $?
+  fi
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -ltn 2>/dev/null | grep -Eq "[:.]${port}[[:space:]]"
+    return $?
+  fi
+  return 1
+}
+
 log "[INFO] runtime verify monitor started interval=${INTERVAL_SEC}s max_hours=${MAX_HOURS} policy_tz=${POLICY_TZ}"
 
 while true; do
@@ -80,7 +98,7 @@ while true; do
   if [ "$app_alive" -eq 0 ] && [ -n "$live_pids" ]; then
     app_alive=1
   fi
-  ss -ltnp 2>/dev/null | rg -q ":${DASHBOARD_PORT}\\b" && port_alive=1
+  is_port_listening "$DASHBOARD_PORT" && port_alive=1
   log "[HEARTBEAT] run_log=${latest_run:-none} app_alive=$app_alive watchdog_alive=$wd_alive port=${DASHBOARD_PORT} alive=$port_alive live_pids=${live_pids:-none}"
 
   defer_log_checks=0
