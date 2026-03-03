@@ -36,7 +36,7 @@ WATCHDOG_PID_FILE="$LOG_DIR/watchdog.pid"
 
 is_port_in_use() {
     local port="$1"
-    ss -ltn 2>/dev/null | rg -q ":${port}\\b"
+    ss -ltn 2>/dev/null | grep -Eq ":${port}[[:space:]]"
 }
 
 if [ -f "$PID_FILE" ]; then
@@ -53,7 +53,8 @@ if [[ "$APP_CMD" == *"--dashboard"* ]] && is_port_in_use "$dashboard_port"; then
     exit 1
 fi
 
-nohup bash -lc "exec $APP_CMD" >>"$RUN_LOG" 2>&1 &
+# `env` keeps inline VAR=value prefixes in APP_CMD working with `exec`.
+nohup bash -lc "exec env $APP_CMD" >>"$RUN_LOG" 2>&1 &
 app_pid=$!
 echo "$app_pid" > "$PID_FILE"
 
