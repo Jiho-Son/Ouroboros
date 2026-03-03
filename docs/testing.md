@@ -2,7 +2,7 @@
 
 ## Test Structure
 
-**551 tests** across **25 files**. `asyncio_mode = "auto"` in pyproject.toml — async tests need no special decorator.
+**998 tests** across **41 files**. `asyncio_mode = "auto"` in pyproject.toml — async tests need no special decorator.
 
 The `settings` fixture in `conftest.py` provides safe defaults with test credentials and in-memory DB.
 
@@ -22,6 +22,8 @@ The `settings` fixture in `conftest.py` provides safe defaults with test credent
 - Hash key generation
 - Network error handling
 - SSL context configuration
+
+> **Note**: 아래 파일별 테스트 수는 릴리즈 시점 스냅샷이며 실제 수치와 다를 수 있습니다. 현재 정확한 수치는 `pytest --collect-only -q`로 확인하세요.
 
 ##### `tests/test_brain.py` (24 tests)
 - Valid JSON parsing and markdown-wrapped JSON handling
@@ -90,7 +92,7 @@ The `settings` fixture in `conftest.py` provides safe defaults with test credent
 - Python-first filtering pipeline
 - RSI and volume ratio filter logic
 - Candidate scoring and ranking
-- Fallback to static watchlist
+- Fallback to static watchlist (domestic) or dynamic universe (overseas)
 
 #### Context & Memory
 
@@ -138,8 +140,8 @@ The `settings` fixture in `conftest.py` provides safe defaults with test credent
 #### Dashboard
 
 ##### `tests/test_dashboard.py` (14 tests)
-- FastAPI endpoint responses (8 API routes)
-- Status, playbook, scorecard, performance, context, decisions, scenarios
+- FastAPI endpoint responses (10 API routes)
+- Status, playbook, scorecard, performance, context, decisions, scenarios, pnl/history, positions
 - Query parameter handling (market, date, limit)
 
 #### Performance & Quality
@@ -180,6 +182,29 @@ pytest -v --cov=src --cov-report=term-missing
 ```
 
 **Note:** `main.py` has lower coverage as it contains the main loop which is tested via integration/manual testing.
+
+## Backtest Automation Gate
+
+백테스트 관련 검증은 `scripts/backtest_gate.sh`와 `.github/workflows/backtest-gate.yml`로 자동 실행된다.
+
+- PR: 변경 파일 기준 `auto` 모드
+- `feature/**` push: 변경 파일 기준 `auto` 모드
+- Daily schedule: `full` 강제 실행
+- Manual dispatch: `mode`(`auto|smoke|full`) 지정 가능
+
+실행 기준:
+- `src/analysis/`, `src/strategy/`, `src/strategies/`, `src/main.py`, `src/markets/`, `src/broker/`
+- 백테스트 핵심 테스트 파일 변경
+- `docs/ouroboros/` 변경
+
+`auto` 모드에서 백테스트 민감 영역 변경이 없으면 게이트는 `skip` 처리되며 실패로 간주하지 않는다.
+
+로컬 수동 실행:
+```bash
+bash scripts/backtest_gate.sh
+BACKTEST_MODE=full bash scripts/backtest_gate.sh
+BASE_REF=origin/feature/v3-session-policy-stream BACKTEST_MODE=auto bash scripts/backtest_gate.sh
+```
 
 ## Test Configuration
 

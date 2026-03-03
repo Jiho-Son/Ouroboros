@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 import sys
-import tempfile
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -48,7 +47,9 @@ def temp_db(tmp_path: Path) -> Path:
 
     cursor.executemany(
         """
-        INSERT INTO trades (timestamp, stock_code, action, quantity, price, confidence, rationale, pnl)
+        INSERT INTO trades (
+            timestamp, stock_code, action, quantity, price, confidence, rationale, pnl
+        )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         test_trades,
@@ -73,9 +74,7 @@ class TestBackupExporter:
         exporter = BackupExporter(str(temp_db))
         output_dir = tmp_path / "exports"
 
-        results = exporter.export_all(
-            output_dir, formats=[ExportFormat.JSON], compress=False
-        )
+        results = exporter.export_all(output_dir, formats=[ExportFormat.JSON], compress=False)
 
         assert ExportFormat.JSON in results
         assert results[ExportFormat.JSON].exists()
@@ -86,9 +85,7 @@ class TestBackupExporter:
         exporter = BackupExporter(str(temp_db))
         output_dir = tmp_path / "exports"
 
-        results = exporter.export_all(
-            output_dir, formats=[ExportFormat.JSON], compress=True
-        )
+        results = exporter.export_all(output_dir, formats=[ExportFormat.JSON], compress=True)
 
         assert ExportFormat.JSON in results
         assert results[ExportFormat.JSON].suffix == ".gz"
@@ -98,15 +95,13 @@ class TestBackupExporter:
         exporter = BackupExporter(str(temp_db))
         output_dir = tmp_path / "exports"
 
-        results = exporter.export_all(
-            output_dir, formats=[ExportFormat.CSV], compress=False
-        )
+        results = exporter.export_all(output_dir, formats=[ExportFormat.CSV], compress=False)
 
         assert ExportFormat.CSV in results
         assert results[ExportFormat.CSV].exists()
 
         # Verify CSV content
-        with open(results[ExportFormat.CSV], "r") as f:
+        with open(results[ExportFormat.CSV]) as f:
             lines = f.readlines()
             assert len(lines) == 4  # Header + 3 rows
 
@@ -146,7 +141,7 @@ class TestBackupExporter:
         # Should only have 1 trade (AAPL on Jan 2)
         import json
 
-        with open(results[ExportFormat.JSON], "r") as f:
+        with open(results[ExportFormat.JSON]) as f:
             data = json.load(f)
             assert data["record_count"] == 1
             assert data["trades"][0]["stock_code"] == "AAPL"
@@ -407,9 +402,7 @@ class TestBackupExporterAdditional:
         assert ExportFormat.JSON in results
         assert ExportFormat.CSV in results
 
-    def test_export_all_logs_error_on_failure(
-        self, temp_db: Path, tmp_path: Path
-    ) -> None:
+    def test_export_all_logs_error_on_failure(self, temp_db: Path, tmp_path: Path) -> None:
         """export_all must log an error and continue when one format fails."""
         exporter = BackupExporter(str(temp_db))
         # Patch _export_format to raise on JSON, succeed on CSV
@@ -430,9 +423,7 @@ class TestBackupExporterAdditional:
         assert ExportFormat.JSON not in results
         assert ExportFormat.CSV in results
 
-    def test_export_csv_empty_trades_no_compress(
-        self, empty_db: Path, tmp_path: Path
-    ) -> None:
+    def test_export_csv_empty_trades_no_compress(self, empty_db: Path, tmp_path: Path) -> None:
         """CSV export with no trades and compress=False must write header row only."""
         exporter = BackupExporter(str(empty_db))
         results = exporter.export_all(
@@ -446,9 +437,7 @@ class TestBackupExporterAdditional:
         content = out.read_text()
         assert "timestamp" in content
 
-    def test_export_csv_empty_trades_compressed(
-        self, empty_db: Path, tmp_path: Path
-    ) -> None:
+    def test_export_csv_empty_trades_compressed(self, empty_db: Path, tmp_path: Path) -> None:
         """CSV export with no trades and compress=True must write gzipped header."""
         import gzip
 
@@ -465,9 +454,7 @@ class TestBackupExporterAdditional:
             content = f.read()
         assert "timestamp" in content
 
-    def test_export_csv_with_data_compressed(
-        self, temp_db: Path, tmp_path: Path
-    ) -> None:
+    def test_export_csv_with_data_compressed(self, temp_db: Path, tmp_path: Path) -> None:
         """CSV export with data and compress=True must write gzipped rows."""
         import gzip
 
@@ -492,6 +479,7 @@ class TestBackupExporterAdditional:
         with patch.dict(sys.modules, {"pyarrow": None, "pyarrow.parquet": None}):
             try:
                 import pyarrow  # noqa: F401
+
                 pytest.skip("pyarrow is installed; cannot test ImportError path")
             except ImportError:
                 pass
@@ -557,9 +545,7 @@ class TestCloudStorage:
                 importlib.reload(m)
                 m.CloudStorage(s3_config)
 
-    def test_upload_file_success(
-        self, mock_boto3_module, s3_config, tmp_path: Path
-    ) -> None:
+    def test_upload_file_success(self, mock_boto3_module, s3_config, tmp_path: Path) -> None:
         """upload_file must call client.upload_file and return the object key."""
         from src.backup.cloud_storage import CloudStorage
 
@@ -572,9 +558,7 @@ class TestCloudStorage:
         assert key == "backups/backup.json.gz"
         storage.client.upload_file.assert_called_once()
 
-    def test_upload_file_default_key(
-        self, mock_boto3_module, s3_config, tmp_path: Path
-    ) -> None:
+    def test_upload_file_default_key(self, mock_boto3_module, s3_config, tmp_path: Path) -> None:
         """upload_file without object_key must use the filename as key."""
         from src.backup.cloud_storage import CloudStorage
 
@@ -586,9 +570,7 @@ class TestCloudStorage:
 
         assert key == "myfile.gz"
 
-    def test_upload_file_not_found(
-        self, mock_boto3_module, s3_config, tmp_path: Path
-    ) -> None:
+    def test_upload_file_not_found(self, mock_boto3_module, s3_config, tmp_path: Path) -> None:
         """upload_file must raise FileNotFoundError for missing files."""
         from src.backup.cloud_storage import CloudStorage
 
@@ -611,9 +593,7 @@ class TestCloudStorage:
         with pytest.raises(RuntimeError, match="network error"):
             storage.upload_file(test_file)
 
-    def test_download_file_success(
-        self, mock_boto3_module, s3_config, tmp_path: Path
-    ) -> None:
+    def test_download_file_success(self, mock_boto3_module, s3_config, tmp_path: Path) -> None:
         """download_file must call client.download_file and return local path."""
         from src.backup.cloud_storage import CloudStorage
 
@@ -637,11 +617,8 @@ class TestCloudStorage:
         with pytest.raises(RuntimeError, match="timeout"):
             storage.download_file("key", tmp_path / "dest.gz")
 
-    def test_list_files_returns_objects(
-        self, mock_boto3_module, s3_config
-    ) -> None:
+    def test_list_files_returns_objects(self, mock_boto3_module, s3_config) -> None:
         """list_files must return parsed file metadata from S3 response."""
-        from datetime import timezone
 
         from src.backup.cloud_storage import CloudStorage
 
@@ -651,7 +628,7 @@ class TestCloudStorage:
                 {
                     "Key": "backups/a.gz",
                     "Size": 1024,
-                    "LastModified": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    "LastModified": datetime(2026, 1, 1, tzinfo=UTC),
                     "ETag": '"abc123"',
                 }
             ]
@@ -662,9 +639,7 @@ class TestCloudStorage:
         assert files[0]["key"] == "backups/a.gz"
         assert files[0]["size_bytes"] == 1024
 
-    def test_list_files_empty_bucket(
-        self, mock_boto3_module, s3_config
-    ) -> None:
+    def test_list_files_empty_bucket(self, mock_boto3_module, s3_config) -> None:
         """list_files must return empty list when bucket has no objects."""
         from src.backup.cloud_storage import CloudStorage
 
@@ -674,9 +649,7 @@ class TestCloudStorage:
         files = storage.list_files()
         assert files == []
 
-    def test_list_files_propagates_error(
-        self, mock_boto3_module, s3_config
-    ) -> None:
+    def test_list_files_propagates_error(self, mock_boto3_module, s3_config) -> None:
         """list_files must re-raise exceptions from the boto3 client."""
         from src.backup.cloud_storage import CloudStorage
 
@@ -686,9 +659,7 @@ class TestCloudStorage:
         with pytest.raises(RuntimeError):
             storage.list_files()
 
-    def test_delete_file_success(
-        self, mock_boto3_module, s3_config
-    ) -> None:
+    def test_delete_file_success(self, mock_boto3_module, s3_config) -> None:
         """delete_file must call client.delete_object with the correct key."""
         from src.backup.cloud_storage import CloudStorage
 
@@ -698,9 +669,7 @@ class TestCloudStorage:
             Bucket="test-bucket", Key="backups/old.gz"
         )
 
-    def test_delete_file_propagates_error(
-        self, mock_boto3_module, s3_config
-    ) -> None:
+    def test_delete_file_propagates_error(self, mock_boto3_module, s3_config) -> None:
         """delete_file must re-raise exceptions from the boto3 client."""
         from src.backup.cloud_storage import CloudStorage
 
@@ -710,11 +679,8 @@ class TestCloudStorage:
         with pytest.raises(RuntimeError):
             storage.delete_file("backups/old.gz")
 
-    def test_get_storage_stats_success(
-        self, mock_boto3_module, s3_config
-    ) -> None:
+    def test_get_storage_stats_success(self, mock_boto3_module, s3_config) -> None:
         """get_storage_stats must aggregate file sizes correctly."""
-        from datetime import timezone
 
         from src.backup.cloud_storage import CloudStorage
 
@@ -724,13 +690,13 @@ class TestCloudStorage:
                 {
                     "Key": "a.gz",
                     "Size": 1024 * 1024,
-                    "LastModified": datetime(2026, 1, 1, tzinfo=timezone.utc),
+                    "LastModified": datetime(2026, 1, 1, tzinfo=UTC),
                     "ETag": '"x"',
                 },
                 {
                     "Key": "b.gz",
                     "Size": 1024 * 1024,
-                    "LastModified": datetime(2026, 1, 2, tzinfo=timezone.utc),
+                    "LastModified": datetime(2026, 1, 2, tzinfo=UTC),
                     "ETag": '"y"',
                 },
             ]
@@ -741,9 +707,7 @@ class TestCloudStorage:
         assert stats["total_size_bytes"] == 2 * 1024 * 1024
         assert stats["total_size_mb"] == pytest.approx(2.0)
 
-    def test_get_storage_stats_on_error(
-        self, mock_boto3_module, s3_config
-    ) -> None:
+    def test_get_storage_stats_on_error(self, mock_boto3_module, s3_config) -> None:
         """get_storage_stats must return error dict without raising on failure."""
         from src.backup.cloud_storage import CloudStorage
 
@@ -754,9 +718,7 @@ class TestCloudStorage:
         assert "error" in stats
         assert stats["total_files"] == 0
 
-    def test_verify_connection_success(
-        self, mock_boto3_module, s3_config
-    ) -> None:
+    def test_verify_connection_success(self, mock_boto3_module, s3_config) -> None:
         """verify_connection must return True when head_bucket succeeds."""
         from src.backup.cloud_storage import CloudStorage
 
@@ -764,9 +726,7 @@ class TestCloudStorage:
         result = storage.verify_connection()
         assert result is True
 
-    def test_verify_connection_failure(
-        self, mock_boto3_module, s3_config
-    ) -> None:
+    def test_verify_connection_failure(self, mock_boto3_module, s3_config) -> None:
         """verify_connection must return False when head_bucket raises."""
         from src.backup.cloud_storage import CloudStorage
 
@@ -776,9 +736,7 @@ class TestCloudStorage:
         result = storage.verify_connection()
         assert result is False
 
-    def test_enable_versioning(
-        self, mock_boto3_module, s3_config
-    ) -> None:
+    def test_enable_versioning(self, mock_boto3_module, s3_config) -> None:
         """enable_versioning must call put_bucket_versioning."""
         from src.backup.cloud_storage import CloudStorage
 
@@ -786,9 +744,7 @@ class TestCloudStorage:
         storage.enable_versioning()
         storage.client.put_bucket_versioning.assert_called_once()
 
-    def test_enable_versioning_propagates_error(
-        self, mock_boto3_module, s3_config
-    ) -> None:
+    def test_enable_versioning_propagates_error(self, mock_boto3_module, s3_config) -> None:
         """enable_versioning must re-raise exceptions from the boto3 client."""
         from src.backup.cloud_storage import CloudStorage
 

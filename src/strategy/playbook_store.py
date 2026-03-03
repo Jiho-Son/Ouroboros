@@ -6,7 +6,6 @@ Designed for the pre-market strategy system (one playbook per market per day).
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 from datetime import date
@@ -53,8 +52,10 @@ class PlaybookStore:
         row_id = cursor.lastrowid or 0
         logger.info(
             "Saved playbook for %s/%s (%d stocks, %d scenarios)",
-            playbook.date, playbook.market,
-            playbook.stock_count, playbook.scenario_count,
+            playbook.date,
+            playbook.market,
+            playbook.stock_count,
+            playbook.scenario_count,
         )
         return row_id
 

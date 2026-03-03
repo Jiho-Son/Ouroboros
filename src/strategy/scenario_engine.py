@@ -107,7 +107,9 @@ class ScenarioEngine:
         # 2. Find stock playbook
         stock_pb = playbook.get_stock_playbook(stock_code)
         if stock_pb is None:
-            logger.debug("No playbook for %s — defaulting to %s", stock_code, playbook.default_action)
+            logger.debug(
+                "No playbook for %s — defaulting to %s", stock_code, playbook.default_action
+            )
             return ScenarioMatch(
                 stock_code=stock_code,
                 matched_scenario=None,
@@ -135,7 +137,9 @@ class ScenarioEngine:
                 )
 
         # 4. No match — default action
-        logger.debug("No scenario matched for %s — defaulting to %s", stock_code, playbook.default_action)
+        logger.debug(
+            "No scenario matched for %s — defaulting to %s", stock_code, playbook.default_action
+        )
         return ScenarioMatch(
             stock_code=stock_code,
             matched_scenario=None,
@@ -198,17 +202,27 @@ class ScenarioEngine:
             checks.append(price is not None and price < condition.price_below)
 
         price_change_pct = self._safe_float(market_data.get("price_change_pct"))
-        if condition.price_change_pct_above is not None or condition.price_change_pct_below is not None:
+        if (
+            condition.price_change_pct_above is not None
+            or condition.price_change_pct_below is not None
+        ):
             if "price_change_pct" not in market_data:
                 self._warn_missing_key("price_change_pct")
         if condition.price_change_pct_above is not None:
-            checks.append(price_change_pct is not None and price_change_pct > condition.price_change_pct_above)
+            checks.append(
+                price_change_pct is not None and price_change_pct > condition.price_change_pct_above
+            )
         if condition.price_change_pct_below is not None:
-            checks.append(price_change_pct is not None and price_change_pct < condition.price_change_pct_below)
+            checks.append(
+                price_change_pct is not None and price_change_pct < condition.price_change_pct_below
+            )
 
         # Position-aware conditions
         unrealized_pnl_pct = self._safe_float(market_data.get("unrealized_pnl_pct"))
-        if condition.unrealized_pnl_pct_above is not None or condition.unrealized_pnl_pct_below is not None:
+        if (
+            condition.unrealized_pnl_pct_above is not None
+            or condition.unrealized_pnl_pct_below is not None
+        ):
             if "unrealized_pnl_pct" not in market_data:
                 self._warn_missing_key("unrealized_pnl_pct")
         if condition.unrealized_pnl_pct_above is not None:
@@ -227,15 +241,9 @@ class ScenarioEngine:
             if "holding_days" not in market_data:
                 self._warn_missing_key("holding_days")
         if condition.holding_days_above is not None:
-            checks.append(
-                holding_days is not None
-                and holding_days > condition.holding_days_above
-            )
+            checks.append(holding_days is not None and holding_days > condition.holding_days_above)
         if condition.holding_days_below is not None:
-            checks.append(
-                holding_days is not None
-                and holding_days < condition.holding_days_below
-            )
+            checks.append(holding_days is not None and holding_days < condition.holding_days_below)
 
         return len(checks) > 0 and all(checks)
 
@@ -295,9 +303,15 @@ class ScenarioEngine:
             details["volume_ratio"] = self._safe_float(market_data.get("volume_ratio"))
         if condition.price_above is not None or condition.price_below is not None:
             details["current_price"] = self._safe_float(market_data.get("current_price"))
-        if condition.price_change_pct_above is not None or condition.price_change_pct_below is not None:
+        if (
+            condition.price_change_pct_above is not None
+            or condition.price_change_pct_below is not None
+        ):
             details["price_change_pct"] = self._safe_float(market_data.get("price_change_pct"))
-        if condition.unrealized_pnl_pct_above is not None or condition.unrealized_pnl_pct_below is not None:
+        if (
+            condition.unrealized_pnl_pct_above is not None
+            or condition.unrealized_pnl_pct_below is not None
+        ):
             details["unrealized_pnl_pct"] = self._safe_float(market_data.get("unrealized_pnl_pct"))
         if condition.holding_days_above is not None or condition.holding_days_below is not None:
             details["holding_days"] = self._safe_float(market_data.get("holding_days"))

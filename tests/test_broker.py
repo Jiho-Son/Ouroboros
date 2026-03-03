@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -99,7 +99,10 @@ class TestTokenManagement:
         mock_resp_403 = AsyncMock()
         mock_resp_403.status = 403
         mock_resp_403.text = AsyncMock(
-            return_value='{"error_code":"EGW00133","error_description":"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)"}'
+            return_value=(
+                '{"error_code":"EGW00133","error_description":'
+                '"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)"}'
+            )
         )
         mock_resp_403.__aenter__ = AsyncMock(return_value=mock_resp_403)
         mock_resp_403.__aexit__ = AsyncMock(return_value=False)
@@ -232,9 +235,7 @@ class TestRateLimiter:
         mock_order_resp.__aenter__ = AsyncMock(return_value=mock_order_resp)
         mock_order_resp.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash_resp, mock_order_resp]
-        ):
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash_resp, mock_order_resp]):
             with patch.object(
                 broker._rate_limiter, "acquire", new_callable=AsyncMock
             ) as mock_acquire:
@@ -405,7 +406,7 @@ class TestFetchMarketRankings:
 # ---------------------------------------------------------------------------
 
 
-from src.broker.kis_api import kr_tick_unit, kr_round_down  # noqa: E402
+from src.broker.kis_api import kr_round_down, kr_tick_unit  # noqa: E402
 
 
 class TestKrTickUnit:
@@ -435,13 +436,13 @@ class TestKrTickUnit:
     @pytest.mark.parametrize(
         "price, expected_rounded",
         [
-            (188150, 188100),   # 100원 단위, 50원 잔여 → 내림
-            (188100, 188100),   # 이미 정렬됨
-            (75050, 75000),     # 100원 단위, 50원 잔여 → 내림
-            (49950, 49950),     # 50원 단위 정렬됨
-            (49960, 49950),     # 50원 단위, 10원 잔여 → 내림
-            (1999, 1999),       # 1원 단위 → 그대로
-            (5003, 5000),       # 10원 단위, 3원 잔여 → 내림
+            (188150, 188100),  # 100원 단위, 50원 잔여 → 내림
+            (188100, 188100),  # 이미 정렬됨
+            (75050, 75000),  # 100원 단위, 50원 잔여 → 내림
+            (49950, 49950),  # 50원 단위 정렬됨
+            (49960, 49950),  # 50원 단위, 10원 잔여 → 내림
+            (1999, 1999),  # 1원 단위 → 그대로
+            (5003, 5000),  # 10원 단위, 3원 잔여 → 내림
         ],
     )
     def test_round_down_to_tick(self, price: int, expected_rounded: int) -> None:
@@ -538,15 +539,13 @@ class TestSendOrderTickRounding:
         mock_order.__aenter__ = AsyncMock(return_value=mock_order)
         mock_order.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
-        ) as mock_post:
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
             await broker.send_order("005930", "BUY", 1, price=188150)
 
         order_call = mock_post.call_args_list[1]
         body = order_call[1].get("json", {})
         assert body["ORD_UNPR"] == "188100"  # rounded down
-        assert body["ORD_DVSN"] == "00"       # 지정가
+        assert body["ORD_DVSN"] == "00"  # 지정가
 
     @pytest.mark.asyncio
     async def test_limit_order_ord_dvsn_is_00(self, broker: KISBroker) -> None:
@@ -563,9 +562,7 @@ class TestSendOrderTickRounding:
         mock_order.__aenter__ = AsyncMock(return_value=mock_order)
         mock_order.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
-        ) as mock_post:
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
             await broker.send_order("005930", "BUY", 1, price=50000)
 
         order_call = mock_post.call_args_list[1]
@@ -587,9 +584,7 @@ class TestSendOrderTickRounding:
         mock_order.__aenter__ = AsyncMock(return_value=mock_order)
         mock_order.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
-        ) as mock_post:
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
             await broker.send_order("005930", "SELL", 1, price=0)
 
         order_call = mock_post.call_args_list[1]
@@ -628,9 +623,7 @@ class TestTRIDBranchingDomestic:
         broker = self._make_broker(settings, "paper")
         mock_resp = AsyncMock()
         mock_resp.status = 200
-        mock_resp.json = AsyncMock(
-            return_value={"output1": [], "output2": {}}
-        )
+        mock_resp.json = AsyncMock(return_value={"output1": [], "output2": {}})
         mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
         mock_resp.__aexit__ = AsyncMock(return_value=False)
 
@@ -645,9 +638,7 @@ class TestTRIDBranchingDomestic:
         broker = self._make_broker(settings, "live")
         mock_resp = AsyncMock()
         mock_resp.status = 200
-        mock_resp.json = AsyncMock(
-            return_value={"output1": [], "output2": {}}
-        )
+        mock_resp.json = AsyncMock(return_value={"output1": [], "output2": {}})
         mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
         mock_resp.__aexit__ = AsyncMock(return_value=False)
 
@@ -672,9 +663,7 @@ class TestTRIDBranchingDomestic:
         mock_order.__aenter__ = AsyncMock(return_value=mock_order)
         mock_order.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
-        ) as mock_post:
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
             await broker.send_order("005930", "BUY", 1)
 
         order_headers = mock_post.call_args_list[1][1].get("headers", {})
@@ -695,9 +684,7 @@ class TestTRIDBranchingDomestic:
         mock_order.__aenter__ = AsyncMock(return_value=mock_order)
         mock_order.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
-        ) as mock_post:
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
             await broker.send_order("005930", "BUY", 1)
 
         order_headers = mock_post.call_args_list[1][1].get("headers", {})
@@ -718,9 +705,7 @@ class TestTRIDBranchingDomestic:
         mock_order.__aenter__ = AsyncMock(return_value=mock_order)
         mock_order.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
-        ) as mock_post:
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
             await broker.send_order("005930", "SELL", 1)
 
         order_headers = mock_post.call_args_list[1][1].get("headers", {})
@@ -741,9 +726,7 @@ class TestTRIDBranchingDomestic:
         mock_order.__aenter__ = AsyncMock(return_value=mock_order)
         mock_order.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
-        ) as mock_post:
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
             await broker.send_order("005930", "SELL", 1)
 
         order_headers = mock_post.call_args_list[1][1].get("headers", {})
@@ -788,9 +771,7 @@ class TestGetDomesticPendingOrders:
         mock_get.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_live_mode_calls_tttc0084r_with_correct_params(
-        self, settings
-    ) -> None:
+    async def test_live_mode_calls_tttc0084r_with_correct_params(self, settings) -> None:
         """Live mode must call TTTC0084R with INQR_DVSN_1/2 and paging params."""
         broker = self._make_broker(settings, "live")
         pending = [{"odno": "001", "pdno": "005930", "psbl_qty": "10"}]
@@ -872,9 +853,7 @@ class TestCancelDomesticOrder:
         broker = self._make_broker(settings, "live")
         mock_hash, mock_order = self._make_post_mocks({"rt_cd": "0"})
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
-        ) as mock_post:
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
             await broker.cancel_domestic_order("005930", "ORD001", "BRNO01", 5)
 
         order_headers = mock_post.call_args_list[1][1].get("headers", {})
@@ -886,9 +865,7 @@ class TestCancelDomesticOrder:
         broker = self._make_broker(settings, "paper")
         mock_hash, mock_order = self._make_post_mocks({"rt_cd": "0"})
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
-        ) as mock_post:
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
             await broker.cancel_domestic_order("005930", "ORD001", "BRNO01", 5)
 
         order_headers = mock_post.call_args_list[1][1].get("headers", {})
@@ -900,9 +877,7 @@ class TestCancelDomesticOrder:
         broker = self._make_broker(settings, "live")
         mock_hash, mock_order = self._make_post_mocks({"rt_cd": "0"})
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
-        ) as mock_post:
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
             await broker.cancel_domestic_order("005930", "ORD001", "BRNO01", 5)
 
         body = mock_post.call_args_list[1][1].get("json", {})
@@ -916,9 +891,7 @@ class TestCancelDomesticOrder:
         broker = self._make_broker(settings, "live")
         mock_hash, mock_order = self._make_post_mocks({"rt_cd": "0"})
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
-        ) as mock_post:
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
             await broker.cancel_domestic_order("005930", "ORD123", "BRN456", 3)
 
         body = mock_post.call_args_list[1][1].get("json", {})
@@ -932,9 +905,7 @@ class TestCancelDomesticOrder:
         broker = self._make_broker(settings, "live")
         mock_hash, mock_order = self._make_post_mocks({"rt_cd": "0"})
 
-        with patch(
-            "aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]
-        ) as mock_post:
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
             await broker.cancel_domestic_order("005930", "ORD001", "BRNO01", 2)
 
         order_headers = mock_post.call_args_list[1][1].get("headers", {})

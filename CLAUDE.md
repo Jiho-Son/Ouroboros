@@ -81,12 +81,13 @@ SCANNER_TOP_N=3              # Max candidates per scan
 - **Evolution-ready** — Selection context logged for strategy optimization
 - **Fault-tolerant** — Falls back to static watchlist on API failure
 
-### Realtime Mode Only
+### Trading Mode Integration
 
-Smart Scanner runs in `TRADE_MODE=realtime` only. Daily mode uses static watchlists for batch efficiency.
+Smart Scanner runs in both `TRADE_MODE=realtime` and `daily` paths. On API failure, domestic stocks fall back to a static watchlist; overseas stocks fall back to a dynamic universe (active positions, recent holdings).
 
 ## Documentation
 
+- **[Documentation Hub](docs/README.md)** — Top-level doc routing and reading order
 - **[Workflow Guide](docs/workflow.md)** — Git workflow policy and agent-based development
 - **[Command Reference](docs/commands.md)** — Common failures, build commands, troubleshooting
 - **[Architecture](docs/architecture.md)** — System design, components, data flow
@@ -122,7 +123,7 @@ src/
 ├── broker/          # KIS API client (domestic + overseas)
 ├── context/         # L1-L7 hierarchical memory system
 ├── core/            # Risk manager (READ-ONLY)
-├── dashboard/       # FastAPI read-only monitoring (8 API endpoints)
+├── dashboard/       # FastAPI read-only monitoring (10 API endpoints)
 ├── data/            # External data integration (news, market data, calendar)
 ├── evolution/       # Self-improvement (optimizer, daily review, scorecard)
 ├── logging/         # Decision logger (audit trail)
@@ -133,7 +134,7 @@ src/
 ├── main.py          # Trading loop orchestrator
 └── config.py        # Settings (from .env)
 
-tests/               # 551 tests across 25 files
+tests/               # 998 tests across 41 files
 docs/                # Extended documentation
 ```
 

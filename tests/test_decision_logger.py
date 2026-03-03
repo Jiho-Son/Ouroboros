@@ -49,7 +49,10 @@ def test_log_decision_creates_record(logger: DecisionLogger, db_conn: sqlite3.Co
 
     # Verify record exists in database
     cursor = db_conn.execute(
-        "SELECT decision_id, action, confidence FROM decision_logs WHERE decision_id = ?",
+        (
+            "SELECT decision_id, action, confidence, session_id "
+            "FROM decision_logs WHERE decision_id = ?"
+        ),
         (decision_id,),
     )
     row = cursor.fetchone()
@@ -57,6 +60,7 @@ def test_log_decision_creates_record(logger: DecisionLogger, db_conn: sqlite3.Co
     assert row[0] == decision_id
     assert row[1] == "BUY"
     assert row[2] == 85
+    assert row[3] == "UNKNOWN"
 
 
 def test_log_decision_stores_context_snapshot(logger: DecisionLogger) -> None:
@@ -84,6 +88,24 @@ def test_log_decision_stores_context_snapshot(logger: DecisionLogger) -> None:
     assert decision is not None
     assert decision.context_snapshot == context_snapshot
     assert decision.input_data == input_data
+    assert decision.session_id == "UNKNOWN"
+
+
+def test_log_decision_stores_explicit_session_id(logger: DecisionLogger) -> None:
+    decision_id = logger.log_decision(
+        stock_code="AAPL",
+        market="US_NASDAQ",
+        exchange_code="NASD",
+        action="BUY",
+        confidence=88,
+        rationale="session check",
+        context_snapshot={},
+        input_data={},
+        session_id="US_PRE",
+    )
+    decision = logger.get_decision_by_id(decision_id)
+    assert decision is not None
+    assert decision.session_id == "US_PRE"
 
 
 def test_get_unreviewed_decisions(logger: DecisionLogger) -> None:
@@ -278,6 +300,7 @@ def test_decision_log_dataclass() -> None:
         stock_code="005930",
         market="KR",
         exchange_code="KRX",
+        session_id="KRX_REG",
         action="BUY",
         confidence=85,
         rationale="Test",
@@ -286,6 +309,7 @@ def test_decision_log_dataclass() -> None:
     )
 
     assert log.decision_id == "test-uuid"
+    assert log.session_id == "KRX_REG"
     assert log.action == "BUY"
     assert log.confidence == 85
     assert log.reviewed is False

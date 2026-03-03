@@ -4,7 +4,72 @@
 
 **Critical: Learn from failures. Never repeat the same failed command without modification.**
 
+## Repository VCS Rule (Mandatory)
+
+- 이 저장소의 티켓/PR/코멘트 작업은 Gitea 기준으로 수행한다.
+- `gh`(GitHub CLI) 명령 사용은 금지한다.
+- 기본 도구는 `tea`이며, `tea` 미지원 케이스만 Gitea API를 fallback으로 사용한다.
+- 실행 전 `docs/workflow.md`의 `Gitea CLI Formatting Troubleshooting`을 반드시 확인한다.
+
+## Session Handover Preflight (Mandatory)
+
+- 세션 시작 직후(코드 변경 전) 아래 명령을 먼저 실행한다.
+
+```bash
+python3 scripts/session_handover_check.py --strict
+```
+
+- 실패 시 `workflow/session-handover.md` 최신 엔트리를 보강한 뒤 재실행한다.
+
+## Docs Sync Validator (Mandatory for docs changes)
+
+- 문서 변경 PR에서는 아래 명령으로 동기화 검증을 먼저 실행한다.
+
+```bash
+python3 scripts/validate_docs_sync.py
+```
+
+- 검증 실패 시 메시지 기준으로 즉시 수정한다.
+  - `absolute link is forbidden`: 문서 링크에 절대경로(`/...`) 사용
+  - `broken link`: 상대경로 링크 대상 파일/앵커 누락
+  - `missing core doc link reference`: `README.md`/`CLAUDE.md` 핵심 링크 누락
+  - `duplicated API endpoint row`: `docs/commands.md` API endpoint 표 중복 행
+  - `missing dynamic test count guidance`: `docs/testing.md`에 `pytest --collect-only -q` 가이드 누락
+
 ### tea CLI (Gitea Command Line Tool)
+
+#### ❌ Comment Newline Escaping (`\n` rendered literally)
+```bash
+YES="" ~/bin/tea comment 374 "line1\nline2"
+# Web UI shows "\n" as text instead of line breaks
+```
+**💡 Reason:** Inline string escaping is interpreted literally before comment submission.
+
+**✅ Solution:** Use file-based helper to preserve multiline text
+```bash
+cat > /tmp/comment.md <<'EOF'
+line1
+line2
+EOF
+
+scripts/tea_comment.sh 374 /tmp/comment.md
+```
+
+**📝 Notes:**
+- `scripts/tea_comment.sh` accepts stdin with `-` as body source.
+- The helper fails fast when body looks like escaped-newline text only.
+
+#### PR Body Post-Check (Mandatory)
+
+PR 생성 직후 본문이 `\n` 문자열로 깨지지 않았는지 반드시 확인한다.
+
+```bash
+python3 scripts/validate_pr_body.py --pr <PR_NUMBER>
+```
+
+검증 실패 시:
+- PR 본문을 API patch 또는 파일 기반 본문으로 즉시 수정
+- 같은 명령으로 재검증 통과 후에만 리뷰/머지 진행
 
 #### ❌ TTY Error - Interactive Confirmation Fails
 ```bash
@@ -119,7 +184,7 @@ No decorator needed for async tests.
 # Install all dependencies (production + dev)
 pip install -e ".[dev]"
 
-# Run full test suite with coverage (551 tests across 25 files)
+# Run full test suite with coverage (998 tests across 41 files)
 pytest -v --cov=src --cov-report=term-missing
 
 # Run a single test file
@@ -139,6 +204,18 @@ python -m src.main --mode=paper
 
 # Run with dashboard enabled
 python -m src.main --mode=paper --dashboard
+
+# Runtime verification monitor (coverage + forbidden invariants)
+bash scripts/runtime_verify_monitor.sh
+
+# Runtime monitor with explicit policy timezone (example: KST)
+POLICY_TZ=Asia/Seoul bash scripts/runtime_verify_monitor.sh
+
+# Session handover gate (must pass before implementation)
+python3 scripts/session_handover_check.py --strict
+
+# Follow runtime verification log
+tail -f data/overnight/runtime_verify_*.log
 
 # Docker
 docker compose up -d ouroboros          # Run agent
@@ -173,6 +250,8 @@ Dashboard runs as a daemon thread on `DASHBOARD_HOST:DASHBOARD_PORT` (default: `
 | `GET /api/context/{layer}` | Context data by layer L1-L7 (query: `timeframe`) |
 | `GET /api/decisions` | Decision log entries (query: `limit`, `market`) |
 | `GET /api/scenarios/active` | Today's matched scenarios |
+| `GET /api/pnl/history` | P&L history over time |
+| `GET /api/positions` | Current open positions |
 
 ## Telegram Commands
 

@@ -124,12 +124,14 @@ class PreMarketPlanner:
 
             # 4. Parse response
             playbook = self._parse_response(
-                decision.rationale, today, market, candidates, cross_market,
+                decision.rationale,
+                today,
+                market,
+                candidates,
+                cross_market,
                 current_holdings=current_holdings,
             )
-            playbook_with_tokens = playbook.model_copy(
-                update={"token_count": decision.token_count}
-            )
+            playbook_with_tokens = playbook.model_copy(update={"token_count": decision.token_count})
             logger.info(
                 "Generated playbook for %s: %d stocks, %d scenarios, %d tokens",
                 market,
@@ -146,7 +148,9 @@ class PreMarketPlanner:
             return self._empty_playbook(today, market)
 
     def build_cross_market_context(
-        self, target_market: str, today: date | None = None,
+        self,
+        target_market: str,
+        today: date | None = None,
     ) -> CrossMarketContext | None:
         """Build cross-market context from the other market's L6 data.
 
@@ -192,7 +196,9 @@ class PreMarketPlanner:
         )
 
     def build_self_market_scorecard(
-        self, market: str, today: date | None = None,
+        self,
+        market: str,
+        today: date | None = None,
     ) -> dict[str, Any] | None:
         """Build previous-day scorecard for the same market."""
         if today is None:
@@ -320,18 +326,18 @@ class PreMarketPlanner:
             f"{context_text}\n"
             f"## Instructions\n"
             f"Return a JSON object with this exact structure:\n"
-            f'{{\n'
+            f"{{\n"
             f'  "market_outlook": "bullish|neutral_to_bullish|neutral'
             f'|neutral_to_bearish|bearish",\n'
             f'  "global_rules": [\n'
             f'    {{"condition": "portfolio_pnl_pct < -2.0",'
             f' "action": "REDUCE_ALL", "rationale": "..."}}\n'
-            f'  ],\n'
+            f"  ],\n"
             f'  "stocks": [\n'
-            f'    {{\n'
+            f"    {{\n"
             f'      "stock_code": "...",\n'
             f'      "scenarios": [\n'
-            f'        {{\n'
+            f"        {{\n"
             f'          "condition": {{"rsi_below": 30, "volume_ratio_above": 2.0,'
             f' "unrealized_pnl_pct_above": 3.0, "holding_days_above": 5}},\n'
             f'          "action": "BUY|SELL|HOLD",\n'
@@ -340,11 +346,11 @@ class PreMarketPlanner:
             f'          "stop_loss_pct": -2.0,\n'
             f'          "take_profit_pct": 3.0,\n'
             f'          "rationale": "..."\n'
-            f'        }}\n'
-            f'      ]\n'
-            f'    }}\n'
-            f'  ]\n'
-            f'}}\n\n'
+            f"        }}\n"
+            f"      ]\n"
+            f"    }}\n"
+            f"  ]\n"
+            f"}}\n\n"
             f"Rules:\n"
             f"- Max {max_scenarios} scenarios per stock\n"
             f"- Candidates list is the primary source for BUY candidates\n"
@@ -575,8 +581,7 @@ class PreMarketPlanner:
                         stop_loss_pct=-3.0,
                         take_profit_pct=5.0,
                         rationale=(
-                            f"Rule-based BUY: oversold signal, "
-                            f"RSI={c.rsi:.0f} (fallback planner)"
+                            f"Rule-based BUY: oversold signal, RSI={c.rsi:.0f} (fallback planner)"
                         ),
                     )
                 )

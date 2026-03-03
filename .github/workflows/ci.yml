@@ -21,6 +21,32 @@ jobs:
       - name: Install dependencies
         run: pip install ".[dev]"
 
+      - name: Session handover gate
+        run: python3 scripts/session_handover_check.py --strict --ci
+
+      - name: Validate governance assets
+        env:
+          GOVERNANCE_PR_TITLE: ${{ github.event.pull_request.title }}
+          GOVERNANCE_PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          RANGE=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}...${{ github.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            RANGE="${{ github.event.before }}...${{ github.sha }}"
+          fi
+          if [ -n "$RANGE" ]; then
+            python3 scripts/validate_governance_assets.py "$RANGE"
+          else
+            python3 scripts/validate_governance_assets.py
+          fi
+
+      - name: Validate Ouroboros docs
+        run: python3 scripts/validate_ouroboros_docs.py
+
+      - name: Validate docs sync
+        run: python3 scripts/validate_docs_sync.py
+
       - name: Lint
         run: ruff check src/ tests/
 

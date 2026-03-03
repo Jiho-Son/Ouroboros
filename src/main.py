@@ -26,8 +26,18 @@ from src.context.aggregator import ContextAggregator
 from src.context.layer import ContextLayer
 from src.context.scheduler import ContextScheduler
 from src.context.store import ContextStore
+from src.core.blackout_manager import (
+    BlackoutOrderManager,
+    QueuedOrderIntent,
+    parse_blackout_windows_kst,
+)
 from src.core.criticality import CriticalityAssessor
 from src.core.kill_switch import KillSwitchOrchestrator
+from src.core.order_policy import (
+    OrderPolicyRejected,
+    get_session_info,
+    validate_order_policy,
+)
 from src.core.priority_queue import PriorityTaskQueue
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
 from src.db import (
@@ -42,16 +52,34 @@ from src.evolution.optimizer import EvolutionOptimizer
 from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
 from src.markets.schedule import MARKETS, MarketInfo, get_next_market_open, get_open_markets
-from src.notifications.telegram_client import NotificationFilter, TelegramClient, TelegramCommandHandler
-from src.strategy.models import DayPlaybook, MarketOutlook
+from src.notifications.telegram_client import (
+    NotificationFilter,
+    TelegramClient,
+    TelegramCommandHandler,
+)
 from src.strategy.exit_rules import ExitRuleConfig, ExitRuleInput, evaluate_exit
+from src.strategy.models import DayPlaybook, MarketOutlook
 from src.strategy.playbook_store import PlaybookStore
-from src.strategy.pre_market_planner import PreMarketPlanner
 from src.strategy.position_state_machine import PositionState
+from src.strategy.pre_market_planner import PreMarketPlanner
 from src.strategy.scenario_engine import ScenarioEngine
 
 logger = logging.getLogger(__name__)
 KILL_SWITCH = KillSwitchOrchestrator()
+BLACKOUT_ORDER_MANAGER = BlackoutOrderManager(
+    enabled=False,
+    windows=[],
+    max_queue_size=500,
+)
+_SESSION_CLOSE_WINDOWS = {"NXT_AFTER", "US_AFTER"}
+_RUNTIME_EXIT_STATES: dict[str, PositionState] = {}
+_RUNTIME_EXIT_PEAKS: dict[str, float] = {}
+_STOPLOSS_REENTRY_COOLDOWN_UNTIL: dict[str, float] = {}
+_VOLATILITY_ANALYZER = VolatilityAnalyzer()
+_SESSION_RISK_PROFILES_RAW = "{}"
+_SESSION_RISK_PROFILES_MAP: dict[str, dict[str, Any]] = {}
+_SESSION_RISK_LAST_BY_MARKET: dict[str, str] = {}
+_SESSION_RISK_OVERRIDES_BY_MARKET: dict[str, dict[str, Any]] = {}
 
 
 def safe_float(value: str | float | None, default: float = 0.0) -> float:
@@ -92,6 +120,334 @@ DAILY_TRADE_SESSIONS = 4  # Number of trading sessions per day
 TRADE_SESSION_INTERVAL_HOURS = 6  # Hours between sessions
 
 
+def _resolve_sell_qty_for_pnl(*, sell_qty: int | None, buy_qty: int | None) -> int:
+    """Choose quantity basis for SELL outcome PnL with safe fallback."""
+    resolved_sell = int(sell_qty or 0)
+    if resolved_sell > 0:
+        return resolved_sell
+    return max(0, int(buy_qty or 0))
+
+
+def _extract_fx_rate_from_sources(*sources: dict[str, Any] | None) -> float | None:
+    """Best-effort FX rate extraction from broker payloads."""
+    # KIS overseas payloads expose exchange-rate fields with varying key names
+    # across endpoints/responses (price, balance, buying power). Keep this list
+    # centralised so schema drifts can be patched in one place.
+    rate_keys = (
+        "frst_bltn_exrt",
+        "bass_exrt",
+        "ovrs_exrt",
+        "aply_xchg_rt",
+        "xchg_rt",
+        "exchange_rate",
+        "fx_rate",
+    )
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in rate_keys:
+            rate = safe_float(source.get(key), 0.0)
+            if rate > 0:
+                return rate
+    return None
+
+
+def _split_trade_pnl_components(
+    *,
+    market: MarketInfo,
+    trade_pnl: float,
+    buy_price: float,
+    sell_price: float,
+    quantity: int,
+    buy_fx_rate: float | None = None,
+    sell_fx_rate: float | None = None,
+) -> tuple[float, float]:
+    """Split total trade pnl into strategy/fx components.
+
+    For overseas symbols, use buy/sell FX rates when both are available.
+    Otherwise preserve backward-compatible behaviour (all strategy pnl).
+    """
+    if trade_pnl == 0.0:
+        return 0.0, 0.0
+    if market.is_domestic:
+        return trade_pnl, 0.0
+
+    if (
+        buy_fx_rate is not None
+        and sell_fx_rate is not None
+        and buy_fx_rate > 0
+        and sell_fx_rate > 0
+        and quantity > 0
+        and buy_price > 0
+        and sell_price > 0
+    ):
+        buy_notional = buy_price * quantity
+        fx_return = (sell_fx_rate - buy_fx_rate) / buy_fx_rate
+        fx_pnl = buy_notional * fx_return
+        strategy_pnl = trade_pnl - fx_pnl
+        return strategy_pnl, fx_pnl
+
+    return trade_pnl, 0.0
+
+
+def _extract_buy_fx_rate(buy_trade: dict[str, Any] | None) -> float | None:
+    if not buy_trade:
+        return None
+    raw_ctx = buy_trade.get("selection_context")
+    if not isinstance(raw_ctx, str) or not raw_ctx.strip():
+        return None
+    try:
+        decoded = json.loads(raw_ctx)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(decoded, dict):
+        return None
+    rate = safe_float(decoded.get("fx_rate"), 0.0)
+    return rate if rate > 0 else None
+
+
+def _compute_kr_dynamic_stop_loss_pct(
+    *,
+    market: MarketInfo | None = None,
+    entry_price: float,
+    atr_value: float,
+    fallback_stop_loss_pct: float,
+    settings: Settings | None,
+) -> float:
+    """Compute KR dynamic hard-stop threshold in percent."""
+    if entry_price <= 0 or atr_value <= 0:
+        return fallback_stop_loss_pct
+
+    k = _resolve_market_setting(
+        market=market,
+        settings=settings,
+        key="KR_ATR_STOP_MULTIPLIER_K",
+        default=2.0,
+    )
+    min_pct = _resolve_market_setting(
+        market=market,
+        settings=settings,
+        key="KR_ATR_STOP_MIN_PCT",
+        default=-2.0,
+    )
+    max_pct = _resolve_market_setting(
+        market=market,
+        settings=settings,
+        key="KR_ATR_STOP_MAX_PCT",
+        default=-7.0,
+    )
+    if max_pct > min_pct:
+        min_pct, max_pct = max_pct, min_pct
+
+    dynamic_stop_pct = -((k * atr_value) / entry_price) * 100.0
+    return max(max_pct, min(min_pct, dynamic_stop_pct))
+
+
+def _stoploss_cooldown_key(*, market: MarketInfo, stock_code: str) -> str:
+    return f"{market.code}:{stock_code}"
+
+
+def _parse_session_risk_profiles(settings: Settings | None) -> dict[str, dict[str, Any]]:
+    if settings is None:
+        return {}
+    global _SESSION_RISK_PROFILES_RAW, _SESSION_RISK_PROFILES_MAP
+    raw = str(getattr(settings, "SESSION_RISK_PROFILES_JSON", "{}") or "{}")
+    if raw == _SESSION_RISK_PROFILES_RAW:
+        return _SESSION_RISK_PROFILES_MAP
+
+    parsed_map: dict[str, dict[str, Any]] = {}
+    try:
+        decoded = json.loads(raw)
+        if isinstance(decoded, dict):
+            for session_id, session_values in decoded.items():
+                if isinstance(session_id, str) and isinstance(session_values, dict):
+                    parsed_map[session_id] = session_values
+    except (ValueError, TypeError) as exc:
+        logger.warning("Invalid SESSION_RISK_PROFILES_JSON; using defaults: %s", exc)
+        parsed_map = {}
+
+    _SESSION_RISK_PROFILES_RAW = raw
+    _SESSION_RISK_PROFILES_MAP = parsed_map
+    return _SESSION_RISK_PROFILES_MAP
+
+
+def _coerce_setting_value(*, value: Any, default: Any) -> Any:
+    if isinstance(default, bool):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        if isinstance(value, (int, float)):
+            return value != 0
+        return default
+    if isinstance(default, int) and not isinstance(default, bool):
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return default
+    if isinstance(default, float):
+        return safe_float(value, float(default))
+    if isinstance(default, str):
+        return str(value)
+    return value
+
+
+def _session_risk_overrides(
+    *,
+    market: MarketInfo | None,
+    settings: Settings | None,
+) -> dict[str, Any]:
+    if market is None or settings is None:
+        return {}
+    if not bool(getattr(settings, "SESSION_RISK_RELOAD_ENABLED", True)):
+        return {}
+
+    session_id = get_session_info(market).session_id
+    previous_session = _SESSION_RISK_LAST_BY_MARKET.get(market.code)
+    if previous_session == session_id:
+        return _SESSION_RISK_OVERRIDES_BY_MARKET.get(market.code, {})
+
+    profile_map = _parse_session_risk_profiles(settings)
+    merged: dict[str, Any] = {}
+    default_profile = profile_map.get("default")
+    if isinstance(default_profile, dict):
+        merged.update(default_profile)
+    session_profile = profile_map.get(session_id)
+    if isinstance(session_profile, dict):
+        merged.update(session_profile)
+
+    _SESSION_RISK_LAST_BY_MARKET[market.code] = session_id
+    _SESSION_RISK_OVERRIDES_BY_MARKET[market.code] = merged
+    if previous_session is None:
+        logger.info(
+            "Session risk profile initialized for %s: %s (overrides=%s)",
+            market.code,
+            session_id,
+            ",".join(sorted(merged.keys())) if merged else "none",
+        )
+    else:
+        logger.info(
+            "Session risk profile reloaded for %s: %s -> %s (overrides=%s)",
+            market.code,
+            previous_session,
+            session_id,
+            ",".join(sorted(merged.keys())) if merged else "none",
+        )
+    return merged
+
+
+def _resolve_market_setting(
+    *,
+    market: MarketInfo | None,
+    settings: Settings | None,
+    key: str,
+    default: Any,
+) -> Any:
+    if settings is None:
+        return default
+
+    fallback = getattr(settings, key, default)
+    overrides = _session_risk_overrides(market=market, settings=settings)
+    if key not in overrides:
+        return fallback
+    return _coerce_setting_value(value=overrides[key], default=fallback)
+
+
+def _stoploss_cooldown_minutes(
+    settings: Settings | None,
+    market: MarketInfo | None = None,
+) -> int:
+    minutes = _resolve_market_setting(
+        market=market,
+        settings=settings,
+        key="STOPLOSS_REENTRY_COOLDOWN_MINUTES",
+        default=120,
+    )
+    return max(1, int(minutes))
+
+
+def _estimate_pred_down_prob_from_rsi(rsi: float | str | None) -> float:
+    """Estimate downside probability from RSI using a simple linear mapping."""
+    if rsi is None:
+        return 0.5
+    rsi_value = max(0.0, min(100.0, safe_float(rsi, 50.0)))
+    return rsi_value / 100.0
+
+
+async def _compute_kr_atr_value(
+    *,
+    broker: KISBroker,
+    stock_code: str,
+    period: int = 14,
+) -> float:
+    """Compute ATR(period) for KR stocks using daily OHLC."""
+    days = max(period + 1, 30)
+    try:
+        daily_prices = await _retry_connection(
+            broker.get_daily_prices,
+            stock_code,
+            days=days,
+            label=f"daily_prices:{stock_code}",
+        )
+    except ConnectionError as exc:
+        logger.warning("ATR source unavailable for %s: %s", stock_code, exc)
+        return 0.0
+    except Exception as exc:
+        logger.warning("Unexpected ATR fetch failure for %s: %s", stock_code, exc)
+        return 0.0
+
+    if not isinstance(daily_prices, list):
+        return 0.0
+
+    highs: list[float] = []
+    lows: list[float] = []
+    closes: list[float] = []
+    for row in daily_prices:
+        if not isinstance(row, dict):
+            continue
+        high = safe_float(row.get("high"), 0.0)
+        low = safe_float(row.get("low"), 0.0)
+        close = safe_float(row.get("close"), 0.0)
+        if high <= 0 or low <= 0 or close <= 0:
+            continue
+        highs.append(high)
+        lows.append(low)
+        closes.append(close)
+
+    if len(highs) < period + 1 or len(lows) < period + 1 or len(closes) < period + 1:
+        return 0.0
+    return max(0.0, _VOLATILITY_ANALYZER.calculate_atr(highs, lows, closes, period=period))
+
+
+async def _inject_staged_exit_features(
+    *,
+    market: MarketInfo,
+    stock_code: str,
+    open_position: dict[str, Any] | None,
+    market_data: dict[str, Any],
+    broker: KISBroker | None,
+) -> None:
+    """Inject ATR/pred_down_prob used by staged exit evaluation."""
+    if not open_position:
+        return
+
+    if "pred_down_prob" not in market_data:
+        market_data["pred_down_prob"] = _estimate_pred_down_prob_from_rsi(market_data.get("rsi"))
+
+    existing_atr = safe_float(market_data.get("atr_value"), 0.0)
+    if existing_atr > 0:
+        return
+
+    if market.is_domestic and broker is not None:
+        market_data["atr_value"] = await _compute_kr_atr_value(
+            broker=broker,
+            stock_code=stock_code,
+        )
+        return
+
+    market_data["atr_value"] = 0.0
+
+
 async def _retry_connection(coro_factory: Any, *args: Any, label: str = "", **kwargs: Any) -> Any:
     """Call an async function retrying on ConnectionError with exponential backoff.
 
@@ -113,7 +469,7 @@ async def _retry_connection(coro_factory: Any, *args: Any, label: str = "", **kw
             return await coro_factory(*args, **kwargs)
         except ConnectionError as exc:
             if attempt < MAX_CONNECTION_RETRIES:
-                wait_secs = 2 ** attempt
+                wait_secs = 2**attempt
                 logger.warning(
                     "Connection error %s (attempt %d/%d), retrying in %ds: %s",
                     label,
@@ -137,7 +493,7 @@ async def sync_positions_from_broker(
     broker: Any,
     overseas_broker: Any,
     db_conn: Any,
-    settings: "Settings",
+    settings: Settings,
 ) -> int:
     """Sync open positions from the live broker into the local DB at startup.
 
@@ -165,9 +521,7 @@ async def sync_positions_from_broker(
                 if market.exchange_code in seen_exchange_codes:
                     continue
                 seen_exchange_codes.add(market.exchange_code)
-                balance_data = await overseas_broker.get_overseas_balance(
-                    market.exchange_code
-                )
+                balance_data = await overseas_broker.get_overseas_balance(market.exchange_code)
                 log_market = market_code  # e.g. "US_NASDAQ"
         except ConnectionError as exc:
             logger.warning(
@@ -177,9 +531,7 @@ async def sync_positions_from_broker(
             )
             continue
 
-        held_codes = _extract_held_codes_from_balance(
-            balance_data, is_domestic=market.is_domestic
-        )
+        held_codes = _extract_held_codes_from_balance(balance_data, is_domestic=market.is_domestic)
         for stock_code in held_codes:
             if get_open_position(db_conn, stock_code, log_market):
                 continue  # already tracked
@@ -199,6 +551,7 @@ async def sync_positions_from_broker(
                 price=avg_price,
                 market=log_market,
                 exchange_code=market.exchange_code,
+                session_id=get_session_info(market).session_id,
                 mode=settings.MODE,
             )
             logger.info(
@@ -210,9 +563,7 @@ async def sync_positions_from_broker(
             synced += 1
 
     if synced:
-        logger.info(
-            "Startup sync complete: %d position(s) synced from broker", synced
-        )
+        logger.info("Startup sync complete: %d position(s) synced from broker", synced)
     else:
         logger.info("Startup sync: no new positions to sync from broker")
     return synced
@@ -418,6 +769,196 @@ def _determine_order_quantity(
     return quantity
 
 
+def _should_block_overseas_buy_for_fx_buffer(
+    *,
+    market: MarketInfo,
+    action: str,
+    total_cash: float,
+    order_amount: float,
+    settings: Settings | None,
+) -> tuple[bool, float, float]:
+    if (
+        market.is_domestic
+        or not market.code.startswith("US")
+        or action != "BUY"
+        or settings is None
+    ):
+        return False, total_cash - order_amount, 0.0
+    remaining = total_cash - order_amount
+    required = float(
+        _resolve_market_setting(
+            market=market,
+            settings=settings,
+            key="USD_BUFFER_MIN",
+            default=1000.0,
+        )
+    )
+    return remaining < required, remaining, required
+
+
+def _should_force_exit_for_overnight(
+    *,
+    market: MarketInfo,
+    settings: Settings | None,
+) -> bool:
+    session_id = get_session_info(market).session_id
+    if session_id not in _SESSION_CLOSE_WINDOWS:
+        return False
+    if KILL_SWITCH.new_orders_blocked:
+        return True
+    if settings is None:
+        return False
+    overnight_enabled = _resolve_market_setting(
+        market=market,
+        settings=settings,
+        key="OVERNIGHT_EXCEPTION_ENABLED",
+        default=True,
+    )
+    return not bool(overnight_enabled)
+
+
+def _build_runtime_position_key(
+    *,
+    market_code: str,
+    stock_code: str,
+    open_position: dict[str, Any],
+) -> str:
+    decision_id = str(open_position.get("decision_id") or "")
+    timestamp = str(open_position.get("timestamp") or "")
+    return f"{market_code}:{stock_code}:{decision_id}:{timestamp}"
+
+
+def _clear_runtime_exit_cache_for_symbol(*, market_code: str, stock_code: str) -> None:
+    prefix = f"{market_code}:{stock_code}:"
+    stale_keys = [key for key in _RUNTIME_EXIT_STATES if key.startswith(prefix)]
+    for key in stale_keys:
+        _RUNTIME_EXIT_STATES.pop(key, None)
+        _RUNTIME_EXIT_PEAKS.pop(key, None)
+
+
+def _apply_staged_exit_override_for_hold(
+    *,
+    decision: TradeDecision,
+    market: MarketInfo,
+    stock_code: str,
+    open_position: dict[str, Any] | None,
+    market_data: dict[str, Any],
+    stock_playbook: Any | None,
+    settings: Settings | None = None,
+) -> TradeDecision:
+    """Apply v2 staged exit semantics for HOLD positions using runtime state."""
+    if decision.action != "HOLD" or not open_position:
+        return decision
+
+    entry_price = safe_float(open_position.get("price"), 0.0)
+    current_price = safe_float(market_data.get("current_price"), 0.0)
+    if entry_price <= 0 or current_price <= 0:
+        return decision
+
+    stop_loss_threshold = -2.0
+    take_profit_threshold = 3.0
+    if stock_playbook and stock_playbook.scenarios:
+        stop_loss_threshold = stock_playbook.scenarios[0].stop_loss_pct
+        take_profit_threshold = stock_playbook.scenarios[0].take_profit_pct
+    atr_value = safe_float(market_data.get("atr_value"), 0.0)
+    if market.code == "KR":
+        stop_loss_threshold = _compute_kr_dynamic_stop_loss_pct(
+            market=market,
+            entry_price=entry_price,
+            atr_value=atr_value,
+            fallback_stop_loss_pct=stop_loss_threshold,
+            settings=settings,
+        )
+    if settings is None:
+        be_arm_pct = max(0.5, take_profit_threshold * 0.4)
+        arm_pct = take_profit_threshold
+    else:
+        be_arm_pct = max(
+            0.1,
+            float(
+                _resolve_market_setting(
+                    market=market,
+                    settings=settings,
+                    key="STAGED_EXIT_BE_ARM_PCT",
+                    default=1.2,
+                )
+            ),
+        )
+        arm_pct = max(
+            be_arm_pct,
+            float(
+                _resolve_market_setting(
+                    market=market,
+                    settings=settings,
+                    key="STAGED_EXIT_ARM_PCT",
+                    default=3.0,
+                )
+            ),
+        )
+
+    runtime_key = _build_runtime_position_key(
+        market_code=market.code,
+        stock_code=stock_code,
+        open_position=open_position,
+    )
+    current_state = _RUNTIME_EXIT_STATES.get(runtime_key, PositionState.HOLDING)
+    prev_peak = _RUNTIME_EXIT_PEAKS.get(runtime_key, 0.0)
+    peak_hint = max(
+        safe_float(market_data.get("peak_price"), 0.0),
+        safe_float(market_data.get("session_high_price"), 0.0),
+    )
+    peak_price = max(entry_price, current_price, prev_peak, peak_hint)
+
+    exit_eval = evaluate_exit(
+        current_state=current_state,
+        config=ExitRuleConfig(
+            hard_stop_pct=stop_loss_threshold,
+            be_arm_pct=be_arm_pct,
+            arm_pct=arm_pct,
+        ),
+        inp=ExitRuleInput(
+            current_price=current_price,
+            entry_price=entry_price,
+            peak_price=peak_price,
+            atr_value=atr_value,
+            pred_down_prob=safe_float(market_data.get("pred_down_prob"), 0.0),
+            liquidity_weak=safe_float(market_data.get("volume_ratio"), 1.0) < 1.0,
+        ),
+    )
+    _RUNTIME_EXIT_STATES[runtime_key] = exit_eval.state
+    _RUNTIME_EXIT_PEAKS[runtime_key] = peak_price
+
+    if not exit_eval.should_exit:
+        return decision
+
+    pnl_pct = (current_price - entry_price) / entry_price * 100.0
+    if exit_eval.reason == "hard_stop":
+        rationale = f"Stop-loss triggered ({pnl_pct:.2f}% <= {stop_loss_threshold:.2f}%)"
+    elif exit_eval.reason == "arm_take_profit":
+        rationale = f"Take-profit triggered ({pnl_pct:.2f}% >= {arm_pct:.2f}%)"
+    elif exit_eval.reason == "atr_trailing_stop":
+        rationale = "ATR trailing-stop triggered"
+    elif exit_eval.reason == "be_lock_threat":
+        rationale = "Break-even lock threat detected"
+    elif exit_eval.reason == "model_liquidity_exit":
+        rationale = "Model/liquidity exit triggered"
+    else:
+        rationale = f"Exit rule triggered ({exit_eval.reason})"
+
+    logger.info(
+        "Staged exit override for %s (%s): HOLD -> SELL (reason=%s, state=%s)",
+        stock_code,
+        market.name,
+        exit_eval.reason,
+        exit_eval.state.value,
+    )
+    return TradeDecision(
+        action="SELL",
+        confidence=max(decision.confidence, 90),
+        rationale=rationale,
+    )
+
+
 async def build_overseas_symbol_universe(
     db_conn: Any,
     overseas_broker: OverseasBroker,
@@ -460,6 +1001,461 @@ async def build_overseas_symbol_universe(
     return ordered_unique
 
 
+def _build_queued_order_intent(
+    *,
+    market: MarketInfo,
+    session_id: str,
+    stock_code: str,
+    order_type: str,
+    quantity: int,
+    price: float,
+    source: str,
+) -> QueuedOrderIntent:
+    return QueuedOrderIntent(
+        market_code=market.code,
+        exchange_code=market.exchange_code,
+        session_id=session_id,
+        stock_code=stock_code,
+        order_type=order_type,
+        quantity=quantity,
+        price=price,
+        source=source,
+        queued_at=datetime.now(UTC),
+    )
+
+
+def _maybe_queue_order_intent(
+    *,
+    market: MarketInfo,
+    session_id: str,
+    stock_code: str,
+    order_type: str,
+    quantity: int,
+    price: float,
+    source: str,
+) -> bool:
+    if not BLACKOUT_ORDER_MANAGER.in_blackout():
+        return False
+
+    before_overflow_drops = BLACKOUT_ORDER_MANAGER.overflow_drop_count
+    queued = BLACKOUT_ORDER_MANAGER.enqueue(
+        _build_queued_order_intent(
+            market=market,
+            session_id=session_id,
+            stock_code=stock_code,
+            order_type=order_type,
+            quantity=quantity,
+            price=price,
+            source=source,
+        )
+    )
+    if queued:
+        after_overflow_drops = BLACKOUT_ORDER_MANAGER.overflow_drop_count
+        logger.warning(
+            (
+                "Blackout active: queued order intent %s %s (%s) "
+                "qty=%d price=%.4f source=%s pending=%d"
+            ),
+            order_type,
+            stock_code,
+            market.code,
+            quantity,
+            price,
+            source,
+            BLACKOUT_ORDER_MANAGER.pending_count,
+        )
+        if after_overflow_drops > before_overflow_drops:
+            logger.error(
+                (
+                    "Blackout queue overflow policy applied: evicted oldest intent "
+                    "to keep latest %s %s (%s) source=%s pending=%d total_evicted=%d"
+                ),
+                order_type,
+                stock_code,
+                market.code,
+                source,
+                BLACKOUT_ORDER_MANAGER.pending_count,
+                after_overflow_drops,
+            )
+    else:
+        logger.error(
+            "Blackout queue unavailable: could not queue order intent %s %s (%s) qty=%d source=%s",
+            order_type,
+            stock_code,
+            market.code,
+            quantity,
+            source,
+        )
+    return True
+
+
+async def process_blackout_recovery_orders(
+    *,
+    broker: KISBroker,
+    overseas_broker: OverseasBroker,
+    db_conn: Any,
+    settings: Settings | None = None,
+) -> None:
+    intents = BLACKOUT_ORDER_MANAGER.pop_recovery_batch()
+    if not intents:
+        return
+
+    logger.info(
+        "Blackout recovery started: processing %d queued intents",
+        len(intents),
+    )
+    for intent in intents:
+        market = MARKETS.get(intent.market_code)
+        if market is None:
+            continue
+
+        open_position = get_open_position(db_conn, intent.stock_code, market.code)
+        if intent.order_type == "BUY" and open_position is not None:
+            logger.info(
+                "Drop stale queued BUY %s (%s): position already open",
+                intent.stock_code,
+                market.code,
+            )
+            continue
+        if intent.order_type == "SELL" and open_position is None:
+            logger.info(
+                "Drop stale queued SELL %s (%s): no open position",
+                intent.stock_code,
+                market.code,
+            )
+            continue
+
+        try:
+            revalidation_enabled = bool(
+                _resolve_market_setting(
+                    market=market,
+                    settings=settings,
+                    key="BLACKOUT_RECOVERY_PRICE_REVALIDATION_ENABLED",
+                    default=True,
+                )
+            )
+            if revalidation_enabled:
+                if market.is_domestic:
+                    current_price, _, _ = await _retry_connection(
+                        broker.get_current_price,
+                        intent.stock_code,
+                        label=f"recovery_price:{market.code}:{intent.stock_code}",
+                    )
+                else:
+                    price_data = await _retry_connection(
+                        overseas_broker.get_overseas_price,
+                        market.exchange_code,
+                        intent.stock_code,
+                        label=f"recovery_price:{market.code}:{intent.stock_code}",
+                    )
+                    current_price = safe_float(price_data.get("output", {}).get("last"), 0.0)
+
+                queued_price = float(intent.price)
+                max_drift_pct = float(
+                    _resolve_market_setting(
+                        market=market,
+                        settings=settings,
+                        key="BLACKOUT_RECOVERY_MAX_PRICE_DRIFT_PCT",
+                        default=5.0,
+                    )
+                )
+                if queued_price <= 0 or current_price <= 0:
+                    logger.info(
+                        (
+                            "Drop queued intent by price revalidation (invalid price): "
+                            "%s %s (%s) queued=%.4f current=%.4f"
+                        ),
+                        intent.order_type,
+                        intent.stock_code,
+                        market.code,
+                        queued_price,
+                        current_price,
+                    )
+                    continue
+                drift_pct = abs(current_price - queued_price) / queued_price * 100.0
+                if drift_pct > max_drift_pct:
+                    logger.info(
+                        (
+                            "Drop queued intent by price revalidation: %s %s (%s) "
+                            "queued=%.4f current=%.4f drift=%.2f%% max=%.2f%%"
+                        ),
+                        intent.order_type,
+                        intent.stock_code,
+                        market.code,
+                        queued_price,
+                        current_price,
+                        drift_pct,
+                        max_drift_pct,
+                    )
+                    continue
+
+            validate_order_policy(
+                market=market,
+                order_type=intent.order_type,
+                price=float(intent.price),
+            )
+            if market.is_domestic:
+                result = await broker.send_order(
+                    stock_code=intent.stock_code,
+                    order_type=intent.order_type,
+                    quantity=intent.quantity,
+                    price=intent.price,
+                )
+            else:
+                result = await overseas_broker.send_overseas_order(
+                    exchange_code=market.exchange_code,
+                    stock_code=intent.stock_code,
+                    order_type=intent.order_type,
+                    quantity=intent.quantity,
+                    price=intent.price,
+                )
+
+            accepted = result.get("rt_cd", "0") == "0"
+            if accepted:
+                log_trade(
+                    conn=db_conn,
+                    stock_code=intent.stock_code,
+                    action=intent.order_type,
+                    confidence=0,
+                    rationale=f"[blackout-recovery] {intent.source}",
+                    quantity=intent.quantity,
+                    price=float(intent.price),
+                    pnl=0.0,
+                    market=market.code,
+                    exchange_code=market.exchange_code,
+                    session_id=intent.session_id,
+                )
+                logger.info(
+                    "Recovered queued order executed: %s %s (%s) qty=%d price=%.4f source=%s",
+                    intent.order_type,
+                    intent.stock_code,
+                    market.code,
+                    intent.quantity,
+                    intent.price,
+                    intent.source,
+                )
+                continue
+            logger.warning(
+                "Recovered queued order rejected: %s %s (%s) qty=%d msg=%s",
+                intent.order_type,
+                intent.stock_code,
+                market.code,
+                intent.quantity,
+                result.get("msg1"),
+            )
+        except Exception as exc:
+            if isinstance(exc, OrderPolicyRejected):
+                logger.info(
+                    "Drop queued intent by policy: %s %s (%s): %s",
+                    intent.order_type,
+                    intent.stock_code,
+                    market.code,
+                    exc,
+                )
+                continue
+            logger.warning(
+                "Recovered queued order failed: %s %s (%s): %s",
+                intent.order_type,
+                intent.stock_code,
+                market.code,
+                exc,
+            )
+            if intent.attempts < 2:
+                intent.attempts += 1
+                BLACKOUT_ORDER_MANAGER.requeue(intent)
+
+
+def _resolve_kill_switch_markets(
+    *,
+    settings: Settings | None,
+    current_market: MarketInfo | None,
+) -> list[MarketInfo]:
+    if settings is not None:
+        markets: list[MarketInfo] = []
+        seen: set[str] = set()
+        for market_code in settings.enabled_market_list:
+            market = MARKETS.get(market_code)
+            if market is None or market.code in seen:
+                continue
+            markets.append(market)
+            seen.add(market.code)
+        if markets:
+            return markets
+    if current_market is not None:
+        return [current_market]
+    return []
+
+
+async def _cancel_pending_orders_for_kill_switch(
+    *,
+    broker: KISBroker,
+    overseas_broker: OverseasBroker,
+    markets: list[MarketInfo],
+) -> None:
+    failures: list[str] = []
+    domestic = [m for m in markets if m.is_domestic]
+    overseas = [m for m in markets if not m.is_domestic]
+
+    if domestic:
+        try:
+            orders = await broker.get_domestic_pending_orders()
+        except Exception as exc:
+            logger.warning("KillSwitch: failed to fetch domestic pending orders: %s", exc)
+            orders = []
+        for order in orders:
+            stock_code = str(order.get("pdno", ""))
+            try:
+                orgn_odno = order.get("orgn_odno", "")
+                krx_fwdg_ord_orgno = order.get("ord_gno_brno", "")
+                psbl_qty = int(order.get("psbl_qty", "0") or "0")
+                if not stock_code or not orgn_odno or psbl_qty <= 0:
+                    continue
+                cancel_result = await broker.cancel_domestic_order(
+                    stock_code=stock_code,
+                    orgn_odno=orgn_odno,
+                    krx_fwdg_ord_orgno=krx_fwdg_ord_orgno,
+                    qty=psbl_qty,
+                )
+                if cancel_result.get("rt_cd") != "0":
+                    failures.append(
+                        "domestic cancel failed for"
+                        f" {stock_code}: rt_cd={cancel_result.get('rt_cd')}"
+                        f" msg={cancel_result.get('msg1')}"
+                    )
+            except Exception as exc:
+                logger.warning("KillSwitch: domestic cancel failed: %s", exc)
+                failures.append(f"domestic cancel exception for {stock_code}: {exc}")
+
+    us_exchanges = frozenset({"NASD", "NYSE", "AMEX"})
+    exchange_codes: list[str] = []
+    seen_us = False
+    for market in overseas:
+        exc_code = market.exchange_code
+        if exc_code in us_exchanges:
+            if not seen_us:
+                exchange_codes.append("NASD")
+                seen_us = True
+        elif exc_code not in exchange_codes:
+            exchange_codes.append(exc_code)
+
+    for exchange_code in exchange_codes:
+        try:
+            orders = await overseas_broker.get_overseas_pending_orders(exchange_code)
+        except Exception as exc:
+            logger.warning(
+                "KillSwitch: failed to fetch overseas pending orders for %s: %s",
+                exchange_code,
+                exc,
+            )
+            continue
+        for order in orders:
+            stock_code = str(order.get("pdno", ""))
+            order_exchange = str(order.get("ovrs_excg_cd") or exchange_code)
+            try:
+                odno = order.get("odno", "")
+                nccs_qty = int(order.get("nccs_qty", "0") or "0")
+                if not stock_code or not odno or nccs_qty <= 0:
+                    continue
+                cancel_result = await overseas_broker.cancel_overseas_order(
+                    exchange_code=order_exchange,
+                    stock_code=stock_code,
+                    odno=odno,
+                    qty=nccs_qty,
+                )
+                if cancel_result.get("rt_cd") != "0":
+                    failures.append(
+                        "overseas cancel failed for"
+                        f" {order_exchange}/{stock_code}: rt_cd={cancel_result.get('rt_cd')}"
+                        f" msg={cancel_result.get('msg1')}"
+                    )
+            except Exception as exc:
+                logger.warning("KillSwitch: overseas cancel failed: %s", exc)
+                failures.append(
+                    f"overseas cancel exception for {order_exchange}/{stock_code}: {exc}"
+                )
+
+    if failures:
+        summary = "; ".join(failures[:3])
+        if len(failures) > 3:
+            summary = f"{summary} (+{len(failures) - 3} more)"
+        raise RuntimeError(summary)
+
+
+async def _refresh_order_state_for_kill_switch(
+    *,
+    broker: KISBroker,
+    overseas_broker: OverseasBroker,
+    markets: list[MarketInfo],
+) -> None:
+    failures: list[str] = []
+    seen_overseas: set[str] = set()
+    for market in markets:
+        try:
+            if market.is_domestic:
+                await broker.get_balance()
+            elif market.exchange_code not in seen_overseas:
+                seen_overseas.add(market.exchange_code)
+                await overseas_broker.get_overseas_balance(market.exchange_code)
+        except Exception as exc:
+            logger.warning(
+                "KillSwitch: refresh state failed for %s/%s: %s",
+                market.code,
+                market.exchange_code,
+                exc,
+            )
+            failures.append(f"{market.code}/{market.exchange_code}: {exc}")
+    if failures:
+        summary = "; ".join(failures[:3])
+        if len(failures) > 3:
+            summary = f"{summary} (+{len(failures) - 3} more)"
+        raise RuntimeError(summary)
+
+
+def _reduce_risk_for_kill_switch() -> None:
+    dropped = BLACKOUT_ORDER_MANAGER.clear()
+    logger.critical("KillSwitch: reduced queued order risk by clearing %d queued intents", dropped)
+
+
+async def _trigger_emergency_kill_switch(
+    *,
+    reason: str,
+    broker: KISBroker,
+    overseas_broker: OverseasBroker,
+    telegram: TelegramClient,
+    settings: Settings | None,
+    current_market: MarketInfo | None,
+    stock_code: str,
+    pnl_pct: float,
+    threshold: float,
+) -> Any:
+    markets = _resolve_kill_switch_markets(settings=settings, current_market=current_market)
+    return await KILL_SWITCH.trigger(
+        reason=reason,
+        cancel_pending_orders=lambda: _cancel_pending_orders_for_kill_switch(
+            broker=broker,
+            overseas_broker=overseas_broker,
+            markets=markets,
+        ),
+        refresh_order_state=lambda: _refresh_order_state_for_kill_switch(
+            broker=broker,
+            overseas_broker=overseas_broker,
+            markets=markets,
+        ),
+        reduce_risk=_reduce_risk_for_kill_switch,
+        snapshot_state=lambda: logger.critical(
+            "KillSwitch snapshot %s/%s pnl=%.2f threshold=%.2f",
+            current_market.code if current_market else "UNKNOWN",
+            stock_code,
+            pnl_pct,
+            threshold,
+        ),
+        notify=lambda: telegram.notify_circuit_breaker(
+            pnl_pct=pnl_pct,
+            threshold=threshold,
+        ),
+    )
+
+
 async def trading_cycle(
     broker: KISBroker,
     overseas_broker: OverseasBroker,
@@ -479,28 +1475,24 @@ async def trading_cycle(
 ) -> None:
     """Execute one trading cycle for a single stock."""
     cycle_start_time = asyncio.get_event_loop().time()
+    _session_risk_overrides(market=market, settings=settings)
 
     # 1. Fetch market data
+    balance_info: dict[str, Any] = {}
     price_output: dict[str, Any] = {}  # Populated for overseas markets; used for fallback metrics
     if market.is_domestic:
-        current_price, price_change_pct, foreigner_net = await broker.get_current_price(
-            stock_code
-        )
+        current_price, price_change_pct, foreigner_net = await broker.get_current_price(stock_code)
         balance_data = await broker.get_balance()
 
         output2 = balance_data.get("output2", [{}])
         total_eval = safe_float(output2[0].get("tot_evlu_amt", "0")) if output2 else 0
         total_cash = safe_float(
-            balance_data.get("output2", [{}])[0].get("dnca_tot_amt", "0")
-            if output2
-            else "0"
+            balance_data.get("output2", [{}])[0].get("dnca_tot_amt", "0") if output2 else "0"
         )
         purchase_total = safe_float(output2[0].get("pchs_amt_smtl_amt", "0")) if output2 else 0
     else:
         # Overseas market
-        price_data = await overseas_broker.get_overseas_price(
-            market.exchange_code, stock_code
-        )
+        price_data = await overseas_broker.get_overseas_price(market.exchange_code, stock_code)
         balance_data = await overseas_broker.get_overseas_balance(market.exchange_code)
 
         output2 = balance_data.get("output2", [{}])
@@ -509,8 +1501,6 @@ async def trading_cycle(
             balance_info = output2[0]
         elif isinstance(output2, dict):
             balance_info = output2
-        else:
-            balance_info = {}
 
         total_eval = safe_float(balance_info.get("frcr_evlu_tota", "0") or "0")
         purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
@@ -567,11 +1557,7 @@ async def trading_cycle(
             total_cash = settings.PAPER_OVERSEAS_CASH
 
     # Calculate daily P&L %
-    pnl_pct = (
-        ((total_eval - purchase_total) / purchase_total * 100)
-        if purchase_total > 0
-        else 0.0
-    )
+    pnl_pct = ((total_eval - purchase_total) / purchase_total * 100) if purchase_total > 0 else 0.0
 
     market_data: dict[str, Any] = {
         "stock_code": stock_code,
@@ -580,6 +1566,11 @@ async def trading_cycle(
         "foreigner_net": foreigner_net,
         "price_change_pct": price_change_pct,
     }
+    session_high_price = safe_float(
+        price_output.get("high") or price_output.get("ovrs_hgpr") or price_output.get("stck_hgpr")
+    )
+    if session_high_price > 0:
+        market_data["session_high_price"] = session_high_price
 
     # Enrich market_data with scanner metrics for scenario engine
     market_candidates = scan_candidates.get(market.code, {})
@@ -594,11 +1585,13 @@ async def trading_cycle(
         market_data["rsi"] = max(0.0, min(100.0, 50.0 + price_change_pct * 2.0))
         if price_output and current_price > 0:
             pr_high = safe_float(
-                price_output.get("high") or price_output.get("ovrs_hgpr")
+                price_output.get("high")
+                or price_output.get("ovrs_hgpr")
                 or price_output.get("stck_hgpr")
             )
             pr_low = safe_float(
-                price_output.get("low") or price_output.get("ovrs_lwpr")
+                price_output.get("low")
+                or price_output.get("ovrs_lwpr")
                 or price_output.get("stck_lwpr")
             )
             if pr_high > 0 and pr_low > 0 and pr_high >= pr_low:
@@ -615,9 +1608,7 @@ async def trading_cycle(
     if open_pos and current_price > 0:
         entry_price = safe_float(open_pos.get("price"), 0.0)
         if entry_price > 0:
-            market_data["unrealized_pnl_pct"] = (
-                (current_price - entry_price) / entry_price * 100
-            )
+            market_data["unrealized_pnl_pct"] = (current_price - entry_price) / entry_price * 100
         entry_ts = open_pos.get("timestamp")
         if entry_ts:
             try:
@@ -723,7 +1714,14 @@ async def trading_cycle(
 
     # 2.1. Apply market_outlook-based BUY confidence threshold
     if decision.action == "BUY":
-        base_threshold = (settings.CONFIDENCE_THRESHOLD if settings else 80)
+        base_threshold = int(
+            _resolve_market_setting(
+                market=market,
+                settings=settings,
+                key="CONFIDENCE_THRESHOLD",
+                default=80,
+            )
+        )
         outlook = playbook.market_outlook
         if outlook == MarketOutlook.BEARISH:
             min_confidence = 90
@@ -775,68 +1773,92 @@ async def trading_cycle(
                 stock_code,
                 market.name,
             )
+        elif market.code.startswith("US"):
+            min_price = float(
+                _resolve_market_setting(
+                    market=market,
+                    settings=settings,
+                    key="US_MIN_PRICE",
+                    default=5.0,
+                )
+            )
+            if current_price <= min_price:
+                decision = TradeDecision(
+                    action="HOLD",
+                    confidence=decision.confidence,
+                    rationale=(
+                        f"US minimum price filter blocked BUY "
+                        f"(price={current_price:.4f} <= {min_price:.4f})"
+                    ),
+                )
+                logger.info(
+                    "BUY suppressed for %s (%s): US min price filter %.4f <= %.4f",
+                    stock_code,
+                    market.name,
+                    current_price,
+                    min_price,
+                )
+        if decision.action == "BUY":
+            cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
+            now_epoch = datetime.now(UTC).timestamp()
+            cooldown_until = _STOPLOSS_REENTRY_COOLDOWN_UNTIL.get(cooldown_key, 0.0)
+            if now_epoch < cooldown_until:
+                remaining = int(cooldown_until - now_epoch)
+                decision = TradeDecision(
+                    action="HOLD",
+                    confidence=decision.confidence,
+                    rationale=f"Stop-loss reentry cooldown active ({remaining}s remaining)",
+                )
+                logger.info(
+                    "BUY suppressed for %s (%s): stop-loss cooldown active (%ds remaining)",
+                    stock_code,
+                    market.name,
+                    remaining,
+                )
 
     if decision.action == "HOLD":
         open_position = get_open_position(db_conn, stock_code, market.code)
-        if open_position:
-            entry_price = safe_float(open_position.get("price"), 0.0)
-            if entry_price > 0 and current_price > 0:
-                loss_pct = (current_price - entry_price) / entry_price * 100
-                stop_loss_threshold = -2.0
-                take_profit_threshold = 3.0
-                if stock_playbook and stock_playbook.scenarios:
-                    stop_loss_threshold = stock_playbook.scenarios[0].stop_loss_pct
-                    take_profit_threshold = stock_playbook.scenarios[0].take_profit_pct
-
-                exit_eval = evaluate_exit(
-                    current_state=PositionState.HOLDING,
-                    config=ExitRuleConfig(
-                        hard_stop_pct=stop_loss_threshold,
-                        be_arm_pct=max(0.5, take_profit_threshold * 0.4),
-                        arm_pct=take_profit_threshold,
-                    ),
-                    inp=ExitRuleInput(
-                        current_price=current_price,
-                        entry_price=entry_price,
-                        peak_price=max(entry_price, current_price),
-                        atr_value=0.0,
-                        pred_down_prob=0.0,
-                        liquidity_weak=market_data.get("volume_ratio", 1.0) < 1.0,
-                    ),
-                )
-
-                if exit_eval.reason == "hard_stop":
-                    decision = TradeDecision(
-                        action="SELL",
-                        confidence=95,
-                        rationale=(
-                            f"Stop-loss triggered ({loss_pct:.2f}% <= "
-                            f"{stop_loss_threshold:.2f}%)"
-                        ),
-                    )
-                    logger.info(
-                        "Stop-loss override for %s (%s): %.2f%% <= %.2f%%",
-                        stock_code,
-                        market.name,
-                        loss_pct,
-                        stop_loss_threshold,
-                    )
-                elif exit_eval.reason == "arm_take_profit":
-                    decision = TradeDecision(
-                        action="SELL",
-                        confidence=90,
-                        rationale=(
-                            f"Take-profit triggered ({loss_pct:.2f}% >= "
-                            f"{take_profit_threshold:.2f}%)"
-                        ),
-                    )
-                    logger.info(
-                        "Take-profit override for %s (%s): %.2f%% >= %.2f%%",
-                        stock_code,
-                        market.name,
-                        loss_pct,
-                        take_profit_threshold,
-                    )
+        if not open_position:
+            _clear_runtime_exit_cache_for_symbol(
+                market_code=market.code,
+                stock_code=stock_code,
+            )
+        await _inject_staged_exit_features(
+            market=market,
+            stock_code=stock_code,
+            open_position=open_position,
+            market_data=market_data,
+            broker=broker,
+        )
+        decision = _apply_staged_exit_override_for_hold(
+            decision=decision,
+            market=market,
+            stock_code=stock_code,
+            open_position=open_position,
+            market_data=market_data,
+            stock_playbook=stock_playbook,
+            settings=settings,
+        )
+        if (
+            open_position
+            and decision.action == "HOLD"
+            and _should_force_exit_for_overnight(
+                market=market,
+                settings=settings,
+            )
+        ):
+            decision = TradeDecision(
+                action="SELL",
+                confidence=max(decision.confidence, 85),
+                rationale=(
+                    "Forced exit by overnight policy (session close window / kill switch priority)"
+                ),
+            )
+            logger.info(
+                "Overnight policy override for %s (%s): HOLD -> SELL",
+                stock_code,
+                market.name,
+            )
     logger.info(
         "Decision for %s (%s): %s (confidence=%d)",
         stock_code,
@@ -881,10 +1903,12 @@ async def trading_cycle(
         "pnl_pct": pnl_pct,
     }
 
+    runtime_session_id = get_session_info(market).session_id
     decision_id = decision_logger.log_decision(
         stock_code=stock_code,
         market=market.code,
         exchange_code=market.exchange_code,
+        session_id=runtime_session_id,
         action=decision.action,
         confidence=decision.confidence,
         rationale=decision.rationale,
@@ -896,8 +1920,11 @@ async def trading_cycle(
     quantity = 0
     trade_price = current_price
     trade_pnl = 0.0
+    buy_trade: dict[str, Any] | None = None
+    buy_price = 0.0
+    sell_qty = 0
     if decision.action in ("BUY", "SELL"):
-        if KILL_SWITCH.new_orders_blocked:
+        if KILL_SWITCH.new_orders_blocked and decision.action == "BUY":
             logger.critical(
                 "KillSwitch block active: skip %s order for %s (%s)",
                 decision.action,
@@ -907,9 +1934,7 @@ async def trading_cycle(
             return
 
         broker_held_qty = (
-            _extract_held_qty_from_balance(
-                balance_data, stock_code, is_domestic=market.is_domestic
-            )
+            _extract_held_qty_from_balance(balance_data, stock_code, is_domestic=market.is_domestic)
             if decision.action == "SELL"
             else 0
         )
@@ -935,6 +1960,27 @@ async def trading_cycle(
             )
             return
         order_amount = current_price * quantity
+        fx_blocked, remaining_cash, required_buffer = _should_block_overseas_buy_for_fx_buffer(
+            market=market,
+            action=decision.action,
+            total_cash=total_cash,
+            order_amount=order_amount,
+            settings=settings,
+        )
+        if fx_blocked:
+            logger.warning(
+                (
+                    "Skip BUY %s (%s): FX buffer guard "
+                    "(remaining=%.2f, required=%.2f, cash=%.2f, order=%.2f)"
+                ),
+                stock_code,
+                market.name,
+                remaining_cash,
+                required_buffer,
+                total_cash,
+                order_amount,
+            )
+            return
 
         # 4. Check BUY cooldown (set when a prior BUY failed due to insufficient balance)
         if decision.action == "BUY" and buy_cooldown is not None:
@@ -975,15 +2021,16 @@ async def trading_cycle(
                 logger.warning("Fat finger notification failed: %s", notify_exc)
             raise  # Re-raise to prevent trade
         except CircuitBreakerTripped as exc:
-            ks_report = await KILL_SWITCH.trigger(
+            ks_report = await _trigger_emergency_kill_switch(
                 reason=f"circuit_breaker:{market.code}:{stock_code}:{exc.pnl_pct:.2f}",
-                snapshot_state=lambda: logger.critical(
-                    "KillSwitch snapshot %s/%s pnl=%.2f threshold=%.2f",
-                    market.code,
-                    stock_code,
-                    exc.pnl_pct,
-                    exc.threshold,
-                ),
+                broker=broker,
+                overseas_broker=overseas_broker,
+                telegram=telegram,
+                settings=settings,
+                current_market=market,
+                stock_code=stock_code,
+                pnl_pct=exc.pnl_pct,
+                threshold=exc.threshold,
             )
             if ks_report.errors:
                 logger.critical(
@@ -1005,6 +2052,32 @@ async def trading_cycle(
                 order_price = kr_round_down(current_price * 1.002)
             else:
                 order_price = kr_round_down(current_price * 0.998)
+            try:
+                validate_order_policy(
+                    market=market,
+                    order_type=decision.action,
+                    price=float(order_price),
+                )
+            except OrderPolicyRejected as exc:
+                logger.warning(
+                    "Order policy rejected %s %s (%s): %s [session=%s]",
+                    decision.action,
+                    stock_code,
+                    market.name,
+                    exc,
+                    exc.session_id,
+                )
+                return
+            if _maybe_queue_order_intent(
+                market=market,
+                session_id=runtime_session_id,
+                stock_code=stock_code,
+                order_type=decision.action,
+                quantity=quantity,
+                price=float(order_price),
+                source="trading_cycle",
+            ):
+                return
             result = await broker.send_order(
                 stock_code=stock_code,
                 order_type=decision.action,
@@ -1027,6 +2100,32 @@ async def trading_cycle(
                 overseas_price = round(current_price * 1.002, _price_decimals)
             else:
                 overseas_price = round(current_price * 0.998, _price_decimals)
+            try:
+                validate_order_policy(
+                    market=market,
+                    order_type=decision.action,
+                    price=float(overseas_price),
+                )
+            except OrderPolicyRejected as exc:
+                logger.warning(
+                    "Order policy rejected %s %s (%s): %s [session=%s]",
+                    decision.action,
+                    stock_code,
+                    market.name,
+                    exc,
+                    exc.session_id,
+                )
+                return
+            if _maybe_queue_order_intent(
+                market=market,
+                session_id=runtime_session_id,
+                stock_code=stock_code,
+                order_type=decision.action,
+                quantity=quantity,
+                price=float(overseas_price),
+                source="trading_cycle",
+            ):
+                return
             result = await overseas_broker.send_overseas_order(
                 exchange_code=market.exchange_code,
                 stock_code=stock_code,
@@ -1072,14 +2171,14 @@ async def trading_cycle(
                         action="SELL",
                         confidence=0,
                         rationale=(
-                            "[ghost-close] Broker reported no balance;"
-                            " position closed without fill"
+                            "[ghost-close] Broker reported no balance; position closed without fill"
                         ),
                         quantity=0,
                         price=0.0,
                         pnl=0.0,
                         market=market.code,
                         exchange_code=market.exchange_code,
+                        session_id=runtime_session_id,
                         mode=settings.MODE if settings else "paper",
                     )
         logger.info("Order result: %s", result.get("msg1", "OK"))
@@ -1099,16 +2198,34 @@ async def trading_cycle(
                 logger.warning("Telegram notification failed: %s", exc)
 
         if decision.action == "SELL" and order_succeeded:
-            buy_trade = get_latest_buy_trade(db_conn, stock_code, market.code)
+            buy_trade = get_latest_buy_trade(
+                db_conn,
+                stock_code,
+                market.code,
+                exchange_code=market.exchange_code,
+            )
             if buy_trade and buy_trade.get("price") is not None:
                 buy_price = float(buy_trade["price"])
-                buy_qty = int(buy_trade.get("quantity") or 1)
-                trade_pnl = (trade_price - buy_price) * buy_qty
+                buy_qty = int(buy_trade.get("quantity") or 0)
+                sell_qty = _resolve_sell_qty_for_pnl(sell_qty=quantity, buy_qty=buy_qty)
+                trade_pnl = (trade_price - buy_price) * sell_qty
                 decision_logger.update_outcome(
                     decision_id=buy_trade["decision_id"],
                     pnl=trade_pnl,
                     accuracy=1 if trade_pnl > 0 else 0,
                 )
+                if trade_pnl < 0:
+                    cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
+                    cooldown_minutes = _stoploss_cooldown_minutes(settings, market=market)
+                    _STOPLOSS_REENTRY_COOLDOWN_UNTIL[cooldown_key] = (
+                        datetime.now(UTC).timestamp() + cooldown_minutes * 60
+                    )
+                    logger.info(
+                        "Stop-loss cooldown set for %s (%s): %d minutes",
+                        stock_code,
+                        market.name,
+                        cooldown_minutes,
+                    )
 
     # 6. Log trade with selection context (skip if order was rejected)
     if decision.action in ("BUY", "SELL") and not order_succeeded:
@@ -1122,6 +2239,26 @@ async def trading_cycle(
             "signal": candidate.signal,
             "score": candidate.score,
         }
+    sell_fx_rate = _extract_fx_rate_from_sources(price_output, balance_info)
+    if sell_fx_rate is not None and not market.is_domestic:
+        if selection_context is None:
+            selection_context = {"fx_rate": sell_fx_rate}
+        else:
+            selection_context["fx_rate"] = sell_fx_rate
+
+    strategy_pnl: float | None = None
+    fx_pnl: float | None = None
+    if decision.action == "SELL" and order_succeeded:
+        buy_fx_rate = _extract_buy_fx_rate(buy_trade)
+        strategy_pnl, fx_pnl = _split_trade_pnl_components(
+            market=market,
+            trade_pnl=trade_pnl,
+            buy_price=buy_price,
+            sell_price=trade_price,
+            quantity=sell_qty or quantity,
+            buy_fx_rate=buy_fx_rate,
+            sell_fx_rate=sell_fx_rate,
+        )
 
     log_trade(
         conn=db_conn,
@@ -1132,8 +2269,11 @@ async def trading_cycle(
         quantity=quantity,
         price=trade_price,
         pnl=trade_pnl,
+        strategy_pnl=strategy_pnl,
+        fx_pnl=fx_pnl,
         market=market.code,
         exchange_code=market.exchange_code,
+        session_id=runtime_session_id,
         selection_context=selection_context,
         decision_id=decision_id,
         mode=settings.MODE if settings else "paper",
@@ -1259,27 +2399,26 @@ async def handle_domestic_pending_orders(
                             outcome="cancelled",
                         )
                     except Exception as notify_exc:
-                        logger.warning(
-                            "notify_unfilled_order failed: %s", notify_exc
-                        )
+                        logger.warning("notify_unfilled_order failed: %s", notify_exc)
                 else:
                     # First unfilled SELL → resubmit at last * 0.996 (-0.4%).
                     try:
                         last_price, _, _ = await broker.get_current_price(stock_code)
                         if last_price <= 0:
-                            raise ValueError(
-                                f"Invalid price ({last_price}) for {stock_code}"
-                            )
+                            raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
                         new_price = kr_round_down(last_price * 0.996)
+                        validate_order_policy(
+                            market=MARKETS["KR"],
+                            order_type="SELL",
+                            price=float(new_price),
+                        )
                         await broker.send_order(
                             stock_code=stock_code,
                             order_type="SELL",
                             quantity=psbl_qty,
                             price=new_price,
                         )
-                        sell_resubmit_counts[key] = (
-                            sell_resubmit_counts.get(key, 0) + 1
-                        )
+                        sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                         try:
                             await telegram.notify_unfilled_order(
                                 stock_code=stock_code,
@@ -1290,9 +2429,7 @@ async def handle_domestic_pending_orders(
                                 new_price=float(new_price),
                             )
                         except Exception as notify_exc:
-                            logger.warning(
-                                "notify_unfilled_order failed: %s", notify_exc
-                            )
+                            logger.warning("notify_unfilled_order failed: %s", notify_exc)
                     except Exception as exc:
                         logger.error(
                             "SELL resubmit failed for KR %s: %s",
@@ -1360,9 +2497,7 @@ async def handle_overseas_pending_orders(
         try:
             orders = await overseas_broker.get_overseas_pending_orders(exchange_code)
         except Exception as exc:
-            logger.warning(
-                "Failed to fetch pending orders for %s: %s", exchange_code, exc
-            )
+            logger.warning("Failed to fetch pending orders for %s: %s", exchange_code, exc)
             continue
 
         for order in orders:
@@ -1427,23 +2562,31 @@ async def handle_overseas_pending_orders(
                                 outcome="cancelled",
                             )
                         except Exception as notify_exc:
-                            logger.warning(
-                                "notify_unfilled_order failed: %s", notify_exc
-                            )
+                            logger.warning("notify_unfilled_order failed: %s", notify_exc)
                     else:
                         # First unfilled SELL → resubmit at last * 0.996 (-0.4%).
                         try:
                             price_data = await overseas_broker.get_overseas_price(
                                 order_exchange, stock_code
                             )
-                            last_price = float(
-                                price_data.get("output", {}).get("last", "0") or "0"
-                            )
+                            last_price = float(price_data.get("output", {}).get("last", "0") or "0")
                             if last_price <= 0:
-                                raise ValueError(
-                                    f"Invalid price ({last_price}) for {stock_code}"
-                                )
+                                raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
                             new_price = round(last_price * 0.996, 4)
+                            market_info = next(
+                                (
+                                    m
+                                    for m in MARKETS.values()
+                                    if m.exchange_code == order_exchange and not m.is_domestic
+                                ),
+                                None,
+                            )
+                            if market_info is not None:
+                                validate_order_policy(
+                                    market=market_info,
+                                    order_type="SELL",
+                                    price=float(new_price),
+                                )
                             await overseas_broker.send_overseas_order(
                                 exchange_code=order_exchange,
                                 stock_code=stock_code,
@@ -1451,9 +2594,7 @@ async def handle_overseas_pending_orders(
                                 quantity=nccs_qty,
                                 price=new_price,
                             )
-                            sell_resubmit_counts[key] = (
-                                sell_resubmit_counts.get(key, 0) + 1
-                            )
+                            sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                             try:
                                 await telegram.notify_unfilled_order(
                                     stock_code=stock_code,
@@ -1464,9 +2605,7 @@ async def handle_overseas_pending_orders(
                                     new_price=new_price,
                                 )
                             except Exception as notify_exc:
-                                logger.warning(
-                                    "notify_unfilled_order failed: %s", notify_exc
-                                )
+                                logger.warning("notify_unfilled_order failed: %s", notify_exc)
                         except Exception as exc:
                             logger.error(
                                 "SELL resubmit failed for %s %s: %s",
@@ -1532,6 +2671,13 @@ async def run_daily_session(
 
     # Process each open market
     for market in open_markets:
+        _session_risk_overrides(market=market, settings=settings)
+        await process_blackout_recovery_orders(
+            broker=broker,
+            overseas_broker=overseas_broker,
+            db_conn=db_conn,
+            settings=settings,
+        )
         # Use market-local date for playbook keying
         market_today = datetime.now(market.timezone).date()
 
@@ -1618,13 +2764,16 @@ async def run_daily_session(
                     logger.warning("Playbook notification failed: %s", exc)
                 logger.info(
                     "Generated playbook for %s: %d stocks, %d scenarios",
-                    market.code, playbook.stock_count, playbook.scenario_count,
+                    market.code,
+                    playbook.stock_count,
+                    playbook.scenario_count,
                 )
             except Exception as exc:
                 logger.error("Playbook generation failed for %s: %s", market.code, exc)
                 try:
                     await telegram.notify_playbook_failed(
-                        market=market.code, reason=str(exc)[:200],
+                        market=market.code,
+                        reason=str(exc)[:200],
                     )
                 except Exception as notify_exc:
                     logger.warning("Playbook failed notification error: %s", notify_exc)
@@ -1635,12 +2784,10 @@ async def run_daily_session(
         for stock_code in watchlist:
             try:
                 if market.is_domestic:
-                    current_price, price_change_pct, foreigner_net = (
-                        await _retry_connection(
-                            broker.get_current_price,
-                            stock_code,
-                            label=stock_code,
-                        )
+                    current_price, price_change_pct, foreigner_net = await _retry_connection(
+                        broker.get_current_price,
+                        stock_code,
+                        label=stock_code,
                     )
                 else:
                     price_data = await _retry_connection(
@@ -1649,9 +2796,7 @@ async def run_daily_session(
                         stock_code,
                         label=f"{stock_code}@{market.exchange_code}",
                     )
-                    current_price = safe_float(
-                        price_data.get("output", {}).get("last", "0")
-                    )
+                    current_price = safe_float(price_data.get("output", {}).get("last", "0"))
                     # Fallback: if price API returns 0, use scanner candidate price
                     if current_price <= 0:
                         cand_lookup = candidate_map.get(stock_code)
@@ -1663,9 +2808,7 @@ async def run_daily_session(
                             )
                             current_price = cand_lookup.price
                     foreigner_net = 0.0
-                    price_change_pct = safe_float(
-                        price_data.get("output", {}).get("rate", "0")
-                    )
+                    price_change_pct = safe_float(price_data.get("output", {}).get("rate", "0"))
                     # Fall back to scanner candidate price if API returns 0.
                     if current_price <= 0:
                         cand_lookup = candidate_map.get(stock_code)
@@ -1684,6 +2827,14 @@ async def run_daily_session(
                     "foreigner_net": foreigner_net,
                     "price_change_pct": price_change_pct,
                 }
+                if not market.is_domestic:
+                    session_high_price = safe_float(
+                        price_data.get("output", {}).get("high")
+                        or price_data.get("output", {}).get("ovrs_hgpr")
+                        or price_data.get("output", {}).get("stck_hgpr")
+                    )
+                    if session_high_price > 0:
+                        stock_data["session_high_price"] = session_high_price
                 # Enrich with scanner metrics
                 cand = candidate_map.get(stock_code)
                 if cand:
@@ -1718,17 +2869,12 @@ async def run_daily_session(
             )
             continue
 
+        balance_info: dict[str, Any] = {}
         if market.is_domestic:
             output2 = balance_data.get("output2", [{}])
-            total_eval = safe_float(
-                output2[0].get("tot_evlu_amt", "0")
-            ) if output2 else 0
-            total_cash = safe_float(
-                output2[0].get("dnca_tot_amt", "0")
-            ) if output2 else 0
-            purchase_total = safe_float(
-                output2[0].get("pchs_amt_smtl_amt", "0")
-            ) if output2 else 0
+            total_eval = safe_float(output2[0].get("tot_evlu_amt", "0")) if output2 else 0
+            total_cash = safe_float(output2[0].get("dnca_tot_amt", "0")) if output2 else 0
+            purchase_total = safe_float(output2[0].get("pchs_amt_smtl_amt", "0")) if output2 else 0
         else:
             output2 = balance_data.get("output2", [{}])
             if isinstance(output2, list) and output2:
@@ -1739,18 +2885,15 @@ async def run_daily_session(
                 balance_info = {}
 
             total_eval = safe_float(balance_info.get("frcr_evlu_tota", "0") or "0")
-            purchase_total = safe_float(
-                balance_info.get("frcr_buy_amt_smtl", "0") or "0"
-            )
+            purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
 
             # Fetch available foreign currency cash via inquire-psamount (TTTS3007R/VTTS3007R).
-            # TTTS3012R output2 does not include a cash/deposit field — frcr_dncl_amt_2 does not exist.
+            # TTTS3012R output2 does not include a cash/deposit field.
+            # frcr_dncl_amt_2 does not exist.
             # Use the first stock with a valid price as the reference for the buying power query.
             # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 매수가능금액조회' 시트
             total_cash = 0.0
-            ref_stock = next(
-                (s for s in stocks_data if s.get("current_price", 0) > 0), None
-            )
+            ref_stock = next((s for s in stocks_data if s.get("current_price", 0) > 0), None)
             if ref_stock:
                 try:
                     ps_data = await overseas_broker.get_overseas_buying_power(
@@ -1770,11 +2913,7 @@ async def run_daily_session(
 
             # Paper mode fallback: VTS overseas balance API often fails for many accounts.
             # Only activate in paper mode — live mode must use real balance from KIS.
-            if (
-                total_cash <= 0
-                and settings.MODE == "paper"
-                and settings.PAPER_OVERSEAS_CASH > 0
-            ):
+            if total_cash <= 0 and settings.MODE == "paper" and settings.PAPER_OVERSEAS_CASH > 0:
                 total_cash = settings.PAPER_OVERSEAS_CASH
 
         # Capture the day's opening portfolio value on the first market processed
@@ -1807,12 +2946,17 @@ async def run_daily_session(
         # Evaluate scenarios for each stock (local, no API calls)
         logger.info(
             "Evaluating %d stocks against playbook for %s",
-            len(stocks_data), market.name,
+            len(stocks_data),
+            market.name,
         )
         for stock_data in stocks_data:
             stock_code = stock_data["stock_code"]
+            stock_playbook = playbook.get_stock_playbook(stock_code)
             match = scenario_engine.evaluate(
-                playbook, stock_code, stock_data, portfolio_data,
+                playbook,
+                stock_code,
+                stock_data,
+                portfolio_data,
             )
             decision = TradeDecision(
                 action=match.action.value,
@@ -1854,6 +2998,92 @@ async def run_daily_session(
                         stock_code,
                         market.name,
                     )
+                elif market.code.startswith("US"):
+                    min_price = float(
+                        _resolve_market_setting(
+                            market=market,
+                            settings=settings,
+                            key="US_MIN_PRICE",
+                            default=5.0,
+                        )
+                    )
+                    if stock_data["current_price"] <= min_price:
+                        decision = TradeDecision(
+                            action="HOLD",
+                            confidence=decision.confidence,
+                            rationale=(
+                                f"US minimum price filter blocked BUY "
+                                f"(price={stock_data['current_price']:.4f} <= {min_price:.4f})"
+                            ),
+                        )
+                        logger.info(
+                            "BUY suppressed for %s (%s): US min price filter %.4f <= %.4f",
+                            stock_code,
+                            market.name,
+                            stock_data["current_price"],
+                            min_price,
+                        )
+                if decision.action == "BUY":
+                    cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
+                    now_epoch = datetime.now(UTC).timestamp()
+                    cooldown_until = _STOPLOSS_REENTRY_COOLDOWN_UNTIL.get(cooldown_key, 0.0)
+                    if now_epoch < cooldown_until:
+                        remaining = int(cooldown_until - now_epoch)
+                        decision = TradeDecision(
+                            action="HOLD",
+                            confidence=decision.confidence,
+                            rationale=f"Stop-loss reentry cooldown active ({remaining}s remaining)",
+                        )
+                        logger.info(
+                            "BUY suppressed for %s (%s): stop-loss cooldown active (%ds remaining)",
+                            stock_code,
+                            market.name,
+                            remaining,
+                        )
+            if decision.action == "HOLD":
+                daily_open = get_open_position(db_conn, stock_code, market.code)
+                if not daily_open:
+                    _clear_runtime_exit_cache_for_symbol(
+                        market_code=market.code,
+                        stock_code=stock_code,
+                    )
+                await _inject_staged_exit_features(
+                    market=market,
+                    stock_code=stock_code,
+                    open_position=daily_open,
+                    market_data=stock_data,
+                    broker=broker,
+                )
+                decision = _apply_staged_exit_override_for_hold(
+                    decision=decision,
+                    market=market,
+                    stock_code=stock_code,
+                    open_position=daily_open,
+                    market_data=stock_data,
+                    stock_playbook=stock_playbook,
+                    settings=settings,
+                )
+                if (
+                    daily_open
+                    and decision.action == "HOLD"
+                    and _should_force_exit_for_overnight(
+                        market=market,
+                        settings=settings,
+                    )
+                ):
+                    decision = TradeDecision(
+                        action="SELL",
+                        confidence=max(decision.confidence, 85),
+                        rationale=(
+                            "Forced exit by overnight policy"
+                            " (session close window / kill switch priority)"
+                        ),
+                    )
+                    logger.info(
+                        "Daily overnight policy override for %s (%s): HOLD -> SELL",
+                        stock_code,
+                        market.name,
+                    )
 
             # Log decision
             context_snapshot = {
@@ -1877,10 +3107,12 @@ async def run_daily_session(
                 "pnl_pct": pnl_pct,
             }
 
+            runtime_session_id = get_session_info(market).session_id
             decision_id = decision_logger.log_decision(
                 stock_code=stock_code,
                 market=market.code,
                 exchange_code=market.exchange_code,
+                session_id=runtime_session_id,
                 action=decision.action,
                 confidence=decision.confidence,
                 rationale=decision.rationale,
@@ -1892,9 +3124,12 @@ async def run_daily_session(
             quantity = 0
             trade_price = stock_data["current_price"]
             trade_pnl = 0.0
+            buy_trade: dict[str, Any] | None = None
+            buy_price = 0.0
+            sell_qty = 0
             order_succeeded = True
             if decision.action in ("BUY", "SELL"):
-                if KILL_SWITCH.new_orders_blocked:
+                if KILL_SWITCH.new_orders_blocked and decision.action == "BUY":
                     logger.critical(
                         "KillSwitch block active: skip %s order for %s (%s)",
                         decision.action,
@@ -1929,6 +3164,29 @@ async def run_daily_session(
                     )
                     continue
                 order_amount = stock_data["current_price"] * quantity
+                fx_blocked, remaining_cash, required_buffer = (
+                    _should_block_overseas_buy_for_fx_buffer(
+                        market=market,
+                        action=decision.action,
+                        total_cash=total_cash,
+                        order_amount=order_amount,
+                        settings=settings,
+                    )
+                )
+                if fx_blocked:
+                    logger.warning(
+                        (
+                            "Skip BUY %s (%s): FX buffer guard "
+                            "(remaining=%.2f, required=%.2f, cash=%.2f, order=%.2f)"
+                        ),
+                        stock_code,
+                        market.name,
+                        remaining_cash,
+                        required_buffer,
+                        total_cash,
+                        order_amount,
+                    )
+                    continue
 
                 # Check BUY cooldown (insufficient balance)
                 if decision.action == "BUY":
@@ -1938,7 +3196,10 @@ async def run_daily_session(
                     if now < daily_cooldown_until:
                         remaining = int(daily_cooldown_until - now)
                         logger.info(
-                            "Skip BUY %s (%s): insufficient-balance cooldown active (%ds remaining)",
+                            (
+                                "Skip BUY %s (%s): insufficient-balance cooldown active "
+                                "(%ds remaining)"
+                            ),
                             stock_code,
                             market.name,
                             remaining,
@@ -1969,26 +3230,18 @@ async def run_daily_session(
                         logger.warning("Fat finger notification failed: %s", notify_exc)
                     continue  # Skip this order
                 except CircuitBreakerTripped as exc:
-                    ks_report = await KILL_SWITCH.trigger(
+                    ks_report = await _trigger_emergency_kill_switch(
                         reason=f"daily_circuit_breaker:{market.code}:{stock_code}:{exc.pnl_pct:.2f}",
-                        snapshot_state=lambda: logger.critical(
-                            "Daily KillSwitch snapshot %s/%s pnl=%.2f threshold=%.2f",
-                            market.code,
-                            stock_code,
-                            exc.pnl_pct,
-                            exc.threshold,
-                        ),
+                        broker=broker,
+                        overseas_broker=overseas_broker,
+                        telegram=telegram,
+                        settings=settings,
+                        current_market=market,
+                        stock_code=stock_code,
+                        pnl_pct=exc.pnl_pct,
+                        threshold=exc.threshold,
                     )
                     logger.critical("Circuit breaker tripped — stopping session")
-                    try:
-                        await telegram.notify_circuit_breaker(
-                            pnl_pct=exc.pnl_pct,
-                            threshold=exc.threshold,
-                        )
-                    except Exception as notify_exc:
-                        logger.warning(
-                            "Circuit breaker notification failed: %s", notify_exc
-                        )
                     if ks_report.errors:
                         logger.critical(
                             "Daily KillSwitch step errors for %s/%s: %s",
@@ -2005,13 +3258,35 @@ async def run_daily_session(
                         # Use limit orders (지정가) for domestic stocks.
                         # KRX tick rounding applied via kr_round_down.
                         if decision.action == "BUY":
-                            order_price = kr_round_down(
-                                stock_data["current_price"] * 1.002
-                            )
+                            order_price = kr_round_down(stock_data["current_price"] * 1.002)
                         else:
-                            order_price = kr_round_down(
-                                stock_data["current_price"] * 0.998
+                            order_price = kr_round_down(stock_data["current_price"] * 0.998)
+                        try:
+                            validate_order_policy(
+                                market=market,
+                                order_type=decision.action,
+                                price=float(order_price),
                             )
+                        except OrderPolicyRejected as exc:
+                            logger.warning(
+                                "Order policy rejected %s %s (%s): %s [session=%s]",
+                                decision.action,
+                                stock_code,
+                                market.name,
+                                exc,
+                                exc.session_id,
+                            )
+                            continue
+                        if _maybe_queue_order_intent(
+                            market=market,
+                            session_id=runtime_session_id,
+                            stock_code=stock_code,
+                            order_type=decision.action,
+                            quantity=quantity,
+                            price=float(order_price),
+                            source="run_daily_session",
+                        ):
+                            continue
                         result = await broker.send_order(
                             stock_code=stock_code,
                             order_type=decision.action,
@@ -2024,6 +3299,32 @@ async def run_daily_session(
                             order_price = round(stock_data["current_price"] * 1.005, 4)
                         else:
                             order_price = stock_data["current_price"]
+                        try:
+                            validate_order_policy(
+                                market=market,
+                                order_type=decision.action,
+                                price=float(order_price),
+                            )
+                        except OrderPolicyRejected as exc:
+                            logger.warning(
+                                "Order policy rejected %s %s (%s): %s [session=%s]",
+                                decision.action,
+                                stock_code,
+                                market.name,
+                                exc,
+                                exc.session_id,
+                            )
+                            continue
+                        if _maybe_queue_order_intent(
+                            market=market,
+                            session_id=runtime_session_id,
+                            stock_code=stock_code,
+                            order_type=decision.action,
+                            quantity=quantity,
+                            price=float(order_price),
+                            source="run_daily_session",
+                        ):
+                            continue
                         result = await overseas_broker.send_overseas_order(
                             exchange_code=market.exchange_code,
                             stock_code=stock_code,
@@ -2066,26 +3367,74 @@ async def run_daily_session(
                         except Exception as exc:
                             logger.warning("Telegram notification failed: %s", exc)
                 except Exception as exc:
-                    logger.error(
-                        "Order execution failed for %s: %s", stock_code, exc
-                    )
+                    logger.error("Order execution failed for %s: %s", stock_code, exc)
                     continue
 
                 if decision.action == "SELL" and order_succeeded:
-                    buy_trade = get_latest_buy_trade(db_conn, stock_code, market.code)
+                    buy_trade = get_latest_buy_trade(
+                        db_conn,
+                        stock_code,
+                        market.code,
+                        exchange_code=market.exchange_code,
+                    )
                     if buy_trade and buy_trade.get("price") is not None:
                         buy_price = float(buy_trade["price"])
-                        buy_qty = int(buy_trade.get("quantity") or 1)
-                        trade_pnl = (trade_price - buy_price) * buy_qty
+                        buy_qty = int(buy_trade.get("quantity") or 0)
+                        sell_qty = _resolve_sell_qty_for_pnl(
+                            sell_qty=quantity,
+                            buy_qty=buy_qty,
+                        )
+                        trade_pnl = (trade_price - buy_price) * sell_qty
                         decision_logger.update_outcome(
                             decision_id=buy_trade["decision_id"],
                             pnl=trade_pnl,
                             accuracy=1 if trade_pnl > 0 else 0,
                         )
+                        if trade_pnl < 0:
+                            cooldown_key = _stoploss_cooldown_key(
+                                market=market, stock_code=stock_code
+                            )
+                            cooldown_minutes = _stoploss_cooldown_minutes(
+                                settings,
+                                market=market,
+                            )
+                            _STOPLOSS_REENTRY_COOLDOWN_UNTIL[cooldown_key] = (
+                                datetime.now(UTC).timestamp() + cooldown_minutes * 60
+                            )
+                            logger.info(
+                                "Stop-loss cooldown set for %s (%s): %d minutes",
+                                stock_code,
+                                market.name,
+                                cooldown_minutes,
+                            )
 
             # Log trade (skip if order was rejected by API)
             if decision.action in ("BUY", "SELL") and not order_succeeded:
                 continue
+            strategy_pnl: float | None = None
+            fx_pnl: float | None = None
+            selection_context: dict[str, Any] | None = None
+            if decision.action == "SELL" and order_succeeded:
+                buy_fx_rate = _extract_buy_fx_rate(buy_trade)
+                sell_fx_rate = _extract_fx_rate_from_sources(balance_info, stock_data)
+                strategy_pnl, fx_pnl = _split_trade_pnl_components(
+                    market=market,
+                    trade_pnl=trade_pnl,
+                    buy_price=buy_price,
+                    sell_price=trade_price,
+                    quantity=sell_qty or quantity,
+                    buy_fx_rate=buy_fx_rate,
+                    sell_fx_rate=sell_fx_rate,
+                )
+                if sell_fx_rate is not None and not market.is_domestic:
+                    # Daily path does not carry scanner candidate metrics, so this
+                    # context intentionally stores FX snapshot only.
+                    selection_context = {"fx_rate": sell_fx_rate}
+            elif not market.is_domestic:
+                snapshot_fx_rate = _extract_fx_rate_from_sources(balance_info, stock_data)
+                if snapshot_fx_rate is not None:
+                    # BUY/HOLD in daily path: persist FX snapshot for later SELL split.
+                    selection_context = {"fx_rate": snapshot_fx_rate}
             log_trade(
                 conn=db_conn,
                 stock_code=stock_code,
@@ -2095,8 +3444,12 @@ async def run_daily_session(
                 quantity=quantity,
                 price=trade_price,
                 pnl=trade_pnl,
+                strategy_pnl=strategy_pnl,
+                fx_pnl=fx_pnl,
                 market=market.code,
                 exchange_code=market.exchange_code,
+                session_id=runtime_session_id,
+                selection_context=selection_context,
                 decision_id=decision_id,
                 mode=settings.MODE,
             )
@@ -2150,7 +3503,8 @@ async def _handle_market_close(
 
 
 def _run_context_scheduler(
-    scheduler: ContextScheduler, now: datetime | None = None,
+    scheduler: ContextScheduler,
+    now: datetime | None = None,
 ) -> None:
     """Run periodic context scheduler tasks and log when anything executes."""
     result = scheduler.run_if_due(now=now)
@@ -2219,6 +3573,7 @@ def _start_dashboard_server(settings: Settings) -> threading.Thread | None:
     # reported synchronously (avoids the misleading "started" → "failed" log pair).
     try:
         import uvicorn  # noqa: F401
+
         from src.dashboard import create_dashboard_app  # noqa: F401
     except ImportError as exc:
         logger.warning("Dashboard server unavailable (missing dependency): %s", exc)
@@ -2227,6 +3582,7 @@ def _start_dashboard_server(settings: Settings) -> threading.Thread | None:
     def _serve() -> None:
         try:
             import uvicorn
+
             from src.dashboard import create_dashboard_app
 
             app = create_dashboard_app(settings.DB_PATH, mode=settings.MODE)
@@ -2262,6 +3618,19 @@ def _apply_dashboard_flag(settings: Settings, dashboard_flag: bool) -> Settings:
 
 async def run(settings: Settings) -> None:
     """Main async loop — iterate over open markets on a timer."""
+    global BLACKOUT_ORDER_MANAGER
+    BLACKOUT_ORDER_MANAGER = BlackoutOrderManager(
+        enabled=settings.ORDER_BLACKOUT_ENABLED,
+        windows=parse_blackout_windows_kst(settings.ORDER_BLACKOUT_WINDOWS_KST),
+        max_queue_size=settings.ORDER_BLACKOUT_QUEUE_MAX,
+    )
+    logger.info(
+        "Blackout manager initialized: enabled=%s windows=%s queue_max=%d",
+        settings.ORDER_BLACKOUT_ENABLED,
+        settings.ORDER_BLACKOUT_WINDOWS_KST,
+        settings.ORDER_BLACKOUT_QUEUE_MAX,
+    )
+
     broker = KISBroker(settings)
     overseas_broker = OverseasBroker(broker)
     brain = GeminiClient(settings)
@@ -2354,8 +3723,7 @@ async def run(settings: Settings) -> None:
         pause_trading.set()
         logger.info("Trading resumed via Telegram command")
         await telegram.send_message(
-            "<b>▶️ Trading Resumed</b>\n\n"
-            "Trading operations have been restarted."
+            "<b>▶️ Trading Resumed</b>\n\nTrading operations have been restarted."
         )
 
     async def handle_status() -> None:
@@ -2398,9 +3766,7 @@ async def run(settings: Settings) -> None:
 
         except Exception as exc:
             logger.error("Error in /status handler: %s", exc)
-            await telegram.send_message(
-                "<b>⚠️ Error</b>\n\nFailed to retrieve trading status."
-            )
+            await telegram.send_message("<b>⚠️ Error</b>\n\nFailed to retrieve trading status.")
 
     async def handle_positions() -> None:
         """Handle /positions command - show account summary."""
@@ -2411,8 +3777,7 @@ async def run(settings: Settings) -> None:
 
             if not output2:
                 await telegram.send_message(
-                    "<b>💼 Account Summary</b>\n\n"
-                    "No balance information available."
+                    "<b>💼 Account Summary</b>\n\nNo balance information available."
                 )
                 return
 
@@ -2441,9 +3806,7 @@ async def run(settings: Settings) -> None:
 
         except Exception as exc:
             logger.error("Error in /positions handler: %s", exc)
-            await telegram.send_message(
-                "<b>⚠️ Error</b>\n\nFailed to retrieve positions."
-            )
+            await telegram.send_message("<b>⚠️ Error</b>\n\nFailed to retrieve positions.")
 
     async def handle_report() -> None:
         """Handle /report command - show daily summary metrics."""
@@ -2487,9 +3850,7 @@ async def run(settings: Settings) -> None:
             )
         except Exception as exc:
             logger.error("Error in /report handler: %s", exc)
-            await telegram.send_message(
-                "<b>⚠️ Error</b>\n\nFailed to generate daily report."
-            )
+            await telegram.send_message("<b>⚠️ Error</b>\n\nFailed to generate daily report.")
 
     async def handle_scenarios() -> None:
         """Handle /scenarios command - show today's playbook scenarios."""
@@ -2538,9 +3899,7 @@ async def run(settings: Settings) -> None:
             await telegram.send_message("\n".join(lines).strip())
         except Exception as exc:
             logger.error("Error in /scenarios handler: %s", exc)
-            await telegram.send_message(
-                "<b>⚠️ Error</b>\n\nFailed to retrieve scenarios."
-            )
+            await telegram.send_message("<b>⚠️ Error</b>\n\nFailed to retrieve scenarios.")
 
     async def handle_review() -> None:
         """Handle /review command - show recent scorecards."""
@@ -2556,9 +3915,7 @@ async def run(settings: Settings) -> None:
             ).fetchall()
 
             if not rows:
-                await telegram.send_message(
-                    "<b>📝 Recent Reviews</b>\n\nNo scorecards available."
-                )
+                await telegram.send_message("<b>📝 Recent Reviews</b>\n\nNo scorecards available.")
                 return
 
             lines = ["<b>📝 Recent Reviews</b>", ""]
@@ -2576,9 +3933,7 @@ async def run(settings: Settings) -> None:
             await telegram.send_message("\n".join(lines))
         except Exception as exc:
             logger.error("Error in /review handler: %s", exc)
-            await telegram.send_message(
-                "<b>⚠️ Error</b>\n\nFailed to retrieve reviews."
-            )
+            await telegram.send_message("<b>⚠️ Error</b>\n\nFailed to retrieve reviews.")
 
     async def handle_notify(args: list[str]) -> None:
         """Handle /notify [key] [on|off] — query or change notification filters."""
@@ -2613,8 +3968,7 @@ async def run(settings: Settings) -> None:
             else:
                 valid = ", ".join(list(status.keys()) + ["all"])
                 await telegram.send_message(
-                    f"❌ 알 수 없는 키: <code>{key}</code>\n"
-                    f"유효한 키: {valid}"
+                    f"❌ 알 수 없는 키: <code>{key}</code>\n유효한 키: {valid}"
                 )
             return
 
@@ -2626,30 +3980,22 @@ async def run(settings: Settings) -> None:
         value = toggle == "on"
         if telegram.set_notification(key, value):
             icon = "✅" if value else "❌"
-            label = f"전체 알림" if key == "all" else f"<code>{key}</code> 알림"
+            label = "전체 알림" if key == "all" else f"<code>{key}</code> 알림"
             state = "켜짐" if value else "꺼짐"
             await telegram.send_message(f"{icon} {label} → {state}")
             logger.info("Notification filter changed via Telegram: %s=%s", key, value)
         else:
             valid = ", ".join(list(telegram.filter_status().keys()) + ["all"])
-            await telegram.send_message(
-                f"❌ 알 수 없는 키: <code>{key}</code>\n"
-                f"유효한 키: {valid}"
-            )
+            await telegram.send_message(f"❌ 알 수 없는 키: <code>{key}</code>\n유효한 키: {valid}")
 
     async def handle_dashboard() -> None:
         """Handle /dashboard command - show dashboard URL if enabled."""
         if not settings.DASHBOARD_ENABLED:
-            await telegram.send_message(
-                "<b>🖥️ Dashboard</b>\n\nDashboard is not enabled."
-            )
+            await telegram.send_message("<b>🖥️ Dashboard</b>\n\nDashboard is not enabled.")
             return
 
         url = f"http://{settings.DASHBOARD_HOST}:{settings.DASHBOARD_PORT}"
-        await telegram.send_message(
-            "<b>🖥️ Dashboard</b>\n\n"
-            f"<b>URL:</b> {url}"
-        )
+        await telegram.send_message(f"<b>🖥️ Dashboard</b>\n\n<b>URL:</b> {url}")
 
     command_handler.register_command("help", handle_help)
     command_handler.register_command("stop", handle_stop)
@@ -2810,7 +4156,10 @@ async def run(settings: Settings) -> None:
                 _run_context_scheduler(context_scheduler, now=datetime.now(UTC))
 
                 # Get currently open markets
-                open_markets = get_open_markets(settings.enabled_market_list)
+                open_markets = get_open_markets(
+                    settings.enabled_market_list,
+                    include_extended_sessions=True,
+                )
 
                 if not open_markets:
                     # Notify market close for any markets that were open
@@ -2839,7 +4188,8 @@ async def run(settings: Settings) -> None:
                     # No markets open — wait until next market opens
                     try:
                         next_market, next_open_time = get_next_market_open(
-                            settings.enabled_market_list
+                            settings.enabled_market_list,
+                            include_extended_sessions=True,
                         )
                         now = datetime.now(UTC)
                         wait_seconds = (next_open_time - now).total_seconds()
@@ -2860,6 +4210,22 @@ async def run(settings: Settings) -> None:
                 for market in open_markets:
                     if shutdown.is_set():
                         break
+
+                    session_info = get_session_info(market)
+                    _session_risk_overrides(market=market, settings=settings)
+                    logger.info(
+                        "Market session active: %s (%s) session=%s",
+                        market.code,
+                        market.name,
+                        session_info.session_id,
+                    )
+
+                    await process_blackout_recovery_orders(
+                        broker=broker,
+                        overseas_broker=overseas_broker,
+                        db_conn=db_conn,
+                        settings=settings,
+                    )
 
                     # Notify market open if it just opened
                     if not _market_states.get(market.code, False):
@@ -2930,9 +4296,7 @@ async def run(settings: Settings) -> None:
                                 )
 
                                 # Store candidates per market for selection context logging
-                                scan_candidates[market.code] = {
-                                    c.stock_code: c for c in candidates
-                                }
+                                scan_candidates[market.code] = {c.stock_code: c for c in candidates}
 
                                 logger.info(
                                     "Smart Scanner: Found %d candidates for %s: %s",
@@ -2942,9 +4306,7 @@ async def run(settings: Settings) -> None:
                                 )
 
                                 # Get market-local date for playbook keying
-                                market_today = datetime.now(
-                                    market.timezone
-                                ).date()
+                                market_today = datetime.now(market.timezone).date()
 
                                 # Load or generate playbook (1 Gemini call per market per day)
                                 if market.code not in playbooks:
@@ -2982,7 +4344,8 @@ async def run(settings: Settings) -> None:
                                         except Exception as exc:
                                             logger.error(
                                                 "Playbook generation failed for %s: %s",
-                                                market.code, exc,
+                                                market.code,
+                                                exc,
                                             )
                                             try:
                                                 await telegram.notify_playbook_failed(
@@ -3027,7 +4390,8 @@ async def run(settings: Settings) -> None:
                     except Exception as exc:
                         logger.warning(
                             "Failed to fetch holdings for %s: %s — skipping holdings merge",
-                            market.name, exc,
+                            market.name,
+                            exc,
                         )
                         held_codes = []
 
@@ -3036,7 +4400,8 @@ async def run(settings: Settings) -> None:
                     if extra_held:
                         logger.info(
                             "Holdings added to loop for %s (not in scanner): %s",
-                            market.name, extra_held,
+                            market.name,
+                            extra_held,
                         )
 
                     if not stock_codes:

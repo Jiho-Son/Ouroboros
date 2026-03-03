@@ -14,7 +14,7 @@ from src.strategy.models import (
     StockPlaybook,
     StockScenario,
 )
-from src.strategy.scenario_engine import ScenarioEngine, ScenarioMatch
+from src.strategy.scenario_engine import ScenarioEngine
 
 
 @pytest.fixture
@@ -162,13 +162,15 @@ class TestEvaluateCondition:
     def test_mixed_invalid_types_no_exception(self, engine: ScenarioEngine) -> None:
         """Various invalid types should not raise exceptions."""
         cond = StockCondition(
-            rsi_below=30.0, volume_ratio_above=2.0,
-            price_above=100, price_change_pct_below=-1.0,
+            rsi_below=30.0,
+            volume_ratio_above=2.0,
+            price_above=100,
+            price_change_pct_below=-1.0,
         )
         data = {
-            "rsi": [25],           # list
+            "rsi": [25],  # list
             "volume_ratio": "bad",  # non-numeric string
-            "current_price": {},    # dict
+            "current_price": {},  # dict
             "price_change_pct": object(),  # arbitrary object
         }
         # Should return False (invalid types → None → False), never raise
@@ -356,9 +358,7 @@ class TestEvaluate:
 
     def test_match_details_populated(self, engine: ScenarioEngine) -> None:
         pb = _playbook(scenarios=[_scenario(rsi_below=30.0, volume_ratio_above=2.0)])
-        result = engine.evaluate(
-            pb, "005930", {"rsi": 25.0, "volume_ratio": 3.0}, {}
-        )
+        result = engine.evaluate(pb, "005930", {"rsi": 25.0, "volume_ratio": 3.0}, {})
         assert result.match_details.get("rsi") == 25.0
         assert result.match_details.get("volume_ratio") == 3.0
 
@@ -381,7 +381,9 @@ class TestEvaluate:
                 ),
                 StockPlaybook(
                     stock_code="MSFT",
-                    scenarios=[_scenario(rsi_above=75.0, action=ScenarioAction.SELL, confidence=80)],
+                    scenarios=[
+                        _scenario(rsi_above=75.0, action=ScenarioAction.SELL, confidence=80)
+                    ],
                 ),
             ],
         )
@@ -450,58 +452,42 @@ class TestEvaluate:
 class TestPositionAwareConditions:
     """Tests for unrealized_pnl_pct and holding_days condition fields."""
 
-    def test_evaluate_condition_unrealized_pnl_above_matches(
-        self, engine: ScenarioEngine
-    ) -> None:
+    def test_evaluate_condition_unrealized_pnl_above_matches(self, engine: ScenarioEngine) -> None:
         """unrealized_pnl_pct_above should match when P&L exceeds threshold."""
         condition = StockCondition(unrealized_pnl_pct_above=3.0)
         assert engine.evaluate_condition(condition, {"unrealized_pnl_pct": 5.0}) is True
 
-    def test_evaluate_condition_unrealized_pnl_above_no_match(
-        self, engine: ScenarioEngine
-    ) -> None:
+    def test_evaluate_condition_unrealized_pnl_above_no_match(self, engine: ScenarioEngine) -> None:
         """unrealized_pnl_pct_above should NOT match when P&L is below threshold."""
         condition = StockCondition(unrealized_pnl_pct_above=3.0)
         assert engine.evaluate_condition(condition, {"unrealized_pnl_pct": 2.0}) is False
 
-    def test_evaluate_condition_unrealized_pnl_below_matches(
-        self, engine: ScenarioEngine
-    ) -> None:
+    def test_evaluate_condition_unrealized_pnl_below_matches(self, engine: ScenarioEngine) -> None:
         """unrealized_pnl_pct_below should match when P&L is under threshold."""
         condition = StockCondition(unrealized_pnl_pct_below=-2.0)
         assert engine.evaluate_condition(condition, {"unrealized_pnl_pct": -3.5}) is True
 
-    def test_evaluate_condition_unrealized_pnl_below_no_match(
-        self, engine: ScenarioEngine
-    ) -> None:
+    def test_evaluate_condition_unrealized_pnl_below_no_match(self, engine: ScenarioEngine) -> None:
         """unrealized_pnl_pct_below should NOT match when P&L is above threshold."""
         condition = StockCondition(unrealized_pnl_pct_below=-2.0)
         assert engine.evaluate_condition(condition, {"unrealized_pnl_pct": -1.0}) is False
 
-    def test_evaluate_condition_holding_days_above_matches(
-        self, engine: ScenarioEngine
-    ) -> None:
+    def test_evaluate_condition_holding_days_above_matches(self, engine: ScenarioEngine) -> None:
         """holding_days_above should match when position held longer than threshold."""
         condition = StockCondition(holding_days_above=5)
         assert engine.evaluate_condition(condition, {"holding_days": 7}) is True
 
-    def test_evaluate_condition_holding_days_above_no_match(
-        self, engine: ScenarioEngine
-    ) -> None:
+    def test_evaluate_condition_holding_days_above_no_match(self, engine: ScenarioEngine) -> None:
         """holding_days_above should NOT match when position held shorter."""
         condition = StockCondition(holding_days_above=5)
         assert engine.evaluate_condition(condition, {"holding_days": 3}) is False
 
-    def test_evaluate_condition_holding_days_below_matches(
-        self, engine: ScenarioEngine
-    ) -> None:
+    def test_evaluate_condition_holding_days_below_matches(self, engine: ScenarioEngine) -> None:
         """holding_days_below should match when position held fewer days."""
         condition = StockCondition(holding_days_below=3)
         assert engine.evaluate_condition(condition, {"holding_days": 1}) is True
 
-    def test_evaluate_condition_holding_days_below_no_match(
-        self, engine: ScenarioEngine
-    ) -> None:
+    def test_evaluate_condition_holding_days_below_no_match(self, engine: ScenarioEngine) -> None:
         """holding_days_below should NOT match when held more days."""
         condition = StockCondition(holding_days_below=3)
         assert engine.evaluate_condition(condition, {"holding_days": 5}) is False
@@ -513,33 +499,33 @@ class TestPositionAwareConditions:
             holding_days_above=5,
         )
         # Both met → match
-        assert engine.evaluate_condition(
-            condition,
-            {"unrealized_pnl_pct": 4.5, "holding_days": 7},
-        ) is True
+        assert (
+            engine.evaluate_condition(
+                condition,
+                {"unrealized_pnl_pct": 4.5, "holding_days": 7},
+            )
+            is True
+        )
         # Only pnl met → no match
-        assert engine.evaluate_condition(
-            condition,
-            {"unrealized_pnl_pct": 4.5, "holding_days": 3},
-        ) is False
+        assert (
+            engine.evaluate_condition(
+                condition,
+                {"unrealized_pnl_pct": 4.5, "holding_days": 3},
+            )
+            is False
+        )
 
-    def test_missing_unrealized_pnl_does_not_match(
-        self, engine: ScenarioEngine
-    ) -> None:
+    def test_missing_unrealized_pnl_does_not_match(self, engine: ScenarioEngine) -> None:
         """Missing unrealized_pnl_pct key should not match the condition."""
         condition = StockCondition(unrealized_pnl_pct_above=3.0)
         assert engine.evaluate_condition(condition, {}) is False
 
-    def test_missing_holding_days_does_not_match(
-        self, engine: ScenarioEngine
-    ) -> None:
+    def test_missing_holding_days_does_not_match(self, engine: ScenarioEngine) -> None:
         """Missing holding_days key should not match the condition."""
         condition = StockCondition(holding_days_above=5)
         assert engine.evaluate_condition(condition, {}) is False
 
-    def test_match_details_includes_position_fields(
-        self, engine: ScenarioEngine
-    ) -> None:
+    def test_match_details_includes_position_fields(self, engine: ScenarioEngine) -> None:
         """match_details should include position fields when condition specifies them."""
         pb = _playbook(
             scenarios=[

@@ -222,9 +222,7 @@ class ContextAggregator:
 
         total_pnl = 0.0
         for month in months:
-            monthly_pnl = self.store.get_context(
-                ContextLayer.L4_MONTHLY, month, "monthly_pnl"
-            )
+            monthly_pnl = self.store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl")
             if monthly_pnl is not None:
                 total_pnl += monthly_pnl
 
@@ -251,9 +249,7 @@ class ContextAggregator:
             if quarterly_pnl is not None:
                 total_pnl += quarterly_pnl
 
-        self.store.set_context(
-            ContextLayer.L2_ANNUAL, year, "annual_pnl", round(total_pnl, 2)
-        )
+        self.store.set_context(ContextLayer.L2_ANNUAL, year, "annual_pnl", round(total_pnl, 2))
 
     def aggregate_legacy_from_annual(self) -> None:
         """Aggregate L1 (legacy) context from all L2 (annual) data."""
@@ -280,9 +276,7 @@ class ContextAggregator:
             self.store.set_context(
                 ContextLayer.L1_LEGACY, "LEGACY", "total_pnl", round(total_pnl, 2)
             )
-            self.store.set_context(
-                ContextLayer.L1_LEGACY, "LEGACY", "years_traded", years_traded
-            )
+            self.store.set_context(ContextLayer.L1_LEGACY, "LEGACY", "years_traded", years_traded)
             self.store.set_context(
                 ContextLayer.L1_LEGACY,
                 "LEGACY",

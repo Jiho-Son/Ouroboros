@@ -59,11 +59,27 @@ class Settings(BaseSettings):
     # KIS VTS overseas balance API returns errors for most accounts.
     # This value is used as a fallback when the balance API returns 0 in paper mode.
     PAPER_OVERSEAS_CASH: float = Field(default=50000.0, ge=0.0)
+    USD_BUFFER_MIN: float = Field(default=1000.0, ge=0.0)
+    US_MIN_PRICE: float = Field(default=5.0, ge=0.0)
+    STAGED_EXIT_BE_ARM_PCT: float = Field(default=1.2, gt=0.0, le=30.0)
+    STAGED_EXIT_ARM_PCT: float = Field(default=3.0, gt=0.0, le=100.0)
+    STOPLOSS_REENTRY_COOLDOWN_MINUTES: int = Field(default=120, ge=1, le=1440)
+    KR_ATR_STOP_MULTIPLIER_K: float = Field(default=2.0, ge=0.1, le=10.0)
+    KR_ATR_STOP_MIN_PCT: float = Field(default=-2.0, le=0.0)
+    KR_ATR_STOP_MAX_PCT: float = Field(default=-7.0, le=0.0)
+    OVERNIGHT_EXCEPTION_ENABLED: bool = True
+    SESSION_RISK_RELOAD_ENABLED: bool = True
+    SESSION_RISK_PROFILES_JSON: str = "{}"
 
     # Trading frequency mode (daily = batch API calls, realtime = per-stock calls)
     TRADE_MODE: str = Field(default="daily", pattern="^(daily|realtime)$")
     DAILY_SESSIONS: int = Field(default=4, ge=1, le=10)
     SESSION_INTERVAL_HOURS: int = Field(default=6, ge=1, le=24)
+    ORDER_BLACKOUT_ENABLED: bool = True
+    ORDER_BLACKOUT_WINDOWS_KST: str = "23:30-00:10"
+    ORDER_BLACKOUT_QUEUE_MAX: int = Field(default=500, ge=10, le=5000)
+    BLACKOUT_RECOVERY_PRICE_REVALIDATION_ENABLED: bool = True
+    BLACKOUT_RECOVERY_MAX_PRICE_DRIFT_PCT: float = Field(default=5.0, ge=0.0, le=100.0)
 
     # Pre-Market Planner
     PRE_MARKET_MINUTES: int = Field(default=30, ge=10, le=120)
@@ -95,25 +111,21 @@ class Settings(BaseSettings):
 
     # Telegram notification type filters (granular control)
     # circuit_breaker is always sent regardless — safety-critical
-    TELEGRAM_NOTIFY_TRADES: bool = True           # BUY/SELL execution alerts
+    TELEGRAM_NOTIFY_TRADES: bool = True  # BUY/SELL execution alerts
     TELEGRAM_NOTIFY_MARKET_OPEN_CLOSE: bool = True  # Market open/close alerts
-    TELEGRAM_NOTIFY_FAT_FINGER: bool = True       # Fat-finger rejection alerts
-    TELEGRAM_NOTIFY_SYSTEM_EVENTS: bool = True    # System start/shutdown alerts
-    TELEGRAM_NOTIFY_PLAYBOOK: bool = True         # Playbook generated/failed alerts
-    TELEGRAM_NOTIFY_SCENARIO_MATCH: bool = True   # Scenario matched alerts (most frequent)
-    TELEGRAM_NOTIFY_ERRORS: bool = True           # Error alerts
+    TELEGRAM_NOTIFY_FAT_FINGER: bool = True  # Fat-finger rejection alerts
+    TELEGRAM_NOTIFY_SYSTEM_EVENTS: bool = True  # System start/shutdown alerts
+    TELEGRAM_NOTIFY_PLAYBOOK: bool = True  # Playbook generated/failed alerts
+    TELEGRAM_NOTIFY_SCENARIO_MATCH: bool = True  # Scenario matched alerts (most frequent)
+    TELEGRAM_NOTIFY_ERRORS: bool = True  # Error alerts
 
     # Overseas ranking API (KIS endpoint/TR_ID may vary by account/product)
     # Override these from .env if your account uses different specs.
     OVERSEAS_RANKING_ENABLED: bool = True
     OVERSEAS_RANKING_FLUCT_TR_ID: str = "HHDFS76290000"
     OVERSEAS_RANKING_VOLUME_TR_ID: str = "HHDFS76270000"
-    OVERSEAS_RANKING_FLUCT_PATH: str = (
-        "/uapi/overseas-stock/v1/ranking/updown-rate"
-    )
-    OVERSEAS_RANKING_VOLUME_PATH: str = (
-        "/uapi/overseas-stock/v1/ranking/volume-surge"
-    )
+    OVERSEAS_RANKING_FLUCT_PATH: str = "/uapi/overseas-stock/v1/ranking/updown-rate"
+    OVERSEAS_RANKING_VOLUME_PATH: str = "/uapi/overseas-stock/v1/ranking/volume-surge"
 
     # Dashboard (optional)
     DASHBOARD_ENABLED: bool = False

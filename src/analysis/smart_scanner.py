@@ -158,7 +158,12 @@ class SmartVolatilityScanner:
                         price = latest_close
                     latest_high = _safe_float(latest.get("high"))
                     latest_low = _safe_float(latest.get("low"))
-                    if latest_close > 0 and latest_high > 0 and latest_low > 0 and latest_high >= latest_low:
+                    if (
+                        latest_close > 0
+                        and latest_high > 0
+                        and latest_low > 0
+                        and latest_high >= latest_low
+                    ):
                         intraday_range_pct = (latest_high - latest_low) / latest_close * 100.0
                     if volume <= 0:
                         volume = _safe_float(latest.get("volume"))
@@ -234,9 +239,7 @@ class SmartVolatilityScanner:
                 limit=50,
             )
         except Exception as exc:
-            logger.warning(
-                "Overseas fluctuation ranking failed for %s: %s", market.code, exc
-            )
+            logger.warning("Overseas fluctuation ranking failed for %s: %s", market.code, exc)
             fluct_rows = []
 
         if not fluct_rows:
@@ -250,9 +253,7 @@ class SmartVolatilityScanner:
                 limit=50,
             )
         except Exception as exc:
-            logger.warning(
-                "Overseas volume ranking failed for %s: %s", market.code, exc
-            )
+            logger.warning("Overseas volume ranking failed for %s: %s", market.code, exc)
             volume_rows = []
 
         for idx, row in enumerate(volume_rows):
@@ -433,16 +434,10 @@ def _extract_intraday_range_pct(row: dict[str, Any], price: float) -> float:
     if price <= 0:
         return 0.0
     high = _safe_float(
-        row.get("high")
-        or row.get("ovrs_hgpr")
-        or row.get("stck_hgpr")
-        or row.get("day_hgpr")
+        row.get("high") or row.get("ovrs_hgpr") or row.get("stck_hgpr") or row.get("day_hgpr")
     )
     low = _safe_float(
-        row.get("low")
-        or row.get("ovrs_lwpr")
-        or row.get("stck_lwpr")
-        or row.get("day_lwpr")
+        row.get("low") or row.get("ovrs_lwpr") or row.get("stck_lwpr") or row.get("day_lwpr")
     )
     if high <= 0 or low <= 0 or high < low:
         return 0.0
