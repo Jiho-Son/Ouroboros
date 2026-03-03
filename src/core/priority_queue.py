@@ -28,9 +28,7 @@ class PriorityTask:
     # Task data not used in comparison
     task_id: str = field(compare=False)
     task_data: dict[str, Any] = field(compare=False, default_factory=dict)
-    callback: Callable[[], Coroutine[Any, Any, Any]] | None = field(
-        compare=False, default=None
-    )
+    callback: Callable[[], Coroutine[Any, Any, Any]] | None = field(compare=False, default=None)
 
 
 @dataclass

@@ -355,6 +355,7 @@ def test_positions_empty_when_no_trades(tmp_path: Path) -> None:
 
 def _seed_cb_context(conn: sqlite3.Connection, pnl_pct: float, market: str = "KR") -> None:
     import json as _json
+
     conn.execute(
         "INSERT OR REPLACE INTO system_metrics (key, value, updated_at) VALUES (?, ?, ?)",
         (

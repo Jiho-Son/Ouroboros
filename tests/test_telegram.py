@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, patch
 import aiohttp
 import pytest
 
-from src.notifications.telegram_client import NotificationFilter, NotificationPriority, TelegramClient
+from src.notifications.telegram_client import (
+    NotificationFilter,
+    NotificationPriority,
+    TelegramClient,
+)
 
 
 class TestTelegramClientInit:
@@ -13,9 +17,7 @@ class TestTelegramClientInit:
 
     def test_disabled_via_flag(self) -> None:
         """Client disabled via enabled=False flag."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=False
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=False)
         assert client._enabled is False
 
     def test_disabled_missing_token(self) -> None:
@@ -30,9 +32,7 @@ class TestTelegramClientInit:
 
     def test_enabled_with_credentials(self) -> None:
         """Client enabled when credentials provided."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
         assert client._enabled is True
 
 
@@ -42,9 +42,7 @@ class TestNotificationSending:
     @pytest.mark.asyncio
     async def test_send_message_success(self) -> None:
         """send_message returns True on successful send."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -76,9 +74,7 @@ class TestNotificationSending:
     @pytest.mark.asyncio
     async def test_send_message_api_error(self) -> None:
         """send_message returns False on API error."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 400
@@ -93,9 +89,7 @@ class TestNotificationSending:
     @pytest.mark.asyncio
     async def test_send_message_with_markdown(self) -> None:
         """send_message supports different parse modes."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -128,9 +122,7 @@ class TestNotificationSending:
     @pytest.mark.asyncio
     async def test_trade_execution_format(self) -> None:
         """Trade notification has correct format."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -163,9 +155,7 @@ class TestNotificationSending:
     @pytest.mark.asyncio
     async def test_playbook_generated_format(self) -> None:
         """Playbook generated notification has expected fields."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -190,9 +180,7 @@ class TestNotificationSending:
     @pytest.mark.asyncio
     async def test_scenario_matched_format(self) -> None:
         """Scenario matched notification has expected fields."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -217,9 +205,7 @@ class TestNotificationSending:
     @pytest.mark.asyncio
     async def test_playbook_failed_format(self) -> None:
         """Playbook failed notification has expected fields."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -240,9 +226,7 @@ class TestNotificationSending:
     @pytest.mark.asyncio
     async def test_circuit_breaker_priority(self) -> None:
         """Circuit breaker uses CRITICAL priority."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -260,9 +244,7 @@ class TestNotificationSending:
     @pytest.mark.asyncio
     async def test_api_error_handling(self) -> None:
         """API errors logged but don't crash."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 400
@@ -277,25 +259,19 @@ class TestNotificationSending:
     @pytest.mark.asyncio
     async def test_timeout_handling(self) -> None:
         """Timeouts logged but don't crash."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         with patch(
             "aiohttp.ClientSession.post",
             side_effect=aiohttp.ClientError("Connection timeout"),
         ):
             # Should not raise exception
-            await client.notify_error(
-                error_type="Test Error", error_msg="Test", context="test"
-            )
+            await client.notify_error(error_type="Test Error", error_msg="Test", context="test")
 
     @pytest.mark.asyncio
     async def test_session_management(self) -> None:
         """Session created and reused correctly."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         # Session should be None initially
         assert client._session is None
@@ -324,9 +300,7 @@ class TestRateLimiting:
         """Rate limiter delays rapid requests."""
         import time
 
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True, rate_limit=2.0
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True, rate_limit=2.0)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -353,9 +327,7 @@ class TestMessagePriorities:
     @pytest.mark.asyncio
     async def test_low_priority_uses_info_emoji(self) -> None:
         """LOW priority uses ℹ️ emoji."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -371,9 +343,7 @@ class TestMessagePriorities:
     @pytest.mark.asyncio
     async def test_critical_priority_uses_alarm_emoji(self) -> None:
         """CRITICAL priority uses 🚨 emoji."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -389,9 +359,7 @@ class TestMessagePriorities:
     @pytest.mark.asyncio
     async def test_playbook_generated_priority(self) -> None:
         """Playbook generated uses MEDIUM priority emoji."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -412,9 +380,7 @@ class TestMessagePriorities:
     @pytest.mark.asyncio
     async def test_playbook_failed_priority(self) -> None:
         """Playbook failed uses HIGH priority emoji."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -433,9 +399,7 @@ class TestMessagePriorities:
     @pytest.mark.asyncio
     async def test_scenario_matched_priority(self) -> None:
         """Scenario matched uses HIGH priority emoji."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -460,9 +424,7 @@ class TestClientCleanup:
     @pytest.mark.asyncio
     async def test_close_closes_session(self) -> None:
         """close() closes the HTTP session."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         mock_session = AsyncMock()
         mock_session.closed = False
@@ -475,9 +437,7 @@ class TestClientCleanup:
     @pytest.mark.asyncio
     async def test_close_handles_no_session(self) -> None:
         """close() handles None session gracefully."""
-        client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True
-        )
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
 
         # Should not raise exception
         await client.close()
@@ -535,8 +495,12 @@ class TestNotificationFilter:
         )
         with patch("aiohttp.ClientSession.post") as mock_post:
             await client.notify_trade_execution(
-                stock_code="005930", market="KR", action="BUY",
-                quantity=10, price=70000.0, confidence=85.0
+                stock_code="005930",
+                market="KR",
+                action="BUY",
+                quantity=10,
+                price=70000.0,
+                confidence=85.0,
             )
             mock_post.assert_not_called()
 
@@ -556,8 +520,13 @@ class TestNotificationFilter:
     async def test_circuit_breaker_always_sends_regardless_of_filter(self) -> None:
         """notify_circuit_breaker always sends (no filter flag)."""
         nf = NotificationFilter(
-            trades=False, market_open_close=False, fat_finger=False,
-            system_events=False, playbook=False, scenario_match=False, errors=False,
+            trades=False,
+            market_open_close=False,
+            fat_finger=False,
+            system_events=False,
+            playbook=False,
+            scenario_match=False,
+            errors=False,
         )
         client = TelegramClient(
             bot_token="123:abc", chat_id="456", enabled=True, notification_filter=nf
@@ -617,7 +586,7 @@ class TestNotificationFilter:
         nf = NotificationFilter()
         assert nf.set_flag("unknown_key", False) is False
 
-    def test_as_dict_keys_match_KEYS(self) -> None:
+    def test_as_dict_keys_match_keys(self) -> None:
         """as_dict() returns every key defined in KEYS."""
         nf = NotificationFilter()
         d = nf.as_dict()
@@ -640,10 +609,17 @@ class TestNotificationFilter:
     def test_set_notification_all_on(self) -> None:
         """set_notification('all', True) enables every filter flag."""
         client = TelegramClient(
-            bot_token="123:abc", chat_id="456", enabled=True,
+            bot_token="123:abc",
+            chat_id="456",
+            enabled=True,
             notification_filter=NotificationFilter(
-                trades=False, market_open_close=False, scenario_match=False,
-                fat_finger=False, system_events=False, playbook=False, errors=False,
+                trades=False,
+                market_open_close=False,
+                scenario_match=False,
+                fat_finger=False,
+                system_events=False,
+                playbook=False,
+                errors=False,
             ),
         )
         assert client.set_notification("all", True) is True

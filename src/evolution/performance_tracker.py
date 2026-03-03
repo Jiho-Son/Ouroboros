@@ -187,9 +187,7 @@ class PerformanceTracker:
 
         return metrics
 
-    def calculate_improvement_trend(
-        self, metrics_history: list[StrategyMetrics]
-    ) -> dict[str, Any]:
+    def calculate_improvement_trend(self, metrics_history: list[StrategyMetrics]) -> dict[str, Any]:
         """Calculate improvement trend from historical metrics.
 
         Args:
@@ -229,9 +227,7 @@ class PerformanceTracker:
             "period_count": len(metrics_history),
         }
 
-    def generate_dashboard(
-        self, strategy_name: str | None = None
-    ) -> PerformanceDashboard:
+    def generate_dashboard(self, strategy_name: str | None = None) -> PerformanceDashboard:
         """Generate a comprehensive performance dashboard.
 
         Args:
@@ -260,9 +256,7 @@ class PerformanceTracker:
             improvement_trend=improvement_trend,
         )
 
-    def export_dashboard_json(
-        self, dashboard: PerformanceDashboard
-    ) -> str:
+    def export_dashboard_json(self, dashboard: PerformanceDashboard) -> str:
         """Export dashboard as JSON string.
 
         Args:

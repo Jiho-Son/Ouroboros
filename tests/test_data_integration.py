@@ -79,7 +79,7 @@ class TestNewsAPI:
         # Mock the fetch to avoid real API call
         with patch.object(api, "_fetch_news", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = None
-            result = await api.get_news_sentiment("AAPL")
+            await api.get_news_sentiment("AAPL")
 
             # Should have attempted refetch since cache expired
             mock_fetch.assert_called_once_with("AAPL")
@@ -111,9 +111,7 @@ class TestNewsAPI:
                     "source": "Reuters",
                     "time_published": "2026-02-04T10:00:00",
                     "url": "https://example.com/1",
-                    "ticker_sentiment": [
-                        {"ticker": "AAPL", "ticker_sentiment_score": "0.85"}
-                    ],
+                    "ticker_sentiment": [{"ticker": "AAPL", "ticker_sentiment_score": "0.85"}],
                     "overall_sentiment_score": "0.75",
                 },
                 {
@@ -122,9 +120,7 @@ class TestNewsAPI:
                     "source": "Bloomberg",
                     "time_published": "2026-02-04T09:00:00",
                     "url": "https://example.com/2",
-                    "ticker_sentiment": [
-                        {"ticker": "AAPL", "ticker_sentiment_score": "-0.3"}
-                    ],
+                    "ticker_sentiment": [{"ticker": "AAPL", "ticker_sentiment_score": "-0.3"}],
                     "overall_sentiment_score": "-0.2",
                 },
             ]
@@ -661,7 +657,9 @@ class TestGeminiClientWithExternalData:
         )
 
         # Mock the Gemini API call
-        with patch.object(client._client.aio.models, "generate_content", new_callable=AsyncMock) as mock_gen:
+        with patch.object(
+            client._client.aio.models, "generate_content", new_callable=AsyncMock
+        ) as mock_gen:
             mock_response = MagicMock()
             mock_response.text = '{"action": "BUY", "confidence": 85, "rationale": "Good news"}'
             mock_gen.return_value = mock_response

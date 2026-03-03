@@ -323,7 +323,8 @@ class TestPromptOverride:
             # Verify the custom prompt was sent, not a built prompt
             mock_generate.assert_called_once()
             actual_prompt = mock_generate.call_args[1].get(
-                "contents", mock_generate.call_args[0][1] if len(mock_generate.call_args[0]) > 1 else None
+                "contents",
+                mock_generate.call_args[0][1] if len(mock_generate.call_args[0]) > 1 else None,
             )
             assert actual_prompt == custom_prompt
             # Raw response preserved in rationale without parse_response (#247)
@@ -385,7 +386,8 @@ class TestPromptOverride:
             await client.decide(market_data)
 
             actual_prompt = mock_generate.call_args[1].get(
-                "contents", mock_generate.call_args[0][1] if len(mock_generate.call_args[0]) > 1 else None
+                "contents",
+                mock_generate.call_args[0][1] if len(mock_generate.call_args[0]) > 1 else None,
             )
             # The custom prompt must be used, not the compressed prompt
             assert actual_prompt == custom_prompt
@@ -411,7 +413,8 @@ class TestPromptOverride:
             await client.decide(market_data)
 
             actual_prompt = mock_generate.call_args[1].get(
-                "contents", mock_generate.call_args[0][1] if len(mock_generate.call_args[0]) > 1 else None
+                "contents",
+                mock_generate.call_args[0][1] if len(mock_generate.call_args[0]) > 1 else None,
             )
             # Should contain stock code from build_prompt, not be a custom override
             assert "005930" in actual_prompt

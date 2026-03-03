@@ -31,8 +31,12 @@ def init_db(db_path: str) -> sqlite3.Connection:
             quantity INTEGER,
             price REAL,
             pnl REAL DEFAULT 0.0,
+            strategy_pnl REAL DEFAULT 0.0,
+            fx_pnl REAL DEFAULT 0.0,
             market TEXT DEFAULT 'KR',
             exchange_code TEXT DEFAULT 'KRX',
+            session_id TEXT DEFAULT 'UNKNOWN',
+            selection_context TEXT,
             decision_id TEXT,
             mode TEXT DEFAULT 'paper'
         )
@@ -53,6 +57,32 @@ def init_db(db_path: str) -> sqlite3.Connection:
         conn.execute("ALTER TABLE trades ADD COLUMN decision_id TEXT")
     if "mode" not in columns:
         conn.execute("ALTER TABLE trades ADD COLUMN mode TEXT DEFAULT 'paper'")
+    session_id_added = False
+    if "session_id" not in columns:
+        conn.execute("ALTER TABLE trades ADD COLUMN session_id TEXT DEFAULT 'UNKNOWN'")
+        session_id_added = True
+    if "strategy_pnl" not in columns:
+        conn.execute("ALTER TABLE trades ADD COLUMN strategy_pnl REAL DEFAULT 0.0")
+    if "fx_pnl" not in columns:
+        conn.execute("ALTER TABLE trades ADD COLUMN fx_pnl REAL DEFAULT 0.0")
+    # Backfill legacy rows where only pnl existed before split accounting columns.
+    conn.execute(
+        """
+        UPDATE trades
+        SET strategy_pnl = pnl, fx_pnl = 0.0
+        WHERE pnl != 0.0
+          AND strategy_pnl = 0.0
+          AND fx_pnl = 0.0
+        """
+    )
+    if session_id_added:
+        conn.execute(
+            """
+            UPDATE trades
+            SET session_id = 'UNKNOWN'
+            WHERE session_id IS NULL OR session_id = ''
+            """
+        )
 
     # Context tree tables for multi-layered memory management
     conn.execute(
@@ -79,6 +109,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
             stock_code TEXT NOT NULL,
             market TEXT NOT NULL,
             exchange_code TEXT NOT NULL,
+            session_id TEXT DEFAULT 'UNKNOWN',
             action TEXT NOT NULL,
             confidence INTEGER NOT NULL,
             rationale TEXT NOT NULL,
@@ -91,6 +122,26 @@ def init_db(db_path: str) -> sqlite3.Connection:
         )
         """
     )
+    decision_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(decision_logs)").fetchall()
+    }
+    if "session_id" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN session_id TEXT DEFAULT 'UNKNOWN'")
+        conn.execute(
+            """
+            UPDATE decision_logs
+            SET session_id = 'UNKNOWN'
+            WHERE session_id IS NULL OR session_id = ''
+            """
+        )
+    if "outcome_pnl" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN outcome_pnl REAL")
+    if "outcome_accuracy" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN outcome_accuracy INTEGER")
+    if "reviewed" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN reviewed INTEGER DEFAULT 0")
+    if "review_notes" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN review_notes TEXT")
 
     conn.execute(
         """
@@ -133,9 +184,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_decision_logs_timestamp ON decision_logs(timestamp)"
     )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_decision_logs_reviewed ON decision_logs(reviewed)"
-    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_logs_reviewed ON decision_logs(reviewed)")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_decision_logs_confidence ON decision_logs(confidence)"
     )
@@ -171,8 +220,11 @@ def log_trade(
     quantity: int = 0,
     price: float = 0.0,
     pnl: float = 0.0,
+    strategy_pnl: float | None = None,
+    fx_pnl: float | None = None,
     market: str = "KR",
     exchange_code: str = "KRX",
+    session_id: str | None = None,
     selection_context: dict[str, any] | None = None,
     decision_id: str | None = None,
     mode: str = "paper",
@@ -187,24 +239,37 @@ def log_trade(
         rationale: AI decision rationale
         quantity: Number of shares
         price: Trade price
-        pnl: Profit/loss
+        pnl: Total profit/loss (backward compatibility)
+        strategy_pnl: Strategy PnL component
+        fx_pnl: FX PnL component
         market: Market code
         exchange_code: Exchange code
+        session_id: Session identifier (if omitted, auto-derived from market)
         selection_context: Scanner selection data (RSI, volume_ratio, signal, score)
         decision_id: Unique decision identifier for audit linking
         mode: Trading mode ('paper' or 'live') for data separation
     """
     # Serialize selection context to JSON
     context_json = json.dumps(selection_context) if selection_context else None
+    resolved_session_id = _resolve_session_id(market=market, session_id=session_id)
+    if strategy_pnl is None and fx_pnl is None:
+        strategy_pnl = pnl
+        fx_pnl = 0.0
+    elif strategy_pnl is None:
+        strategy_pnl = pnl - float(fx_pnl or 0.0) if pnl != 0.0 else 0.0
+    elif fx_pnl is None:
+        fx_pnl = pnl - float(strategy_pnl) if pnl != 0.0 else 0.0
+    if pnl == 0.0 and (strategy_pnl or fx_pnl):
+        pnl = float(strategy_pnl) + float(fx_pnl)
 
     conn.execute(
         """
         INSERT INTO trades (
             timestamp, stock_code, action, confidence, rationale,
-            quantity, price, pnl, market, exchange_code, selection_context, decision_id,
-            mode
+            quantity, price, pnl, strategy_pnl, fx_pnl,
+            market, exchange_code, session_id, selection_context, decision_id, mode
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             datetime.now(UTC).isoformat(),
@@ -215,8 +280,11 @@ def log_trade(
             quantity,
             price,
             pnl,
+            strategy_pnl,
+            fx_pnl,
             market,
             exchange_code,
+            resolved_session_id,
             context_json,
             decision_id,
             mode,
@@ -225,23 +293,63 @@ def log_trade(
     conn.commit()
 
 
+def _resolve_session_id(*, market: str, session_id: str | None) -> str:
+    if session_id:
+        return session_id
+    try:
+        from src.core.order_policy import classify_session_id
+        from src.markets.schedule import MARKETS
+
+        market_info = MARKETS.get(market)
+        if market_info is not None:
+            return classify_session_id(market_info)
+    except Exception:
+        pass
+    return "UNKNOWN"
+
+
 def get_latest_buy_trade(
-    conn: sqlite3.Connection, stock_code: str, market: str
+    conn: sqlite3.Connection,
+    stock_code: str,
+    market: str,
+    exchange_code: str | None = None,
 ) -> dict[str, Any] | None:
     """Fetch the most recent BUY trade for a stock and market."""
-    cursor = conn.execute(
-        """
-        SELECT decision_id, price, quantity
-        FROM trades
-        WHERE stock_code = ?
-          AND market = ?
-          AND action = 'BUY'
-          AND decision_id IS NOT NULL
-        ORDER BY timestamp DESC
-        LIMIT 1
-        """,
-        (stock_code, market),
-    )
+    if exchange_code:
+        cursor = conn.execute(
+            """
+            SELECT decision_id, price, quantity, selection_context
+            FROM trades
+            WHERE stock_code = ?
+              AND market = ?
+              AND action = 'BUY'
+              AND decision_id IS NOT NULL
+              AND (
+                  exchange_code = ?
+                  OR exchange_code IS NULL
+                  OR exchange_code = ''
+              )
+            ORDER BY
+              CASE WHEN exchange_code = ? THEN 0 ELSE 1 END,
+              timestamp DESC
+            LIMIT 1
+            """,
+            (stock_code, market, exchange_code, exchange_code),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            SELECT decision_id, price, quantity, selection_context
+            FROM trades
+            WHERE stock_code = ?
+              AND market = ?
+              AND action = 'BUY'
+              AND decision_id IS NOT NULL
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (stock_code, market),
+        )
     row = cursor.fetchone()
     if not row:
         return None
@@ -270,9 +378,7 @@ def get_open_position(
     return {"decision_id": row[1], "price": row[2], "quantity": row[3], "timestamp": row[4]}
 
 
-def get_recent_symbols(
-    conn: sqlite3.Connection, market: str, limit: int = 30
-) -> list[str]:
+def get_recent_symbols(conn: sqlite3.Connection, market: str, limit: int = 30) -> list[str]:
     """Return recent unique symbols for a market, newest first."""
     cursor = conn.execute(
         """

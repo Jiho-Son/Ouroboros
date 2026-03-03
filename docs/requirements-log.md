@@ -87,7 +87,7 @@
 - 선정 기준 추적 → Evolution 시스템 최적화 가능
 - API 장애 시 정적 watchlist로 자동 전환
 
-**참고:** Realtime 모드 전용. Daily 모드는 배치 효율성을 위해 정적 watchlist 사용.
+**참고 (당시 구현 기준):** Realtime 모드 전용으로 설계되었으나, 이후 Daily 경로에서도 스캐너를 사용하도록 변경됨. 해외 fallback도 정적 watchlist → 동적 유니버스(active/recent/holdings)로 전환 (2026-02-16 참조).
 
 **이슈/PR:** #76, #77
 
@@ -355,3 +355,159 @@ Order result: 모의투자 매수주문이 완료 되었습니다.  ✓
    - `TestOverseasGhostPositionClose` 2개: ghost-close 로그 확인, 일반 오류 무시
 
 **이슈/PR:** #235, PR #236
+
+---
+
+## 2026-02-27
+
+### v2 백테스트 파이프라인 통합 (#305)
+
+**배경:**
+- `TripleBarrier`, `WalkForward`, `BacktestCostGuard`는 개별 모듈로 존재했으나,
+  하나의 실행 경로로 연결된 파이프라인이 없어 통합 검증이 불가능했다.
+
+**구현 내용:**
+
+1. `src/analysis/backtest_pipeline.py`
+   - `run_v2_backtest_pipeline()` 추가:
+     - `validate_backtest_cost_model()` 선검증(fail-fast)
+     - `label_with_triple_barrier()`로 entry 라벨 생성
+     - `generate_walk_forward_splits()`로 fold 생성
+     - fold별 baseline(`B0`, `B1`, `M1`) score 산출
+   - 결과 아티팩트 계약 구조(`BacktestPipelineResult`) 정의
+   - leakage 검사 유틸 `fold_has_leakage()` 제공
+
+2. `tests/test_backtest_pipeline_integration.py` 신규
+   - happy path 통합 검증
+   - cost guard 실패 fail-fast 검증
+   - purge/embargo 기반 누수 방지 검증
+   - 동일 입력 재실행 결정성 검증
+
+**검증:**
+- `pytest -q tests/test_backtest_pipeline_integration.py tests/test_triple_barrier.py tests/test_walk_forward_split.py tests/test_backtest_cost_guard.py tests/test_backtest_execution_model.py`
+- `ruff check src/analysis/backtest_pipeline.py tests/test_backtest_pipeline_integration.py`
+
+**이슈/PR:** #305
+
+---
+
+## 2026-02-28 ~ 2026-03-01
+
+### v2/v3 손실 복구 실행 계획 — Phase 1 완료 (#318~#321)
+
+**배경:**
+- `docs/ouroboros/80_implementation_audit.md` 감사 결과 식별된 7개 근본 원인(ROOT) 및 5개 구현 갭(GAP) 중
+  가장 큰 손실 패턴 4개를 Phase 1로 즉시 제거.
+
+**구현 내용:**
+
+1. **ACT-01: KR 손절선 ATR 기반 동적 확대** (#318)
+   - `src/main.py`, `src/config.py`
+   - KR 시장: ATR(14) 기반 동적 hard stop (`k=2.0`, 범위 -2%~-7%)
+   - ATR 미제공 시 기존 -2% 폴백
+   - ROOT-1 (hard_stop_pct 고정값 과소) 해소
+
+2. **ACT-02: 손절 후 동일 종목 재진입 쿨다운** (#319)
+   - `src/main.py`, `src/config.py`
+   - 손절(pnl<0) 후 동일 종목 `COOLDOWN_MINUTES`(기본 120분) 동안 BUY 차단
+   - 익절에는 미적용
+   - ROOT-2 (동일 종목 반복 매매) 해소
+
+3. **ACT-03: US $5 이하 종목 진입 차단 필터** (#320)
+   - `src/main.py`, `src/config.py`
+   - US 시장 BUY 시 현재가 `US_MIN_PRICE`(기본 $5) 이하 차단
+   - ROOT-3 (미국 페니스탁 무분별 진입) 해소
+
+4. **ACT-04: 진화 전략 코드 syntax 검증** (#321)
+   - `src/evolution/optimizer.py`
+   - `ast.parse()` + `compile()` 선검증 후 통과한 코드만 저장
+   - ROOT-4 (진화 전략 문법 오류) 해소
+
+**이슈/PR:** #318, #319, #320, #321
+
+---
+
+### v2/v3 손실 복구 실행 계획 — Phase 2 완료 (#322~#326)
+
+**배경:**
+- 손익 계산 정확도 확보 및 v2 청산 로직 실효화.
+
+**구현 내용:**
+
+1. **ACT-05: SELL PnL 계산을 sell_qty 기준으로 수정** (#322)
+   - `src/main.py` (line 1658-1663, 2755-2760)
+   - `trade_pnl = (trade_price - buy_price) * sell_qty`로 변경
+   - ROOT-6 (PnL 계산 buy_qty 사용 CRITICAL) 해소
+
+2. **ACT-06: BUY 매칭 키에 exchange_code 추가** (#323)
+   - `src/db.py`
+   - `get_latest_buy_trade()`가 `(stock_code, market, exchange_code)` 기준 매칭
+   - exchange_code NULL인 레거시 데이터 하위 호환 유지
+   - ROOT-7 (오매칭 리스크) 해소
+
+3. **ACT-07: 블랙아웃 복구 주문에 log_trade() 추가** (#324)
+   - `src/main.py` (블랙아웃 복구 실행 경로)
+   - 복구 주문 실행 후 `log_trade()` 호출, rationale에 `[blackout-recovery]` prefix
+   - GAP-4 (블랙아웃 복구 주문 DB 미기록) 해소
+
+4. **ACT-08: v2 staged exit에 실제 피처 공급** (#325)
+   - `src/main.py`, `src/strategy/exit_rules.py`
+   - `atr_value`: ATR(14) 실시간 계산 공급
+   - `pred_down_prob`: RSI 기반 하락 확률 추정값 공급 (ML 모델 대체 가능)
+   - `be_arm_pct`/`arm_pct` 독립 파라미터 설정 가능 (take_profit_pct * 0.4 파생 제거)
+   - ROOT-5 (v2 청산 로직 실효성 부족) 해소
+
+5. **ACT-09: session_id를 거래/의사결정 로그에 명시적 전달** (#326)
+   - `src/logging/decision_logger.py`, `src/main.py`, `src/db.py`
+   - `log_decision()`: session_id 파라미터 추가
+   - `log_trade()`: 런타임 session_id 명시적 전달
+   - GAP-1, GAP-2 (session_id 미포함) 부분 해소
+
+**이슈/PR:** #322, #323, #324, #325, #326
+
+---
+
+### v2/v3 손실 복구 실행 계획 — Phase 3 부분 완료 (#327~#329)
+
+**배경:**
+- 세션 경계 처리 및 시간장벽 캘린더 기반 전환.
+
+**구현 내용:**
+
+1. **ACT-10: 세션 전환 시 리스크 파라미터 동적 재로딩** (#327)
+   - `src/main.py`, `src/config.py`
+   - 세션 경계 변경 이벤트 시 `SESSION_RISK_PROFILES_JSON` 기반 재로딩
+   - 재로딩 실패 시 기존 파라미터 유지 (안전 폴백)
+   - GAP-3 (세션 전환 시 파라미터 재로딩 없음) 부분 해소
+
+2. **ACT-11: 블랙아웃 복구 시 가격/세션 재검증 강화** (#328)
+   - `src/main.py`, `src/core/blackout_manager.py`
+   - 복구 시 현재 시세 조회하여 가격 유효성 검증 (진입가 대비 급등/급락 시 드롭)
+   - 세션 변경 시 새 세션의 파라미터로 재검증
+   - GAP-4 잔여 (가격/세션 재검증) 부분 해소
+
+3. **ACT-12: Triple Barrier 시간장벽을 캘린더 시간(분) 기반으로 전환** (#329)
+   - `src/analysis/triple_barrier.py`
+   - `max_holding_minutes` (캘린더 분) 기반 전환, 봉 주기 무관 일관 동작
+   - 기존 `max_holding_bars` deprecated 경고 유지 (하위 호환)
+   - GAP-5 (시간장벽 봉 개수 고정) 해소
+
+**미완료 (ACT-13):**
+- **#330: CI 자동 검증 (정책 레지스트리 + TASK-REQ 매핑)** — 문서 구조화 작업으로 대체 진행 중
+
+**이슈/PR:** #327, #328, #329
+
+---
+
+### v2/v3 문서 구조화 및 감사 문서 작성 (#331)
+
+**배경:**
+- Phase 1~3 구현 완료 후 감사 결과와 실행 계획을 문서화
+- 기존 감사 문서가 산발적으로 관리되어 통합 정리 필요
+
+**구현 내용:**
+- `docs/ouroboros/80_implementation_audit.md` 신규 작성: v2/v3 구현 감사 + 실거래 수익률 분석
+- `docs/ouroboros/85_loss_recovery_action_plan.md` 신규 작성: ROOT/GAP 해소 Phase별 실행 계획
+- `scripts/audit_queries.sql` 신규 작성: 성과 재현용 표준 집계 SQL
+
+**이슈/PR:** #331

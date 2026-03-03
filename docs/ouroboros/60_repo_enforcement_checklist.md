@@ -3,7 +3,7 @@ Doc-ID: DOC-OPS-002
 Version: 1.0.0
 Status: active
 Owner: tpm
-Updated: 2026-02-26
+Updated: 2026-02-27
 -->
 
 # 저장소 강제 설정 체크리스트
@@ -24,11 +24,17 @@ Updated: 2026-02-26
 ## 2) 필수 상태 체크 (필수)
 
 필수 CI 항목:
-- `validate_ouroboros_docs` (명령: `python3 scripts/validate_ouroboros_docs.py`)
-- `test` (명령: `pytest -q`)
+
+| 참조 기준 | 이름 | 설명 |
+|-----------|------|------|
+| **job 단위** (브랜치 보호 설정 시 사용) | `test` | 전체 CI job (문서 검증 + 테스트 포함) |
+| **step 단위** (로그 확인 시 참조) | `validate_ouroboros_docs` | `python3 scripts/validate_ouroboros_docs.py` 실행 step |
+| **step 단위** | `run_tests` | `pytest -q` 실행 step |
+
+> **주의**: Gitea 브랜치 보호의 Required Status Checks는 **job 이름** 기준으로 설정한다 (`test`). step 이름은 UI 로그 탐색용이며 보호 규칙에 직접 입력하지 않는다.
 
 설정 기준:
-- 위 2개 체크가 `success` 아니면 머지 금지
+- `test` job이 `success` 아니면 머지 금지
 - 체크 스킵/중립 상태 허용 금지
 
 ## 3) 필수 리뷰어 규칙 (권장 -> 필수)
@@ -48,12 +54,24 @@ Updated: 2026-02-26
 병합 전 체크리스트:
 - 이슈 연결(`Closes #N`) 존재
 - PR 본문에 `REQ-*`, `TASK-*`, `TEST-*` 매핑 표 존재
+- Main -> Verifier Directive Contract(범위/방법/합격/실패/미관측/증적 형식) 기재
+- process-change-first 대상이면 process 티켓 PR이 선머지됨
 - `src/core/risk_manager.py` 변경 없음
 - 주요 의사결정 체크포인트(DCP-01~04) 중 해당 단계 Main Agent 확인 기록 존재
+- 주요 의사결정(리뷰 지적/수정 합의/검증 승인)에 대한 에이전트 PR 코멘트 존재
+- 티켓 PR의 base가 `main`이 아닌 program feature branch인지 확인
 
 자동 점검:
 - 문서 검증 스크립트 통과
 - 테스트 통과
+- `python3 scripts/session_handover_check.py --strict` 통과
+- 개발 완료 시 시스템 구동/모니터링 증적 코멘트 존재
+- 이슈/PR 조작 전에 `docs/commands.md` 및 `docs/workflow.md` 트러블슈팅 확인 코멘트 존재
+- `gh` CLI 미사용, `tea` 사용 증적 존재
+- Verifier `Coverage Matrix` 첨부(PASS/FAIL/NOT_OBSERVED)
+- `NOT_OBSERVED` 항목 0 확인(0이 아니면 머지 금지)
+- 티켓 단계 기록(`Implemented` -> `Integrated` -> `Observed` -> `Accepted`) 존재
+- 정적 Verifier 승인 + Runtime Verifier 승인 2개 확인
 
 ## 5) 감사 추적
 
@@ -87,8 +105,14 @@ Updated: 2026-02-26
 - `REPLAN-REQUEST`는 Main Agent 승인 전 \"제안\" 상태로 유지
 - 승인된 재계획은 `REQ/TASK/TEST` 문서를 동시 갱신해야 유효
 
-## 9) 서버 반영 규칙 (No-Merge by Default)
+## 9) 서버 반영 규칙
 
-- 서버 반영은 `브랜치 푸시 + PR 코멘트(리뷰/논의/검증승인)`까지를 기본으로 한다.
-- 기본 규칙에서 `tea pulls merge` 실행은 금지한다.
-- 사용자 명시 승인 시에만 예외적으로 머지를 허용한다(예외 근거를 PR 코멘트에 기록).
+- 티켓 PR(`feature/issue-* -> feature/{stream}`)은 검증 승인 후 머지 가능하다.
+- 최종 통합 PR(`feature/{stream} -> main`)은 사용자 명시 승인 전 `tea pulls merge` 실행 금지.
+- Main 병합 시 승인 근거 코멘트 필수.
+
+## 10) 최종 main 병합 조건
+
+- 모든 티켓이 program feature branch로 병합 완료
+- Runtime Verifier의 구동/모니터링 검증 완료
+- 사용자 최종 승인 코멘트 확인 후에만 `feature -> main` PR 머지 허용

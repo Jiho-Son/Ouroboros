@@ -84,6 +84,37 @@ High-frequency trading with individual stock analysis:
 - Momentum scoring (0-100 scale)
 - Breakout/breakdown pattern detection
 
+**TripleBarrierLabeler** (`triple_barrier.py`) — Financial time-series labeling (v2)
+
+- Triple Barrier method: upper (take-profit), lower (stop-loss), time barrier
+- First-touch labeling: labels confirmed by whichever barrier is breached first
+- `max_holding_minutes` (calendar-minute) time barrier — session-aware, bar-period independent
+- Tie-break mode: `"stop_first"` (conservative) or `"take_first"`
+- Feature-label strict separation to prevent look-ahead bias
+
+**BacktestPipeline** (`backtest_pipeline.py`) — End-to-end validation pipeline (v2)
+
+- `run_v2_backtest_pipeline()`: cost guard → triple barrier labeling → walk-forward splits → fold scoring
+- `BacktestPipelineResult`: artifact contract for reproducible output
+- `fold_has_leakage()`: leakage detection utility
+
+**WalkForwardSplit** (`walk_forward_split.py`) — Time-series validation (v2)
+
+- Fold-based walk-forward splits (no random shuffling)
+- Purge/Embargo: excludes N bars before/after fold boundaries to prevent data leakage
+
+**BacktestExecutionModel** (`backtest_execution_model.py`) — Conservative fill simulation (v2/v3)
+
+- Session-aware slippage: KRX_REG 5bps, NXT_AFTER 15bps, US_REG 3bps, US_PRE/DAY 30-50bps
+- Order failure rate simulation per session
+- Partial fill rate simulation with min/max ratio bounds
+- Unfavorable-direction fill assumption (no simple close-price fill)
+
+**BacktestCostGuard** (`backtest_cost_guard.py`) — Cost model validator (v2)
+
+- `validate_backtest_cost_model()`: fail-fast check that session cost assumptions are present
+- Enforces realistic cost assumptions before any backtest run proceeds
+
 **SmartVolatilityScanner** (`smart_scanner.py`) — Python-first filtering pipeline
 
 - **Domestic (KR)**:
@@ -98,7 +129,7 @@ High-frequency trading with individual stock analysis:
   - **Step 4**: Return top N candidates (default 3)
 - **Fallback (overseas only)**: If ranking API is unavailable, uses dynamic universe
   from runtime active symbols + recent traded symbols + current holdings (no static watchlist)
-- **Realtime mode only**: Daily mode uses batch processing for API efficiency
+- **Both modes**: Realtime 중심이지만 Daily 경로(`run_daily_session()`)에서도 후보 선별에 사용
 
 **Benefits:**
 - Reduces Gemini API calls from 20-30 stocks to 1-3 qualified candidates
@@ -124,9 +155,9 @@ High-frequency trading with individual stock analysis:
 
 - Selects appropriate context layers for current market conditions
 
-### 4. Risk Manager (`src/core/risk_manager.py`)
+### 4. Risk Manager & Session Policy (`src/core/`)
 
-**RiskManager** — Safety circuit breaker and order validation
+**RiskManager** (`risk_manager.py`) — Safety circuit breaker and order validation
 
 > **READ-ONLY by policy** (see [`docs/agents.md`](./agents.md))
 
@@ -136,7 +167,58 @@ High-frequency trading with individual stock analysis:
 - **Fat-Finger Protection**: Rejects orders exceeding 30% of available cash
   - Must always be enforced, cannot be disabled
 
+**OrderPolicy** (`order_policy.py`) — Session classification and order type enforcement (v3)
+
+- `classify_session_id()`: Classifies current KR/US session from KST clock
+  - KR: `NXT_PRE` (08:00-08:50), `KRX_REG` (09:00-15:30), `NXT_AFTER` (15:30-20:00)
+  - US: `US_DAY` (10:00-18:00), `US_PRE` (18:00-23:30), `US_REG` (23:30-06:00), `US_AFTER` (06:00-07:00)
+- Low-liquidity session detection: `NXT_AFTER`, `US_PRE`, `US_DAY`, `US_AFTER`
+- Market order forbidden in low-liquidity sessions (`OrderPolicyRejected` raised)
+- Limit/IOC/FOK orders always allowed
+
+**KillSwitch** (`kill_switch.py`) — Emergency trading halt orchestration (v2)
+
+- Fixed 5-step atomic sequence:
+  1. Block new orders (`new_orders_blocked = True`)
+  2. Cancel all unfilled orders
+  3. Refresh order state (query final status)
+  4. Reduce risk (force-close or reduce positions)
+  5. Snapshot state + send Telegram alert
+- Async, injectable step callables — each step individually testable
+- Highest priority: overrides overnight exception and all other rules
+
+**BlackoutManager** (`blackout_manager.py`) — KIS maintenance window handling (v3)
+
+- Configurable blackout windows (e.g., `23:30-00:10 KST`)
+- `queue_order()`: Queues order intent during blackout, enforces max queue size
+- `pop_recovery_batch()`: Returns queued intents after recovery
+- Recovery revalidation path (in `src/main.py`):
+  - Stale BUY drop (position already exists)
+  - Stale SELL drop (position absent)
+  - `validate_order_policy()` rechecked
+  - Price drift check (>5% → drop, configurable via `BLACKOUT_RECOVERY_MAX_PRICE_DRIFT_PCT`)
+
 ### 5. Strategy (`src/strategy/`)
+
+**PositionStateMachine** (`position_state_machine.py`) — 4-state sell state machine (v2)
+
+- States: `HOLDING` → `BE_LOCK` → `ARMED` → `EXITED`
+  - `HOLDING`: Normal holding
+  - `BE_LOCK`: Profit ≥ `be_arm_pct` — stop-loss elevated to break-even
+  - `ARMED`: Profit ≥ `arm_pct` — peak-tracking trailing stop active
+  - `EXITED`: Position closed
+- `promote_state()`: Immediately elevates to highest admissible state (handles gaps/skips)
+- `evaluate_exit_first()`: EXITED conditions checked before state promotion
+- Monotonic: states only move up, never down
+
+**ExitRules** (`exit_rules.py`) — 4-layer composite exit logic (v2)
+
+- **Hard Stop**: `unrealized <= hard_stop_pct` (always enforced, ATR-adaptive for KR)
+- **Break-Even Lock**: Once in BE_LOCK/ARMED, exit if price falls to entry price
+- **ATR Trailing Stop**: `trailing_stop_price = peak_price - (atr_multiplier_k × ATR)`
+- **Model Signal**: Exit if `pred_down_prob >= model_prob_threshold AND liquidity_weak`
+- `evaluate_exit()`: Returns `ExitEvaluation` with next state, exit flag, reason, trailing price
+- `ExitRuleConfig`: Frozen dataclass with all tunable parameters
 
 **Pre-Market Planner** (`pre_market_planner.py`) — AI playbook generation
 
@@ -195,7 +277,7 @@ High-frequency trading with individual stock analysis:
 - Configurable host/port (`DASHBOARD_HOST`, `DASHBOARD_PORT`, default `127.0.0.1:8080`)
 - Serves static HTML frontend
 
-**8 API Endpoints:**
+**10 API Endpoints:**
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -207,6 +289,8 @@ High-frequency trading with individual stock analysis:
 | `/api/context/{layer}` | GET | Query context by layer (L1-L7) |
 | `/api/decisions` | GET | Decision log entries with outcomes |
 | `/api/scenarios/active` | GET | Today's matched scenarios |
+| `/api/pnl/history` | GET | P&L history time series |
+| `/api/positions` | GET | Current open positions |
 
 ### 8. Notifications (`src/notifications/telegram_client.py`)
 
@@ -448,8 +532,12 @@ CREATE TABLE trades (
     pnl REAL DEFAULT 0.0,
     market TEXT DEFAULT 'KR',
     exchange_code TEXT DEFAULT 'KRX',
+    session_id TEXT DEFAULT 'UNKNOWN',  -- v3: KRX_REG | NXT_AFTER | US_REG | US_PRE | ...
     selection_context TEXT,        -- JSON: {rsi, volume_ratio, signal, score}
-    decision_id TEXT              -- Links to decision_logs
+    decision_id TEXT,             -- Links to decision_logs
+    strategy_pnl REAL,            -- v3: Core strategy P&L (separated from FX)
+    fx_pnl REAL DEFAULT 0.0,      -- v3: FX gain/loss for USD trades (schema ready, activation pending)
+    mode TEXT                     -- paper | live
 );
 ```
 
@@ -475,13 +563,14 @@ CREATE TABLE decision_logs (
     stock_code TEXT,
     market TEXT,
     exchange_code TEXT,
+    session_id TEXT DEFAULT 'UNKNOWN',  -- v3: session when decision was made
     action TEXT,
     confidence INTEGER,
     rationale TEXT,
     context_snapshot TEXT,         -- JSON: full context at decision time
     input_data TEXT,              -- JSON: market data used
     outcome_pnl REAL,
-    outcome_accuracy REAL,
+    outcome_accuracy INTEGER,
     reviewed INTEGER DEFAULT 0,
     review_notes TEXT
 );
@@ -494,7 +583,7 @@ CREATE TABLE playbooks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     date TEXT NOT NULL,
     market TEXT NOT NULL,
-    status TEXT DEFAULT 'generated',
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending → generated → active → expired
     playbook_json TEXT NOT NULL,   -- Full playbook with scenarios
     generated_at TEXT NOT NULL,
     token_count INTEGER,
@@ -551,6 +640,29 @@ MAX_SCENARIOS_PER_STOCK=5     # Max scenarios per stock in playbook
 PLANNER_TIMEOUT_SECONDS=60    # Timeout for playbook generation
 DEFENSIVE_PLAYBOOK_ON_FAILURE=true  # Fallback on AI failure
 RESCAN_INTERVAL_SECONDS=300   # Scenario rescan interval during trading
+
+# Optional — v2 Exit Rules (State Machine)
+STAGED_EXIT_BE_ARM_PCT=1.2    # Break-even lock threshold (%)
+STAGED_EXIT_ARM_PCT=3.0       # Armed state threshold (%)
+KR_ATR_STOP_MULTIPLIER_K=2.0  # ATR multiplier for KR dynamic hard stop
+KR_ATR_STOP_MIN_PCT=-2.0      # KR hard stop floor (must tighten, negative)
+KR_ATR_STOP_MAX_PCT=-7.0      # KR hard stop ceiling (loosest, negative)
+
+# Optional — v2 Trade Filters
+STOP_LOSS_COOLDOWN_MINUTES=120  # Cooldown after stop-loss before re-entry (same ticker)
+US_MIN_PRICE=5.0              # Minimum US stock price for BUY ($)
+
+# Optional — v3 Session Risk Management
+SESSION_RISK_RELOAD_ENABLED=true   # Reload risk params at session boundaries
+SESSION_RISK_PROFILES_JSON="{}"    # Per-session overrides JSON: {"KRX_REG": {"be_arm_pct": 1.0}}
+OVERNIGHT_EXCEPTION_ENABLED=true   # Allow holding through session close (conditions apply)
+
+# Optional — v3 Blackout (KIS maintenance windows)
+ORDER_BLACKOUT_ENABLED=true
+ORDER_BLACKOUT_WINDOWS_KST=23:30-00:10   # Comma-separated: "HH:MM-HH:MM"
+ORDER_BLACKOUT_QUEUE_MAX=500             # Max queued orders during blackout
+BLACKOUT_RECOVERY_PRICE_REVALIDATION_ENABLED=true
+BLACKOUT_RECOVERY_MAX_PRICE_DRIFT_PCT=5.0  # Drop recovery order if price drifted >5%
 
 # Optional — Smart Scanner (realtime mode only)
 RSI_OVERSOLD_THRESHOLD=30     # 0-50, oversold threshold

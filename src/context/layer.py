@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 
-class ContextLayer(str, Enum):
+class ContextLayer(StrEnum):
     """7-tier context hierarchy from real-time to generational."""
 
     L1_LEGACY = "L1_LEGACY"  # Cumulative/generational wisdom

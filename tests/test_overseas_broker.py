@@ -8,7 +8,7 @@ import aiohttp
 import pytest
 
 from src.broker.kis_api import KISBroker
-from src.broker.overseas import OverseasBroker, _PRICE_EXCHANGE_MAP, _RANKING_EXCHANGE_MAP
+from src.broker.overseas import _PRICE_EXCHANGE_MAP, _RANKING_EXCHANGE_MAP, OverseasBroker
 from src.config import Settings
 
 
@@ -85,25 +85,27 @@ class TestConfigDefaults:
         assert mock_settings.OVERSEAS_RANKING_VOLUME_TR_ID == "HHDFS76270000"
 
     def test_fluct_path(self, mock_settings: Settings) -> None:
-        assert mock_settings.OVERSEAS_RANKING_FLUCT_PATH == "/uapi/overseas-stock/v1/ranking/updown-rate"
+        assert (
+            mock_settings.OVERSEAS_RANKING_FLUCT_PATH
+            == "/uapi/overseas-stock/v1/ranking/updown-rate"
+        )
 
     def test_volume_path(self, mock_settings: Settings) -> None:
-        assert mock_settings.OVERSEAS_RANKING_VOLUME_PATH == "/uapi/overseas-stock/v1/ranking/volume-surge"
+        assert (
+            mock_settings.OVERSEAS_RANKING_VOLUME_PATH
+            == "/uapi/overseas-stock/v1/ranking/volume-surge"
+        )
 
 
 class TestFetchOverseasRankings:
     """Test fetch_overseas_rankings method."""
 
     @pytest.mark.asyncio
-    async def test_fluctuation_uses_correct_params(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_fluctuation_uses_correct_params(self, overseas_broker: OverseasBroker) -> None:
         """Fluctuation ranking should use HHDFS76290000, updown-rate path, and correct params."""
         mock_resp = AsyncMock()
         mock_resp.status = 200
-        mock_resp.json = AsyncMock(
-            return_value={"output": [{"symb": "AAPL", "name": "Apple"}]}
-        )
+        mock_resp.json = AsyncMock(return_value={"output": [{"symb": "AAPL", "name": "Apple"}]})
 
         mock_session = MagicMock()
         mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
@@ -132,15 +134,11 @@ class TestFetchOverseasRankings:
         overseas_broker._broker._auth_headers.assert_called_with("HHDFS76290000")
 
     @pytest.mark.asyncio
-    async def test_volume_uses_correct_params(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_volume_uses_correct_params(self, overseas_broker: OverseasBroker) -> None:
         """Volume ranking should use HHDFS76270000, volume-surge path, and correct params."""
         mock_resp = AsyncMock()
         mock_resp.status = 200
-        mock_resp.json = AsyncMock(
-            return_value={"output": [{"symb": "TSLA", "name": "Tesla"}]}
-        )
+        mock_resp.json = AsyncMock(return_value={"output": [{"symb": "TSLA", "name": "Tesla"}]})
 
         mock_session = MagicMock()
         mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
@@ -169,9 +167,7 @@ class TestFetchOverseasRankings:
         overseas_broker._broker._auth_headers.assert_called_with("HHDFS76270000")
 
     @pytest.mark.asyncio
-    async def test_404_returns_empty_list(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_404_returns_empty_list(self, overseas_broker: OverseasBroker) -> None:
         """HTTP 404 should return empty list (fallback) instead of raising."""
         mock_resp = AsyncMock()
         mock_resp.status = 404
@@ -186,9 +182,7 @@ class TestFetchOverseasRankings:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_non_404_error_raises(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_non_404_error_raises(self, overseas_broker: OverseasBroker) -> None:
         """Non-404 HTTP errors should raise ConnectionError."""
         mock_resp = AsyncMock()
         mock_resp.status = 500
@@ -203,9 +197,7 @@ class TestFetchOverseasRankings:
             await overseas_broker.fetch_overseas_rankings("NASD")
 
     @pytest.mark.asyncio
-    async def test_empty_response_returns_empty(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_empty_response_returns_empty(self, overseas_broker: OverseasBroker) -> None:
         """Empty output in response should return empty list."""
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -220,18 +212,14 @@ class TestFetchOverseasRankings:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_ranking_disabled_returns_empty(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_ranking_disabled_returns_empty(self, overseas_broker: OverseasBroker) -> None:
         """When OVERSEAS_RANKING_ENABLED=False, should return empty immediately."""
         overseas_broker._broker._settings.OVERSEAS_RANKING_ENABLED = False
         result = await overseas_broker.fetch_overseas_rankings("NASD")
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_limit_truncates_results(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_limit_truncates_results(self, overseas_broker: OverseasBroker) -> None:
         """Results should be truncated to the specified limit."""
         rows = [{"symb": f"SYM{i}"} for i in range(20)]
         mock_resp = AsyncMock()
@@ -247,9 +235,7 @@ class TestFetchOverseasRankings:
         assert len(result) == 5
 
     @pytest.mark.asyncio
-    async def test_network_error_raises(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_network_error_raises(self, overseas_broker: OverseasBroker) -> None:
         """Network errors should raise ConnectionError."""
         cm = MagicMock()
         cm.__aenter__ = AsyncMock(side_effect=aiohttp.ClientError("timeout"))
@@ -264,9 +250,7 @@ class TestFetchOverseasRankings:
             await overseas_broker.fetch_overseas_rankings("NASD")
 
     @pytest.mark.asyncio
-    async def test_exchange_code_mapping_applied(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_exchange_code_mapping_applied(self, overseas_broker: OverseasBroker) -> None:
         """All major exchanges should use mapped codes in API params."""
         for original, mapped in [("NASD", "NAS"), ("NYSE", "NYS"), ("AMEX", "AMS")]:
             mock_resp = AsyncMock()
@@ -298,7 +282,9 @@ class TestGetOverseasPrice:
         mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
 
         _setup_broker_mocks(overseas_broker, mock_session)
-        overseas_broker._broker._auth_headers = AsyncMock(return_value={"authorization": "Bearer t"})
+        overseas_broker._broker._auth_headers = AsyncMock(
+            return_value={"authorization": "Bearer t"}
+        )
 
         result = await overseas_broker.get_overseas_price("NASD", "AAPL")
         assert result["output"]["last"] == "150.00"
@@ -530,11 +516,14 @@ class TestPriceExchangeMap:
     def test_price_map_equals_ranking_map(self) -> None:
         assert _PRICE_EXCHANGE_MAP is _RANKING_EXCHANGE_MAP
 
-    @pytest.mark.parametrize("original,expected", [
-        ("NASD", "NAS"),
-        ("NYSE", "NYS"),
-        ("AMEX", "AMS"),
-    ])
+    @pytest.mark.parametrize(
+        "original,expected",
+        [
+            ("NASD", "NAS"),
+            ("NYSE", "NYS"),
+            ("AMEX", "AMS"),
+        ],
+    )
     def test_us_exchange_code_mapping(self, original: str, expected: str) -> None:
         assert _PRICE_EXCHANGE_MAP[original] == expected
 
@@ -574,9 +563,7 @@ class TestOrderRtCdCheck:
         return OverseasBroker(broker)
 
     @pytest.mark.asyncio
-    async def test_success_rt_cd_returns_data(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_success_rt_cd_returns_data(self, overseas_broker: OverseasBroker) -> None:
         """rt_cd='0' → order accepted, data returned."""
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -590,9 +577,7 @@ class TestOrderRtCdCheck:
         assert result["rt_cd"] == "0"
 
     @pytest.mark.asyncio
-    async def test_error_rt_cd_returns_data_with_msg(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_error_rt_cd_returns_data_with_msg(self, overseas_broker: OverseasBroker) -> None:
         """rt_cd != '0' → order rejected, data still returned (caller checks rt_cd)."""
         mock_resp = AsyncMock()
         mock_resp.status = 200
@@ -623,6 +608,7 @@ class TestPaperOverseasCash:
 
     def test_env_override(self) -> None:
         import os
+
         os.environ["PAPER_OVERSEAS_CASH"] = "25000"
         settings = Settings(
             KIS_APP_KEY="k",
@@ -635,6 +621,7 @@ class TestPaperOverseasCash:
 
     def test_zero_disables_fallback(self) -> None:
         import os
+
         os.environ["PAPER_OVERSEAS_CASH"] = "0"
         settings = Settings(
             KIS_APP_KEY="k",
@@ -822,9 +809,7 @@ class TestGetOverseasPendingOrders:
     """Tests for get_overseas_pending_orders method."""
 
     @pytest.mark.asyncio
-    async def test_paper_mode_returns_empty(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_paper_mode_returns_empty(self, overseas_broker: OverseasBroker) -> None:
         """Paper mode should immediately return [] without any API call."""
         # Default mock_settings has MODE="paper"
         overseas_broker._broker._settings = overseas_broker._broker._settings.model_copy(
@@ -855,9 +840,7 @@ class TestGetOverseasPendingOrders:
 
         overseas_broker._broker._auth_headers = mock_auth_headers  # type: ignore[method-assign]
 
-        pending_orders = [
-            {"odno": "001", "pdno": "AAPL", "sll_buy_dvsn_cd": "02", "nccs_qty": "5"}
-        ]
+        pending_orders = [{"odno": "001", "pdno": "AAPL", "sll_buy_dvsn_cd": "02", "nccs_qty": "5"}]
         mock_resp = AsyncMock()
         mock_resp.status = 200
         mock_resp.json = AsyncMock(return_value={"output": pending_orders})
@@ -879,9 +862,7 @@ class TestGetOverseasPendingOrders:
         assert captured_params[0]["OVRS_EXCG_CD"] == "NASD"
 
     @pytest.mark.asyncio
-    async def test_live_mode_connection_error(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_live_mode_connection_error(self, overseas_broker: OverseasBroker) -> None:
         """Network error in live mode should raise ConnectionError."""
         overseas_broker._broker._settings = overseas_broker._broker._settings.model_copy(
             update={"MODE": "live"}
@@ -926,55 +907,41 @@ class TestCancelOverseasOrder:
         return captured_tr_ids, mock_session
 
     @pytest.mark.asyncio
-    async def test_us_live_uses_tttt1004u(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_us_live_uses_tttt1004u(self, overseas_broker: OverseasBroker) -> None:
         """US exchange in live mode should use TTTT1004U."""
         overseas_broker._broker._settings = overseas_broker._broker._settings.model_copy(
             update={"MODE": "live"}
         )
-        captured, _ = self._setup_cancel_mocks(
-            overseas_broker, {"rt_cd": "0", "msg1": "OK"}
-        )
+        captured, _ = self._setup_cancel_mocks(overseas_broker, {"rt_cd": "0", "msg1": "OK"})
 
         await overseas_broker.cancel_overseas_order("NASD", "AAPL", "ORD001", 5)
 
         assert "TTTT1004U" in captured
 
     @pytest.mark.asyncio
-    async def test_us_paper_uses_vttt1004u(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_us_paper_uses_vttt1004u(self, overseas_broker: OverseasBroker) -> None:
         """US exchange in paper mode should use VTTT1004U."""
         # Default mock_settings has MODE="paper"
-        captured, _ = self._setup_cancel_mocks(
-            overseas_broker, {"rt_cd": "0", "msg1": "OK"}
-        )
+        captured, _ = self._setup_cancel_mocks(overseas_broker, {"rt_cd": "0", "msg1": "OK"})
 
         await overseas_broker.cancel_overseas_order("NASD", "AAPL", "ORD001", 5)
 
         assert "VTTT1004U" in captured
 
     @pytest.mark.asyncio
-    async def test_hk_live_uses_ttts1003u(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_hk_live_uses_ttts1003u(self, overseas_broker: OverseasBroker) -> None:
         """SEHK exchange in live mode should use TTTS1003U."""
         overseas_broker._broker._settings = overseas_broker._broker._settings.model_copy(
             update={"MODE": "live"}
         )
-        captured, _ = self._setup_cancel_mocks(
-            overseas_broker, {"rt_cd": "0", "msg1": "OK"}
-        )
+        captured, _ = self._setup_cancel_mocks(overseas_broker, {"rt_cd": "0", "msg1": "OK"})
 
         await overseas_broker.cancel_overseas_order("SEHK", "0700", "ORD002", 10)
 
         assert "TTTS1003U" in captured
 
     @pytest.mark.asyncio
-    async def test_cancel_sets_rvse_cncl_dvsn_cd_02(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_cancel_sets_rvse_cncl_dvsn_cd_02(self, overseas_broker: OverseasBroker) -> None:
         """Cancel body must include RVSE_CNCL_DVSN_CD='02' and OVRS_ORD_UNPR='0'."""
         captured_body: list[dict] = []
 
@@ -1005,9 +972,7 @@ class TestCancelOverseasOrder:
         assert captured_body[0]["ORGN_ODNO"] == "ORD003"
 
     @pytest.mark.asyncio
-    async def test_cancel_sets_hashkey_header(
-        self, overseas_broker: OverseasBroker
-    ) -> None:
+    async def test_cancel_sets_hashkey_header(self, overseas_broker: OverseasBroker) -> None:
         """hashkey must be set in the request headers."""
         captured_headers: list[dict] = []
         overseas_broker._broker._get_hash_key = AsyncMock(return_value="test_hash")  # type: ignore[method-assign]
