@@ -8,6 +8,8 @@ CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
 TMUX_AUTO="${TMUX_AUTO:-true}"
 TMUX_ATTACH="${TMUX_ATTACH:-true}"
 TMUX_SESSION_PREFIX="${TMUX_SESSION_PREFIX:-ouroboros_overnight}"
+STARTUP_GRACE_SEC="${STARTUP_GRACE_SEC:-3}"
+dashboard_port="${DASHBOARD_PORT:-8080}"
 
 if [ -z "${APP_CMD:-}" ]; then
     if [ -x ".venv/bin/python" ]; then
@@ -21,8 +23,6 @@ if [ -z "${APP_CMD:-}" ]; then
         exit 1
     fi
 
-    dashboard_port="${DASHBOARD_PORT:-8080}"
-
     APP_CMD="DASHBOARD_PORT=$dashboard_port $PYTHON_BIN -m src.main --mode=live --dashboard"
 fi
 
@@ -34,6 +34,11 @@ WATCHDOG_LOG="$LOG_DIR/watchdog_${timestamp}.log"
 PID_FILE="$LOG_DIR/app.pid"
 WATCHDOG_PID_FILE="$LOG_DIR/watchdog.pid"
 
+is_port_in_use() {
+    local port="$1"
+    ss -ltn 2>/dev/null | rg -q ":${port}\\b"
+}
+
 if [ -f "$PID_FILE" ]; then
     old_pid="$(cat "$PID_FILE" || true)"
     if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
@@ -43,7 +48,12 @@ if [ -f "$PID_FILE" ]; then
 fi
 
 echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] starting: $APP_CMD" | tee -a "$RUN_LOG"
-nohup bash -lc "$APP_CMD" >>"$RUN_LOG" 2>&1 &
+if [[ "$APP_CMD" == *"--dashboard"* ]] && is_port_in_use "$dashboard_port"; then
+    echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] startup failed: dashboard port ${dashboard_port} already in use" | tee -a "$RUN_LOG"
+    exit 1
+fi
+
+nohup bash -lc "exec $APP_CMD" >>"$RUN_LOG" 2>&1 &
 app_pid=$!
 echo "$app_pid" > "$PID_FILE"
 
@@ -53,6 +63,18 @@ nohup env PID_FILE="$PID_FILE" LOG_FILE="$WATCHDOG_LOG" CHECK_INTERVAL="$CHECK_I
     bash scripts/watchdog.sh >/dev/null 2>&1 &
 watchdog_pid=$!
 echo "$watchdog_pid" > "$WATCHDOG_PID_FILE"
+
+sleep "$STARTUP_GRACE_SEC"
+if ! kill -0 "$app_pid" 2>/dev/null; then
+    echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] startup failed: app process exited early (pid=$app_pid)" | tee -a "$RUN_LOG"
+    tail -n 20 "$RUN_LOG" || true
+    exit 1
+fi
+if ! kill -0 "$watchdog_pid" 2>/dev/null; then
+    echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] startup failed: watchdog exited early (pid=$watchdog_pid)" | tee -a "$WATCHDOG_LOG"
+    tail -n 20 "$WATCHDOG_LOG" || true
+    exit 1
+fi
 
 cat <<EOF
 시작 완료
