@@ -68,6 +68,7 @@ class SmartVolatilityScanner:
         self,
         market: MarketInfo | None = None,
         fallback_stocks: list[str] | None = None,
+        domestic_session_id: str | None = None,
     ) -> list[ScanCandidate]:
         """Execute smart scan and return qualified candidates.
 
@@ -81,11 +82,12 @@ class SmartVolatilityScanner:
         if market and not market.is_domestic:
             return await self._scan_overseas(market, fallback_stocks)
 
-        return await self._scan_domestic(fallback_stocks)
+        return await self._scan_domestic(fallback_stocks, session_id=domestic_session_id)
 
     async def _scan_domestic(
         self,
         fallback_stocks: list[str] | None = None,
+        session_id: str | None = None,
     ) -> list[ScanCandidate]:
         """Scan domestic market using volatility-first ranking + liquidity bonus."""
         # 1) Primary universe from fluctuation ranking.
@@ -93,6 +95,7 @@ class SmartVolatilityScanner:
             fluct_rows = await self.broker.fetch_market_rankings(
                 ranking_type="fluctuation",
                 limit=50,
+                session_id=session_id,
             )
         except ConnectionError as exc:
             logger.warning("Domestic fluctuation ranking failed: %s", exc)
@@ -103,6 +106,7 @@ class SmartVolatilityScanner:
             volume_rows = await self.broker.fetch_market_rankings(
                 ranking_type="volume",
                 limit=50,
+                session_id=session_id,
             )
         except ConnectionError as exc:
             logger.warning("Domestic volume ranking failed: %s", exc)

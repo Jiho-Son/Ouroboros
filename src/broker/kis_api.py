@@ -12,7 +12,10 @@ from typing import Any, cast
 
 import aiohttp
 
+from src.broker.kr_exchange_router import KRExchangeRouter
 from src.config import Settings
+from src.core.order_policy import classify_session_id
+from src.markets.schedule import MARKETS
 
 # KIS virtual trading server has a known SSL certificate hostname mismatch.
 _KIS_VTS_HOST = "openapivts.koreainvestment.com"
@@ -92,6 +95,7 @@ class KISBroker:
         self._last_refresh_attempt: float = 0.0
         self._refresh_cooldown: float = 60.0  # Seconds (matches KIS 1/minute limit)
         self._rate_limiter = LeakyBucket(settings.RATE_LIMIT_RPS)
+        self._kr_router = KRExchangeRouter()
 
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -187,9 +191,12 @@ class KISBroker:
             if resp.status != 200:
                 text = await resp.text()
                 raise ConnectionError(f"Hash key request failed ({resp.status}): {text}")
-            data = await resp.json()
+            data = cast(dict[str, Any], await resp.json())
 
-        return data["HASH"]
+        hash_value = data.get("HASH")
+        if not isinstance(hash_value, str):
+            raise ConnectionError("Hash key response missing HASH")
+        return hash_value
 
     # ------------------------------------------------------------------
     # Common Headers
@@ -211,12 +218,21 @@ class KISBroker:
 
     async def get_orderbook(self, stock_code: str) -> dict[str, Any]:
         """Fetch the current orderbook for a given stock code."""
+        return await self.get_orderbook_by_market(stock_code, market_div_code="J")
+
+    async def get_orderbook_by_market(
+        self,
+        stock_code: str,
+        *,
+        market_div_code: str,
+    ) -> dict[str, Any]:
+        """Fetch orderbook for a specific domestic market division code."""
         await self._rate_limiter.acquire()
         session = self._get_session()
 
         headers = await self._auth_headers("FHKST01010200")
         params = {
-            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_COND_MRKT_DIV_CODE": market_div_code,
             "FID_INPUT_ISCD": stock_code,
         }
         url = f"{self._base_url}/uapi/domestic-stock/v1/quotations/inquire-asking-price-exp-ccn"
@@ -226,9 +242,79 @@ class KISBroker:
                 if resp.status != 200:
                     text = await resp.text()
                     raise ConnectionError(f"get_orderbook failed ({resp.status}): {text}")
-                return await resp.json()
+                return cast(dict[str, Any], await resp.json())
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching orderbook: {exc}") from exc
+
+    @staticmethod
+    def _extract_orderbook_metrics(payload: dict[str, Any]) -> tuple[float | None, float | None]:
+        output = payload.get("output1") or payload.get("output") or {}
+        if not isinstance(output, dict):
+            return None, None
+
+        def _float(*keys: str) -> float | None:
+            for key in keys:
+                raw = output.get(key)
+                if raw in (None, ""):
+                    continue
+                try:
+                    return float(cast(str | int | float, raw))
+                except (ValueError, TypeError):
+                    continue
+            return None
+
+        ask = _float("askp1", "stck_askp1")
+        bid = _float("bidp1", "stck_bidp1")
+        if ask is not None and bid is not None and ask > 0 and bid > 0 and ask >= bid:
+            mid = (ask + bid) / 2
+            if mid > 0:
+                spread = (ask - bid) / mid
+            else:
+                spread = None
+        else:
+            spread = None
+
+        ask_qty = _float("askp_rsqn1", "ask_qty1")
+        bid_qty = _float("bidp_rsqn1", "bid_qty1")
+        if ask_qty is not None and bid_qty is not None and ask_qty >= 0 and bid_qty >= 0:
+            liquidity = ask_qty + bid_qty
+        else:
+            liquidity = None
+
+        return spread, liquidity
+
+    async def _load_dual_listing_metrics(
+        self,
+        stock_code: str,
+    ) -> tuple[bool, float | None, float | None, float | None, float | None]:
+        """Try KRX/NXT orderbooks and derive spread/liquidity metrics."""
+        spread_krx: float | None = None
+        spread_nxt: float | None = None
+        liquidity_krx: float | None = None
+        liquidity_nxt: float | None = None
+
+        for market_div_code, exchange in (("J", "KRX"), ("NX", "NXT")):
+            try:
+                payload = await self.get_orderbook_by_market(
+                    stock_code,
+                    market_div_code=market_div_code,
+                )
+            except ConnectionError:
+                continue
+
+            spread, liquidity = self._extract_orderbook_metrics(payload)
+            if exchange == "KRX":
+                spread_krx = spread
+                liquidity_krx = liquidity
+            else:
+                spread_nxt = spread
+                liquidity_nxt = liquidity
+
+        is_dual_listed = (
+            (spread_krx is not None and spread_nxt is not None)
+            or (liquidity_krx is not None and liquidity_nxt is not None)
+        )
+        return is_dual_listed, spread_krx, spread_nxt, liquidity_krx, liquidity_nxt
 
     async def get_current_price(self, stock_code: str) -> tuple[float, float, float]:
         """Fetch current price data for a domestic stock.
@@ -302,7 +388,7 @@ class KISBroker:
                 if resp.status != 200:
                     text = await resp.text()
                     raise ConnectionError(f"get_balance failed ({resp.status}): {text}")
-                return await resp.json()
+                return cast(dict[str, Any], await resp.json())
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching balance: {exc}") from exc
 
@@ -311,7 +397,8 @@ class KISBroker:
         stock_code: str,
         order_type: str,  # "BUY" or "SELL"
         quantity: int,
-        price: int = 0,
+        price: float = 0,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """Submit a buy or sell order.
 
@@ -341,10 +428,32 @@ class KISBroker:
             ord_dvsn = "01"  # 시장가
             ord_price = 0
 
+        resolved_session = session_id or classify_session_id(MARKETS["KR"])
+        if session_id is not None:
+            is_dual_listed, spread_krx, spread_nxt, liquidity_krx, liquidity_nxt = (
+                await self._load_dual_listing_metrics(stock_code)
+            )
+        else:
+            is_dual_listed = False
+            spread_krx = None
+            spread_nxt = None
+            liquidity_krx = None
+            liquidity_nxt = None
+        resolution = self._kr_router.resolve_for_order(
+            stock_code=stock_code,
+            session_id=resolved_session,
+            is_dual_listed=is_dual_listed,
+            spread_krx=spread_krx,
+            spread_nxt=spread_nxt,
+            liquidity_krx=liquidity_krx,
+            liquidity_nxt=liquidity_nxt,
+        )
+
         body = {
             "CANO": self._account_no,
             "ACNT_PRDT_CD": self._product_cd,
             "PDNO": stock_code,
+            "EXCG_ID_DVSN_CD": resolution.exchange_code,
             "ORD_DVSN": ord_dvsn,
             "ORD_QTY": str(quantity),
             "ORD_UNPR": str(ord_price),
@@ -361,12 +470,15 @@ class KISBroker:
                 if resp.status != 200:
                     text = await resp.text()
                     raise ConnectionError(f"send_order failed ({resp.status}): {text}")
-                data = await resp.json()
+                data = cast(dict[str, Any], await resp.json())
                 logger.info(
                     "Order submitted",
                     extra={
                         "stock_code": stock_code,
                         "action": order_type,
+                        "session_id": resolved_session,
+                        "exchange": resolution.exchange_code,
+                        "routing_reason": resolution.reason,
                     },
                 )
                 return data
@@ -377,6 +489,7 @@ class KISBroker:
         self,
         ranking_type: str = "volume",
         limit: int = 30,
+        session_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Fetch market rankings from KIS API.
 
@@ -394,12 +507,15 @@ class KISBroker:
         await self._rate_limiter.acquire()
         session = self._get_session()
 
+        resolved_session = session_id or classify_session_id(MARKETS["KR"])
+        ranking_market_code = self._kr_router.resolve_for_ranking(resolved_session)
+
         if ranking_type == "volume":
             # 거래량순위: FHPST01710000 / /quotations/volume-rank
             tr_id = "FHPST01710000"
             url = f"{self._base_url}/uapi/domestic-stock/v1/quotations/volume-rank"
             params: dict[str, str] = {
-                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_MRKT_DIV_CODE": ranking_market_code,
                 "FID_COND_SCR_DIV_CODE": "20171",
                 "FID_INPUT_ISCD": "0000",
                 "FID_DIV_CLS_CODE": "0",
@@ -416,7 +532,7 @@ class KISBroker:
             tr_id = "FHPST01700000"
             url = f"{self._base_url}/uapi/domestic-stock/v1/ranking/fluctuation"
             params = {
-                "fid_cond_mrkt_div_code": "J",
+                "fid_cond_mrkt_div_code": ranking_market_code,
                 "fid_cond_scr_div_code": "20170",
                 "fid_input_iscd": "0000",
                 "fid_rank_sort_cls_code": "0",
