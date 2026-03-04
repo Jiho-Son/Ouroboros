@@ -12,6 +12,7 @@ import json
 import logging
 import signal
 import threading
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -2084,6 +2085,15 @@ async def trading_cycle(
                 quantity=quantity,
                 price=order_price,
             )
+            if result.get("rt_cd", "0") != "0":
+                order_succeeded = False
+                msg1 = result.get("msg1") or ""
+                logger.warning(
+                    "KR order not accepted for %s: rt_cd=%s msg=%s",
+                    stock_code,
+                    result.get("rt_cd"),
+                    msg1,
+                )
         else:
             # For overseas orders, always use limit orders (지정가):
             # - KIS market orders (ORD_DVSN=01) calculate quantity based on upper limit
@@ -3293,6 +3303,15 @@ async def run_daily_session(
                             quantity=quantity,
                             price=order_price,
                         )
+                        if result.get("rt_cd", "0") != "0":
+                            order_succeeded = False
+                            daily_msg1 = result.get("msg1") or ""
+                            logger.warning(
+                                "KR order not accepted for %s: rt_cd=%s msg=%s",
+                                stock_code,
+                                result.get("rt_cd"),
+                                daily_msg1,
+                            )
                     else:
                         # KIS VTS only accepts limit orders; use 0.5% premium for BUY
                         if decision.action == "BUY":
@@ -3530,6 +3549,47 @@ def _run_context_scheduler(
             result.legacy,
             result.cleanup,
         )
+
+
+def _has_market_session_transition(
+    market_states: dict[str, str], market_code: str, session_id: str
+) -> bool:
+    """Return True when market session changed (or market has no prior state)."""
+    return market_states.get(market_code) != session_id
+
+
+def _should_rescan_market(
+    *, last_scan: float, now_timestamp: float, rescan_interval: float, session_changed: bool
+) -> bool:
+    """Force rescan on session transition; otherwise follow interval cadence."""
+    return session_changed or (now_timestamp - last_scan >= rescan_interval)
+
+
+async def _run_markets_in_parallel(
+    markets: list[Any], processor: Callable[[Any], Awaitable[None]]
+) -> None:
+    """Run market processors in parallel and fail fast on the first exception."""
+    if not markets:
+        return
+
+    tasks = [asyncio.create_task(processor(market)) for market in markets]
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_EXCEPTION)
+
+    first_exc: BaseException | None = None
+    for task in done:
+        exc = task.exception()
+        if exc is not None and first_exc is None:
+            first_exc = exc
+
+    if first_exc is not None:
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        raise first_exc
+
+    if pending:
+        await asyncio.gather(*pending)
 
 
 async def _run_evolution_loop(
@@ -4045,7 +4105,7 @@ async def run(settings: Settings) -> None:
     last_scan_time: dict[str, float] = {}
 
     # Track market open/close state for notifications
-    _market_states: dict[str, bool] = {}  # market_code -> is_open
+    _market_states: dict[str, str] = {}  # market_code -> session_id
 
     # Trading control events
     shutdown = asyncio.Event()
@@ -4163,8 +4223,8 @@ async def run(settings: Settings) -> None:
 
                 if not open_markets:
                     # Notify market close for any markets that were open
-                    for market_code, is_open in list(_market_states.items()):
-                        if is_open:
+                    for market_code, session_id in list(_market_states.items()):
+                        if session_id:
                             try:
                                 from src.markets.schedule import MARKETS
 
@@ -4181,7 +4241,7 @@ async def run(settings: Settings) -> None:
                                     )
                             except Exception as exc:
                                 logger.warning("Market close notification failed: %s", exc)
-                            _market_states[market_code] = False
+                            _market_states.pop(market_code, None)
                             # Clear playbook for closed market (new one generated next open)
                             playbooks.pop(market_code, None)
 
@@ -4206,10 +4266,9 @@ async def run(settings: Settings) -> None:
                         await asyncio.sleep(TRADE_INTERVAL_SECONDS)
                     continue
 
-                # Process each open market
-                for market in open_markets:
+                async def _process_realtime_market(market: MarketInfo) -> None:
                     if shutdown.is_set():
-                        break
+                        return
 
                     session_info = get_session_info(market)
                     _session_risk_overrides(market=market, settings=settings)
@@ -4227,13 +4286,16 @@ async def run(settings: Settings) -> None:
                         settings=settings,
                     )
 
-                    # Notify market open if it just opened
-                    if not _market_states.get(market.code, False):
+                    # Notify on market/session transition (e.g., US_PRE -> US_REG)
+                    session_changed = _has_market_session_transition(
+                        _market_states, market.code, session_info.session_id
+                    )
+                    if session_changed:
                         try:
                             await telegram.notify_market_open(market.name)
                         except Exception as exc:
                             logger.warning("Market open notification failed: %s", exc)
-                        _market_states[market.code] = True
+                        _market_states[market.code] = session_info.session_id
 
                     # Check and handle domestic pending (unfilled) limit orders.
                     if market.is_domestic:
@@ -4265,7 +4327,12 @@ async def run(settings: Settings) -> None:
                     now_timestamp = asyncio.get_event_loop().time()
                     last_scan = last_scan_time.get(market.code, 0.0)
                     rescan_interval = settings.RESCAN_INTERVAL_SECONDS
-                    if now_timestamp - last_scan >= rescan_interval:
+                    if _should_rescan_market(
+                        last_scan=last_scan,
+                        now_timestamp=now_timestamp,
+                        rescan_interval=rescan_interval,
+                        session_changed=session_changed,
+                    ):
                         try:
                             logger.info("Smart Scanner: Scanning %s market", market.name)
 
@@ -4290,12 +4357,9 @@ async def run(settings: Settings) -> None:
                             )
 
                             if candidates:
-                                # Use scanner results directly as trading candidates
                                 active_stocks[market.code] = smart_scanner.get_stock_codes(
                                     candidates
                                 )
-
-                                # Store candidates per market for selection context logging
                                 scan_candidates[market.code] = {c.stock_code: c for c in candidates}
 
                                 logger.info(
@@ -4305,12 +4369,8 @@ async def run(settings: Settings) -> None:
                                     [f"{c.stock_code}(RSI={c.rsi:.0f})" for c in candidates],
                                 )
 
-                                # Get market-local date for playbook keying
                                 market_today = datetime.now(market.timezone).date()
-
-                                # Load or generate playbook (1 Gemini call per market per day)
                                 if market.code not in playbooks:
-                                    # Try DB first (survives process restart)
                                     stored_pb = playbook_store.load(market_today, market.code)
                                     if stored_pb is not None:
                                         playbooks[market.code] = stored_pb
@@ -4370,12 +4430,6 @@ async def run(settings: Settings) -> None:
                         except Exception as exc:
                             logger.error("Smart Scanner failed for %s: %s", market.name, exc)
 
-                    # Get active stocks from scanner (dynamic, no static fallback).
-                    # Also include currently-held positions so stop-loss /
-                    # take-profit can fire even when a holding drops off the
-                    # scanner.  Broker balance is the source of truth here —
-                    # unlike the local DB it reflects actual fills and any
-                    # manual trades done outside the bot.
                     scanner_codes = active_stocks.get(market.code, [])
                     try:
                         if market.is_domestic:
@@ -4406,16 +4460,14 @@ async def run(settings: Settings) -> None:
 
                     if not stock_codes:
                         logger.debug("No active stocks for market %s", market.code)
-                        continue
+                        return
 
                     logger.info("Processing market: %s (%d stocks)", market.name, len(stock_codes))
 
-                    # Process each stock from scanner results
                     for stock_code in stock_codes:
                         if shutdown.is_set():
                             break
 
-                        # Get playbook for this market
                         market_playbook = playbooks.get(
                             market.code,
                             PreMarketPlanner._empty_playbook(
@@ -4423,7 +4475,6 @@ async def run(settings: Settings) -> None:
                             ),
                         )
 
-                        # Retry logic for connection errors
                         for attempt in range(1, MAX_CONNECTION_RETRIES + 1):
                             try:
                                 await trading_cycle(
@@ -4443,7 +4494,7 @@ async def run(settings: Settings) -> None:
                                     settings,
                                     buy_cooldown,
                                 )
-                                break  # Success — exit retry loop
+                                break
                             except CircuitBreakerTripped as exc:
                                 logger.critical("Circuit breaker tripped — shutting down")
                                 try:
@@ -4465,17 +4516,19 @@ async def run(settings: Settings) -> None:
                                         MAX_CONNECTION_RETRIES,
                                         exc,
                                     )
-                                    await asyncio.sleep(2**attempt)  # Exponential backoff
+                                    await asyncio.sleep(2**attempt)
                                 else:
                                     logger.error(
                                         "Connection error for %s (all retries exhausted): %s",
                                         stock_code,
                                         exc,
                                     )
-                                    break  # Give up on this stock
+                                    break
                             except Exception as exc:
                                 logger.exception("Unexpected error for %s: %s", stock_code, exc)
-                                break  # Don't retry on unexpected errors
+                                break
+
+                await _run_markets_in_parallel(open_markets, _process_realtime_market)
 
                 # Log priority queue metrics periodically
                 metrics = await priority_queue.get_metrics()

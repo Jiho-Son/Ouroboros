@@ -1,5 +1,6 @@
 """Tests for main trading loop integration."""
 
+import asyncio
 from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -34,6 +35,7 @@ from src.main import (
     _extract_held_codes_from_balance,
     _extract_held_qty_from_balance,
     _handle_market_close,
+    _has_market_session_transition,
     _inject_staged_exit_features,
     _maybe_queue_order_intent,
     _resolve_market_setting,
@@ -41,8 +43,10 @@ from src.main import (
     _retry_connection,
     _run_context_scheduler,
     _run_evolution_loop,
+    _run_markets_in_parallel,
     _should_block_overseas_buy_for_fx_buffer,
     _should_force_exit_for_overnight,
+    _should_rescan_market,
     _split_trade_pnl_components,
     _start_dashboard_server,
     _stoploss_cooldown_minutes,
@@ -139,6 +143,63 @@ class TestExtractAvgPriceFromBalance:
         balance = {"output1": [{"ovrs_pdno": "AAPL", "pchs_avg_pric": "170.50"}]}
         result = _extract_avg_price_from_balance(balance, "AAPL", is_domestic=False)
         assert result == 170.5
+
+
+class TestRealtimeSessionStateHelpers:
+    """Tests for realtime loop session-transition/rescan helper logic."""
+
+    def test_has_market_session_transition_when_state_missing(self) -> None:
+        states: dict[str, str] = {}
+        assert _has_market_session_transition(states, "US_NASDAQ", "US_REG")
+
+    def test_has_market_session_transition_when_session_changes(self) -> None:
+        states = {"US_NASDAQ": "US_PRE"}
+        assert _has_market_session_transition(states, "US_NASDAQ", "US_REG")
+
+    def test_has_market_session_transition_false_when_same_session(self) -> None:
+        states = {"US_NASDAQ": "US_REG"}
+        assert not _has_market_session_transition(states, "US_NASDAQ", "US_REG")
+
+    def test_should_rescan_market_forces_on_session_transition(self) -> None:
+        assert _should_rescan_market(
+            last_scan=1000.0,
+            now_timestamp=1050.0,
+            rescan_interval=300.0,
+            session_changed=True,
+        )
+
+    def test_should_rescan_market_uses_interval_without_transition(self) -> None:
+        assert not _should_rescan_market(
+            last_scan=1000.0,
+            now_timestamp=1050.0,
+            rescan_interval=300.0,
+            session_changed=False,
+        )
+
+
+class TestMarketParallelRunner:
+    """Tests for market-level parallel processing helper."""
+
+    @pytest.mark.asyncio
+    async def test_run_markets_in_parallel_runs_all_markets(self) -> None:
+        processed: list[str] = []
+
+        async def _processor(market: str) -> None:
+            await asyncio.sleep(0.01)
+            processed.append(market)
+
+        await _run_markets_in_parallel(["KR", "US_NASDAQ", "US_NYSE"], _processor)
+        assert set(processed) == {"KR", "US_NASDAQ", "US_NYSE"}
+
+    @pytest.mark.asyncio
+    async def test_run_markets_in_parallel_propagates_errors(self) -> None:
+        async def _processor(market: str) -> None:
+            if market == "US_NASDAQ":
+                raise RuntimeError("boom")
+            await asyncio.sleep(0.01)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await _run_markets_in_parallel(["KR", "US_NASDAQ"], _processor)
 
     def test_returns_zero_when_field_absent(self) -> None:
         """Returns 0.0 when pchs_avg_pric key is missing entirely."""
@@ -912,6 +973,46 @@ class TestTradingCycleTelegramIntegration:
 
         # Verify notification was attempted
         mock_telegram.notify_trade_execution.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_kr_rejected_order_does_not_notify_or_log_trade(
+        self,
+        mock_broker: MagicMock,
+        mock_overseas_broker: MagicMock,
+        mock_scenario_engine: MagicMock,
+        mock_playbook: DayPlaybook,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_market: MagicMock,
+    ) -> None:
+        """KR orders rejected by KIS should not trigger success side effects."""
+        mock_broker.send_order = AsyncMock(
+            return_value={"rt_cd": "1", "msg1": "장운영시간이 아닙니다."}
+        )
+
+        with patch("src.main.log_trade") as mock_log_trade:
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=mock_overseas_broker,
+                scenario_engine=mock_scenario_engine,
+                playbook=mock_playbook,
+                risk=mock_risk,
+                db_conn=mock_db,
+                decision_logger=mock_decision_logger,
+                context_store=mock_context_store,
+                criticality_assessor=mock_criticality_assessor,
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+            )
+
+        mock_telegram.notify_trade_execution.assert_not_called()
+        mock_log_trade.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_fat_finger_notification_sent(
