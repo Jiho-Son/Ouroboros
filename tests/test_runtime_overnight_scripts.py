@@ -158,3 +158,46 @@ def test_run_overnight_fails_when_process_exits_before_grace_period(tmp_path: Pa
         watchdog_pid = int(watchdog_pid_file.read_text(encoding="utf-8").strip())
         with pytest.raises(ProcessLookupError):
             os.kill(watchdog_pid, 0)
+
+
+def test_runtime_verify_monitor_survives_when_no_live_pid(tmp_path: Path) -> None:
+    """Regression test for #413: monitor loop must not exit when pgrep finds no live process.
+
+    With set -euo pipefail, pgrep returning exit 1 (no match) would cause the
+    whole script to abort via the pipefail mechanism. The fix captures pgrep
+    output via a local variable with || true so pipefail is never triggered.
+
+    Verifies that the script: (1) exits 0 after completing MAX_LOOPS=1, and
+    (2) logs a HEARTBEAT entry. Whether live_pids is 'none' or not depends on
+    what processes happen to be running; either way the script must not crash.
+    """
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "ROOT_DIR": str(REPO_ROOT),
+            "LOG_DIR": str(log_dir),
+            "INTERVAL_SEC": "1",
+            "MAX_HOURS": "1",
+            "MAX_LOOPS": "1",
+            "POLICY_TZ": "UTC",
+        }
+    )
+    completed = subprocess.run(
+        ["bash", str(RUNTIME_MONITOR)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, (
+        f"monitor exited non-zero (pipefail regression?): {completed.stderr}"
+    )
+    log_text = _latest_runtime_log(log_dir)
+    assert "[INFO] runtime verify monitor started" in log_text
+    assert "[HEARTBEAT]" in log_text, "monitor did not complete a heartbeat cycle"
+    # live_pids may be 'none' (no match) or a pid (process found) — either is valid.
+    # The critical invariant is that the script survived the loop without pipefail abort.

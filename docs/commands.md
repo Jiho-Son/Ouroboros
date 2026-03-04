@@ -59,6 +59,20 @@ scripts/tea_comment.sh 374 /tmp/comment.md
 - `scripts/tea_comment.sh` accepts stdin with `-` as body source.
 - The helper fails fast when body looks like escaped-newline text only.
 
+#### PR Body Governance Preflight (Mandatory before `tea pulls create`)
+
+PR 본문 파일 준비 후, **생성 전에** 아래 명령으로 형식 + 거버넌스 traceability를 검증한다.
+
+```bash
+python3 scripts/validate_pr_body.py --body-file /tmp/pr_body.md
+```
+
+검증 항목: `\n` 이스케이프, 마크다운 헤더, 리스트, **REQ-ID, TASK-ID, TEST-ID** 포함.
+
+검증 실패 시:
+- PR 본문에 실제 REQ-ID/TASK-ID/TEST-ID를 채운 뒤 재검증 통과 후에만 `tea pulls create` 실행
+- placeholder(`REQ-...`, `TASK-...`, `TEST-...`) 형태는 CI에서 실패 처리됨
+
 #### PR Body Post-Check (Mandatory)
 
 PR 생성 직후 본문이 `\n` 문자열로 깨지지 않았는지 반드시 확인한다.

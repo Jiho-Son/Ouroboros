@@ -16,6 +16,9 @@ HEADER_PATTERN = re.compile(r"^##\s+\S+", re.MULTILINE)
 LIST_ITEM_PATTERN = re.compile(r"^\s*(?:-|\*|\d+\.)\s+\S+", re.MULTILINE)
 FENCED_CODE_PATTERN = re.compile(r"```.*?```", re.DOTALL)
 INLINE_CODE_PATTERN = re.compile(r"`[^`]*`")
+REQ_ID_PATTERN = re.compile(r"\bREQ-[A-Z0-9-]+-\d{3}\b")
+TASK_ID_PATTERN = re.compile(r"\bTASK-[A-Z0-9-]+-\d{3}\b")
+TEST_ID_PATTERN = re.compile(r"\bTEST-[A-Z0-9-]+-\d{3}\b")
 
 
 def _strip_code_segments(text: str) -> str:
@@ -35,7 +38,7 @@ def resolve_tea_binary() -> str:
     raise RuntimeError("tea binary not found (checked PATH and ~/bin/tea)")
 
 
-def validate_pr_body_text(text: str) -> list[str]:
+def validate_pr_body_text(text: str, *, check_governance: bool = True) -> list[str]:
     errors: list[str] = []
     searchable = _strip_code_segments(text)
     if "\\n" in searchable:
@@ -46,6 +49,13 @@ def validate_pr_body_text(text: str) -> list[str]:
         errors.append("body is missing markdown section headers (e.g. '## Summary')")
     if not LIST_ITEM_PATTERN.search(text):
         errors.append("body is missing markdown list items")
+    if check_governance:
+        if not REQ_ID_PATTERN.search(text):
+            errors.append("body is missing REQ-ID traceability (e.g. REQ-OPS-001)")
+        if not TASK_ID_PATTERN.search(text):
+            errors.append("body is missing TASK-ID traceability (e.g. TASK-OPS-001)")
+        if not TEST_ID_PATTERN.search(text):
+            errors.append("body is missing TEST-ID traceability (e.g. TEST-OPS-001)")
     return errors
 
 
@@ -80,11 +90,16 @@ def fetch_pr_body(pr_number: int) -> str:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate PR body markdown formatting and escaped-newline artifacts."
+        description="Validate PR body markdown formatting, escaped-newline artifacts, and governance traceability."
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--pr", type=int, help="PR number to fetch via `tea api`")
     group.add_argument("--body-file", type=Path, help="Path to markdown body file")
+    parser.add_argument(
+        "--no-governance",
+        action="store_true",
+        help="Skip REQ-ID/TASK-ID/TEST-ID governance traceability checks",
+    )
     return parser.parse_args()
 
 
@@ -100,7 +115,7 @@ def main() -> int:
         body = fetch_pr_body(args.pr)
         source = f"pr:{args.pr}"
 
-    errors = validate_pr_body_text(body)
+    errors = validate_pr_body_text(body, check_governance=not args.no_governance)
     if errors:
         print("[FAIL] PR body validation failed")
         print(f"- source: {source}")

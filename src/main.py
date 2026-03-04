@@ -4141,6 +4141,9 @@ async def run(settings: Settings) -> None:
     # Sync broker positions → DB to prevent double-buy on restart
     try:
         await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
+    except asyncio.CancelledError:
+        logger.error("Startup position sync cancelled — propagating shutdown")
+        raise
     except Exception as exc:
         logger.warning("Startup position sync failed (non-fatal): %s", exc)
 
