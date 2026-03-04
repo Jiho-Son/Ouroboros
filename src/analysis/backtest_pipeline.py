@@ -195,11 +195,11 @@ def run_v2_backtest_pipeline(
             ]
             fb = FeatureBuilder()
             try:
-                train_X = np.stack([
+                train_x = np.stack([
                     fb.build(bars=feature_bars, entry_index=i)
                     for i in fold.train_indices
                 ])
-                test_X = np.stack([
+                test_x = np.stack([
                     fb.build(bars=feature_bars, entry_index=i)
                     for i in fold.test_indices
                 ])
@@ -209,8 +209,8 @@ def run_v2_backtest_pipeline(
                 train_y = np.array([ordered_labels[i] for i in fold.train_indices])
                 test_y = np.array([ordered_labels[i] for i in fold.test_indices])
 
-                peak_model.fit(X=train_X, y=train_y)
-                test_proba = peak_model.predict_proba(X=test_X)
+                peak_model.fit(x=train_x, y=train_y)
+                test_proba = peak_model.predict_proba(x=test_x)
 
                 y_binary = [1 if lbl == -1 else 0 for lbl in test_y]
                 if sum(y_binary) > 0:

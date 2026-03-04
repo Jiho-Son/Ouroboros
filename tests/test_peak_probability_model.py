@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import pytest
 import numpy as np
+import pytest
 
-from src.analysis.peak_probability_model import FeatureBuilder, FeatureBar
+from src.analysis.peak_probability_model import FeatureBar, FeatureBuilder, HistGBPeakModel
+from src.analysis.walk_forward_split import generate_walk_forward_splits
 
 
 def _make_bars(n: int = 30) -> list[FeatureBar]:
@@ -11,26 +12,26 @@ def _make_bars(n: int = 30) -> list[FeatureBar]:
     bars = []
     for i in range(n):
         close = 100.0 + i
-        bars.append(FeatureBar(high=close + 1.0, low=close - 1.0, close=close, volume=1000.0 + i * 10))
+        bars.append(
+            FeatureBar(high=close + 1.0, low=close - 1.0, close=close, volume=1000.0 + i * 10)
+        )
     return bars
 
 
 def test_feature_shape() -> None:
     bars = _make_bars(30)
     builder = FeatureBuilder(window=14)
-    X = builder.build(bars=bars, entry_index=20)
-    # 피처 벡터는 1D ndarray
-    assert X.ndim == 1
-    assert X.shape[0] > 0
+    feat = builder.build(bars=bars, entry_index=20)
+    assert feat.ndim == 1
+    assert feat.shape[0] > 0
 
 
 def test_feature_window_sealed() -> None:
     """entry_index 이후 데이터가 피처에 영향을 주지 않아야 한다."""
     bars = _make_bars(30)
     builder = FeatureBuilder(window=14)
-    X_original = builder.build(bars=bars, entry_index=20)
+    feat_original = builder.build(bars=bars, entry_index=20)
 
-    # entry_index 이후 bar를 변조
     bars_tampered = list(bars)
     for i in range(21, 30):
         b = bars_tampered[i]
@@ -38,8 +39,8 @@ def test_feature_window_sealed() -> None:
             high=b.high * 10, low=b.low * 10, close=b.close * 10, volume=b.volume * 10
         )
 
-    X_tampered = builder.build(bars=bars_tampered, entry_index=20)
-    np.testing.assert_array_equal(X_original, X_tampered)
+    feat_tampered = builder.build(bars=bars_tampered, entry_index=20)
+    np.testing.assert_array_equal(feat_original, feat_tampered)
 
 
 def test_requires_minimum_bars() -> None:
@@ -52,11 +53,8 @@ def test_requires_minimum_bars() -> None:
 def test_no_nan_in_features() -> None:
     bars = _make_bars(30)
     builder = FeatureBuilder(window=14)
-    X = builder.build(bars=bars, entry_index=20)
-    assert not np.any(np.isnan(X))
-
-
-from src.analysis.peak_probability_model import FeatureBuilder, FeatureBar, HistGBPeakModel
+    feat = builder.build(bars=bars, entry_index=20)
+    assert not np.any(np.isnan(feat))
 
 
 def test_histgb_fit_predict() -> None:
@@ -64,14 +62,13 @@ def test_histgb_fit_predict() -> None:
     builder = FeatureBuilder(window=14)
     bars = _make_bars(50)
     entry_indices = list(range(20, 45))
-    X = np.stack([builder.build(bars=bars, entry_index=i) for i in entry_indices])
-    # 레이블: 짝수 인덱스는 1 (상승), 홀수는 -1 (하락)
+    feat_matrix = np.stack([builder.build(bars=bars, entry_index=i) for i in entry_indices])
     y = np.array([1 if i % 2 == 0 else -1 for i in range(len(entry_indices))])
 
     model = HistGBPeakModel()
-    model.fit(X=X, y=y)
+    model.fit(x=feat_matrix, y=y)
 
-    prob = model.predict_proba(X=X[:5])
+    prob = model.predict_proba(x=feat_matrix[:5])
     assert prob.shape == (5,)
     assert np.all(prob >= 0.0) and np.all(prob <= 1.0)
 
@@ -79,13 +76,11 @@ def test_histgb_fit_predict() -> None:
 def test_histgb_not_fitted_raises() -> None:
     model = HistGBPeakModel()
     with pytest.raises(Exception):
-        model.predict_proba(X=np.zeros((3, 7)))
+        model.predict_proba(x=np.zeros((3, 7)))
 
 
 def test_walk_forward_no_leakage() -> None:
     """Walk-forward fold에서 train에 없는 미래 인덱스가 test에만 있어야 한다."""
-    from src.analysis.walk_forward_split import generate_walk_forward_splits
-
     folds = generate_walk_forward_splits(
         n_samples=30, train_size=10, test_size=5, purge_size=2, embargo_size=1
     )
