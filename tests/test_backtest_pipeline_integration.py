@@ -218,3 +218,51 @@ def test_pipeline_fold_scores_reflect_cost_and_execution_effects() -> None:
     optimistic_avg_return = optimistic_out.folds[0].execution_adjusted_avg_return_bps
     conservative_avg_return = conservative_out.folds[0].execution_adjusted_avg_return_bps
     assert conservative_avg_return < optimistic_avg_return
+
+
+def test_fold_result_has_model_metrics() -> None:
+    """BacktestFoldResult에 m1_pr_auc, m1_brier 필드가 있어야 한다."""
+    result = _run_pipeline_for_model_metrics()
+    for fold in result.folds:
+        assert hasattr(fold, "m1_pr_auc")
+        assert hasattr(fold, "m1_brier")
+        assert 0.0 <= fold.m1_pr_auc <= 1.0
+        assert 0.0 <= fold.m1_brier <= 1.0
+
+
+def test_backtest_bar_has_volume() -> None:
+    """BacktestBar에 volume 필드가 있어야 하며 기본값은 0.0이어야 한다."""
+    bar = BacktestBar(high=101.0, low=99.0, close=100.0, session_id="KRX_REG")
+    assert bar.volume == 0.0
+
+
+def _run_pipeline_for_model_metrics():
+    base_ts = datetime(2026, 3, 1, 0, 0, tzinfo=UTC)
+    closes = [100.0 + i * 0.5 for i in range(20)]
+    bars = [
+        BacktestBar(
+            high=c + 1.0, low=c - 1.0, close=c,
+            session_id="KRX_REG",
+            timestamp=base_ts + timedelta(minutes=i),
+            volume=1000.0 + i * 50,
+        )
+        for i, c in enumerate(closes)
+    ]
+    return run_v2_backtest_pipeline(
+        bars=bars,
+        entry_indices=list(range(2, 18)),
+        side=1,
+        triple_barrier_spec=TripleBarrierSpec(
+            take_profit_pct=0.02, stop_loss_pct=0.01,
+            max_holding_minutes=10,
+        ),
+        walk_forward=WalkForwardConfig(train_size=5, test_size=3, purge_size=1),
+        cost_model=BacktestCostModel(
+            commission_bps=3.0,
+            slippage_bps_by_session={"KRX_REG": 10.0},
+            failure_rate_by_session={"KRX_REG": 0.01},
+            partial_fill_rate_by_session={"KRX_REG": 0.05},
+            unfavorable_fill_required=True,
+        ),
+        required_sessions=["KRX_REG"],
+    )
