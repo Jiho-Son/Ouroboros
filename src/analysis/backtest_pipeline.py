@@ -12,12 +12,16 @@ from datetime import datetime
 from statistics import mean
 from typing import Literal, cast
 
+import numpy as np
+
 from src.analysis.backtest_cost_guard import BacktestCostModel, validate_backtest_cost_model
 from src.analysis.backtest_execution_model import (
     BacktestExecutionModel,
     ExecutionAssumptions,
     ExecutionRequest,
 )
+from src.analysis.peak_model_metrics import compute_brier_score, compute_pr_auc
+from src.analysis.peak_probability_model import FeatureBar, FeatureBuilder, PeakProbabilityModel
 from src.analysis.triple_barrier import TripleBarrierSpec, label_with_triple_barrier
 from src.analysis.walk_forward_split import WalkForwardFold, generate_walk_forward_splits
 
@@ -29,6 +33,7 @@ class BacktestBar:
     close: float
     session_id: str
     timestamp: datetime | None = None
+    volume: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -60,6 +65,8 @@ class BacktestFoldResult:
     execution_adjusted_trade_count: int
     execution_rejected_count: int
     execution_partial_count: int
+    m1_pr_auc: float = 0.0
+    m1_brier: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -81,6 +88,7 @@ def run_v2_backtest_pipeline(
     walk_forward: WalkForwardConfig,
     cost_model: BacktestCostModel,
     required_sessions: list[str] | None = None,
+    peak_model: PeakProbabilityModel | None = None,
 ) -> BacktestPipelineResult:
     """Run v2 integrated pipeline (cost guard -> labels -> walk-forward baselines)."""
     if not bars:
@@ -172,6 +180,43 @@ def run_v2_backtest_pipeline(
             execution_returns_bps.append(float(trade["return_bps"]))
             if trade["status"] == "PARTIAL":
                 execution_partial += 1
+        m1_pr_auc = 0.0
+        m1_brier = 1.0
+
+        if peak_model is not None and len(fold.train_indices) >= 10:
+            feature_bars = [
+                FeatureBar(
+                    high=bars[normalized_entries[i]].high,
+                    low=bars[normalized_entries[i]].low,
+                    close=bars[normalized_entries[i]].close,
+                    volume=bars[normalized_entries[i]].volume,
+                )
+                for i in range(len(normalized_entries))
+            ]
+            fb = FeatureBuilder()
+            try:
+                train_x = np.stack([
+                    fb.build(bars=feature_bars, entry_index=i)
+                    for i in fold.train_indices
+                ])
+                test_x = np.stack([
+                    fb.build(bars=feature_bars, entry_index=i)
+                    for i in fold.test_indices
+                ])
+            except ValueError:
+                pass  # insufficient bars — skip this fold
+            else:
+                train_y = np.array([ordered_labels[i] for i in fold.train_indices])
+                test_y = np.array([ordered_labels[i] for i in fold.test_indices])
+
+                peak_model.fit(x=train_x, y=train_y)
+                test_proba = peak_model.predict_proba(x=test_x)
+
+                y_binary = [1 if lbl == -1 else 0 for lbl in test_y]
+                if sum(y_binary) > 0:
+                    m1_pr_auc = compute_pr_auc(y_true=y_binary, y_prob=list(test_proba))
+                    m1_brier = compute_brier_score(y_true=y_binary, y_prob=list(test_proba))
+
         fold_results.append(
             BacktestFoldResult(
                 fold_index=fold_idx,
@@ -223,6 +268,8 @@ def run_v2_backtest_pipeline(
                 execution_adjusted_trade_count=len(execution_returns_bps),
                 execution_rejected_count=execution_rejected,
                 execution_partial_count=execution_partial,
+                m1_pr_auc=m1_pr_auc,
+                m1_brier=m1_brier,
             )
         )
 
