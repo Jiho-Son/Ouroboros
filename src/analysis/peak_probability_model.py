@@ -121,3 +121,60 @@ class FeatureBuilder:
             return 1.0
         return float(volumes[i] / mean_vol)
 
+
+@runtime_checkable
+class PeakProbabilityModel(Protocol):
+    """Interface for models that estimate downside probability at a price peak."""
+
+    def fit(self, *, X: np.ndarray, y: np.ndarray) -> None:
+        """Train on labeled feature matrix X with labels y."""
+        ...
+
+    def predict_proba(self, *, X: np.ndarray) -> np.ndarray:
+        """Return 1D array of downside probabilities, one per sample."""
+        ...
+
+
+class HistGBPeakModel:
+    """HistGradientBoostingClassifier-based peak probability model.
+
+    Uses sklearn's native NaN handling and balanced class weights.
+    max_depth=4 and min_samples_leaf=20 limit overfitting.
+
+    Applies per-fold StandardScaler fitted only on train data to prevent
+    global scaling leakage.
+    """
+
+    def __init__(
+        self,
+        max_depth: int = 4,
+        min_samples_leaf: int = 20,
+        max_iter: int = 200,
+        random_state: int = 42,
+    ) -> None:
+        from sklearn.ensemble import HistGradientBoostingClassifier
+        from sklearn.preprocessing import StandardScaler
+
+        self._clf = HistGradientBoostingClassifier(
+            max_depth=max_depth,
+            min_samples_leaf=min_samples_leaf,
+            max_iter=max_iter,
+            random_state=random_state,
+            class_weight="balanced",
+        )
+        self._scaler = StandardScaler()
+        self._fitted = False
+
+    def fit(self, *, X: np.ndarray, y: np.ndarray) -> None:
+        X_scaled = self._scaler.fit_transform(X)
+        self._clf.fit(X_scaled, y)
+        self._fitted = True
+
+    def predict_proba(self, *, X: np.ndarray) -> np.ndarray:
+        if not self._fitted:
+            raise RuntimeError("model must be fitted before predict_proba")
+        X_scaled = self._scaler.transform(X)
+        proba = self._clf.predict_proba(X_scaled)
+        classes = list(self._clf.classes_)
+        down_idx = classes.index(-1) if -1 in classes else 0
+        return proba[:, down_idx].astype(float)
