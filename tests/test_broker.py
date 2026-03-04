@@ -615,7 +615,40 @@ class TestSendOrderTickRounding:
         mock_order.__aexit__ = AsyncMock(return_value=False)
 
         with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
-            await broker.send_order("005930", "BUY", 1, price=50000, session_id="NXT_PRE")
+            with patch.object(
+                broker,
+                "_load_dual_listing_metrics",
+                new=AsyncMock(return_value=(False, None, None, None, None)),
+            ):
+                await broker.send_order("005930", "BUY", 1, price=50000, session_id="NXT_PRE")
+
+        order_call = mock_post.call_args_list[1]
+        body = order_call[1].get("json", {})
+        assert body["EXCG_ID_DVSN_CD"] == "NXT"
+
+    @pytest.mark.asyncio
+    async def test_send_order_prefers_nxt_when_dual_listing_spread_is_tighter(
+        self, broker: KISBroker
+    ) -> None:
+        mock_hash = AsyncMock()
+        mock_hash.status = 200
+        mock_hash.json = AsyncMock(return_value={"HASH": "h"})
+        mock_hash.__aenter__ = AsyncMock(return_value=mock_hash)
+        mock_hash.__aexit__ = AsyncMock(return_value=False)
+
+        mock_order = AsyncMock()
+        mock_order.status = 200
+        mock_order.json = AsyncMock(return_value={"rt_cd": "0"})
+        mock_order.__aenter__ = AsyncMock(return_value=mock_order)
+        mock_order.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
+            with patch.object(
+                broker,
+                "_load_dual_listing_metrics",
+                new=AsyncMock(return_value=(True, 0.004, 0.002, 100000.0, 90000.0)),
+            ):
+                await broker.send_order("005930", "BUY", 1, price=50000, session_id="KRX_REG")
 
         order_call = mock_post.call_args_list[1]
         body = order_call[1].get("json", {})

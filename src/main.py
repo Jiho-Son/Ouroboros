@@ -35,6 +35,7 @@ from src.core.criticality import CriticalityAssessor
 from src.core.kill_switch import KillSwitchOrchestrator
 from src.core.order_policy import (
     OrderPolicyRejected,
+    classify_session_id,
     get_session_info,
     validate_order_policy,
 )
@@ -224,23 +225,27 @@ def _compute_kr_dynamic_stop_loss_pct(
         key="KR_ATR_STOP_MULTIPLIER_K",
         default=2.0,
     )
-    min_pct = _resolve_market_setting(
+    min_pct = float(
+        _resolve_market_setting(
         market=market,
         settings=settings,
         key="KR_ATR_STOP_MIN_PCT",
         default=-2.0,
+        )
     )
-    max_pct = _resolve_market_setting(
+    max_pct = float(
+        _resolve_market_setting(
         market=market,
         settings=settings,
         key="KR_ATR_STOP_MAX_PCT",
         default=-7.0,
+        )
     )
     if max_pct > min_pct:
         min_pct, max_pct = max_pct, min_pct
 
     dynamic_stop_pct = -((k * atr_value) / entry_price) * 100.0
-    return max(max_pct, min(min_pct, dynamic_stop_pct))
+    return float(max(max_pct, min(min_pct, dynamic_stop_pct)))
 
 
 def _stoploss_cooldown_key(*, market: MarketInfo, stock_code: str) -> str:
@@ -1200,6 +1205,7 @@ async def process_blackout_recovery_orders(
                     order_type=intent.order_type,
                     quantity=intent.quantity,
                     price=intent.price,
+                    session_id=intent.session_id,
                 )
             else:
                 result = await overseas_broker.send_overseas_order(
@@ -2083,6 +2089,7 @@ async def trading_cycle(
                 order_type=decision.action,
                 quantity=quantity,
                 price=order_price,
+                session_id=runtime_session_id,
             )
         else:
             # For overseas orders, always use limit orders (지정가):
@@ -2417,6 +2424,7 @@ async def handle_domestic_pending_orders(
                             order_type="SELL",
                             quantity=psbl_qty,
                             price=new_price,
+                            session_id=classify_session_id(MARKETS["KR"]),
                         )
                         sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                         try:
@@ -3292,6 +3300,7 @@ async def run_daily_session(
                             order_type=decision.action,
                             quantity=quantity,
                             price=order_price,
+                            session_id=runtime_session_id,
                         )
                     else:
                         # KIS VTS only accepts limit orders; use 0.5% premium for BUY
