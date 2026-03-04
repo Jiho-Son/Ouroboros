@@ -137,3 +137,11 @@
 - next_ticket: #377
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: refresh 단계를 최대 3회(초기+재시도2), 실패 시 지수 백오프로 재시도하고 성공 시 즉시 중단, 소진 시 오류를 기록한 뒤 다음 단계를 계속 수행한다.
+
+### 2026-03-04 | session=codex-issue409-start
+- branch: feature/issue-409-kr-session-exchange-routing
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #409, #318, #325
+- next_ticket: #409
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: #409 코드수정/검증 후 프로그램 재시작 및 24h 런타임 모니터링 수행, 모니터 이상 징후는 별도 이슈 발행
