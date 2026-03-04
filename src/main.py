@@ -716,6 +716,31 @@ def _extract_avg_price_from_balance(
     return 0.0
 
 
+def _resolve_buy_suppression_position(
+    *,
+    db_conn: Any,
+    balance_data: dict[str, Any],
+    stock_code: str,
+    market: MarketInfo,
+) -> dict[str, float | int] | None:
+    """Return position info only when broker confirms current holdings.
+
+    DB trade logs can contain accepted-but-unfilled BUY entries. For duplicate-BUY
+    suppression we only trust broker holdings and use DB price as metadata.
+    """
+    broker_qty = _extract_held_qty_from_balance(
+        balance_data, stock_code, is_domestic=market.is_domestic
+    )
+    if broker_qty <= 0:
+        return None
+
+    existing_position = get_open_position(db_conn, stock_code, market.code)
+    entry_price = 0.0
+    if existing_position and existing_position.get("price") is not None:
+        entry_price = float(existing_position["price"])
+    return {"price": entry_price, "quantity": broker_qty}
+
+
 def _determine_order_quantity(
     *,
     action: str,
@@ -821,6 +846,11 @@ def _should_force_exit_for_overnight(
         default=True,
     )
     return not bool(overnight_enabled)
+
+
+def _resolve_domestic_quote_market_div_code(session_id: str) -> str:
+    """Resolve domestic quote market code from current KR session."""
+    return "NX" if session_id in {"NXT_PRE", "NXT_AFTER"} else "J"
 
 
 def _build_runtime_position_key(
@@ -1483,12 +1513,17 @@ async def trading_cycle(
     """Execute one trading cycle for a single stock."""
     cycle_start_time = asyncio.get_event_loop().time()
     _session_risk_overrides(market=market, settings=settings)
+    runtime_session_id = get_session_info(market).session_id
 
     # 1. Fetch market data
     balance_info: dict[str, Any] = {}
     price_output: dict[str, Any] = {}  # Populated for overseas markets; used for fallback metrics
     if market.is_domestic:
-        current_price, price_change_pct, foreigner_net = await broker.get_current_price(stock_code)
+        quote_market_div_code = _resolve_domestic_quote_market_div_code(runtime_session_id)
+        current_price, price_change_pct, foreigner_net = await broker.get_current_price(
+            stock_code,
+            market_div_code=quote_market_div_code,
+        )
         balance_data = await broker.get_balance()
 
         output2 = balance_data.get("output2", [{}])
@@ -1756,15 +1791,12 @@ async def trading_cycle(
 
     # BUY 결정 전 기존 포지션 체크 (중복 매수 방지)
     if decision.action == "BUY":
-        existing_position = get_open_position(db_conn, stock_code, market.code)
-        if not existing_position:
-            # SELL 지정가 접수 후 미체결 시 DB는 종료로 기록되나 브로커는 여전히 보유 중.
-            # 국내/해외 모두 라이브 브로커 잔고를 authoritative source로 사용.
-            broker_qty = _extract_held_qty_from_balance(
-                balance_data, stock_code, is_domestic=market.is_domestic
-            )
-            if broker_qty > 0:
-                existing_position = {"price": 0.0, "quantity": broker_qty}
+        existing_position = _resolve_buy_suppression_position(
+            db_conn=db_conn,
+            balance_data=balance_data,
+            stock_code=stock_code,
+            market=market,
+        )
         if existing_position:
             decision = TradeDecision(
                 action="HOLD",
@@ -1910,7 +1942,6 @@ async def trading_cycle(
         "pnl_pct": pnl_pct,
     }
 
-    runtime_session_id = get_session_info(market).session_id
     decision_id = decision_logger.log_decision(
         stock_code=stock_code,
         market=market.code,
@@ -2359,7 +2390,7 @@ async def handle_domestic_pending_orders(
     for order in orders:
         try:
             stock_code = order.get("pdno", "")
-            orgn_odno = order.get("orgn_odno", "")
+            orgn_odno = order.get("orgn_odno", "") or order.get("odno", "")
             krx_fwdg_ord_orgno = order.get("ord_gno_brno", "")
             sll_buy = order.get("sll_buy_dvsn_cd", "")  # "01"=SELL, "02"=BUY
             psbl_qty = int(order.get("psbl_qty", "0") or "0")
@@ -2690,6 +2721,8 @@ async def run_daily_session(
     # Process each open market
     for market in open_markets:
         _session_risk_overrides(market=market, settings=settings)
+        runtime_session_id = get_session_info(market).session_id
+        domestic_quote_market_div_code = _resolve_domestic_quote_market_div_code(runtime_session_id)
         await process_blackout_recovery_orders(
             broker=broker,
             overseas_broker=overseas_broker,
@@ -2805,6 +2838,7 @@ async def run_daily_session(
                     current_price, price_change_pct, foreigner_net = await _retry_connection(
                         broker.get_current_price,
                         stock_code,
+                        market_div_code=domestic_quote_market_div_code,
                         label=stock_code,
                     )
                 else:
@@ -2992,15 +3026,12 @@ async def run_daily_session(
 
             # BUY 중복 방지: 브로커 잔고 기반 (미체결 SELL 리밋 주문 보호)
             if decision.action == "BUY":
-                daily_existing = get_open_position(db_conn, stock_code, market.code)
-                if not daily_existing:
-                    # SELL 지정가 접수 후 미체결 시 DB는 종료로 기록되나 브로커는 여전히 보유 중.
-                    # 국내/해외 모두 라이브 브로커 잔고를 authoritative source로 사용.
-                    broker_qty = _extract_held_qty_from_balance(
-                        balance_data, stock_code, is_domestic=market.is_domestic
-                    )
-                    if broker_qty > 0:
-                        daily_existing = {"price": 0.0, "quantity": broker_qty}
+                daily_existing = _resolve_buy_suppression_position(
+                    db_conn=db_conn,
+                    balance_data=balance_data,
+                    stock_code=stock_code,
+                    market=market,
+                )
                 if daily_existing:
                     decision = TradeDecision(
                         action="HOLD",

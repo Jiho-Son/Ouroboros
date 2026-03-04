@@ -5529,6 +5529,166 @@ class TestDomesticBuyDoublePreventionTradingCycle:
         # BUY must NOT have been executed because broker still holds the stock
         broker.send_order.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_db_buy_stale_without_broker_holding_does_not_block_new_buy(
+        self,
+    ) -> None:
+        """Stale DB BUY alone must not suppress a new BUY when broker shows qty=0."""
+        db_conn = init_db(":memory:")
+        log_trade(
+            conn=db_conn,
+            stock_code="005930",
+            action="BUY",
+            confidence=80,
+            rationale="stale accepted buy",
+            quantity=3,
+            price=70000.0,
+            market="KR",
+            exchange_code="KRX",
+            session_id="NXT_PRE",
+        )
+
+        broker = MagicMock()
+        broker.get_current_price = AsyncMock(return_value=(70000.0, 1.0, 0.0))
+        broker.get_balance = AsyncMock(
+            return_value={
+                "output1": [],  # authoritative broker holdings: no shares
+                "output2": [
+                    {
+                        "tot_evlu_amt": "120000000",
+                        "dnca_tot_amt": "100000000",
+                        "pchs_amt_smtl_amt": "20000000",
+                    }
+                ],
+            }
+        )
+        broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "주문접수"})
+
+        market = MagicMock()
+        market.name = "KR"
+        market.code = "KR"
+        market.exchange_code = "KRX"
+        market.is_domestic = True
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_buy_match("005930"))
+
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="d1")
+
+        settings = Settings(
+            KIS_APP_KEY="k",
+            KIS_APP_SECRET="s",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="g",
+            MODE="paper",
+        )
+
+        await trading_cycle(
+            broker=broker,
+            overseas_broker=MagicMock(),
+            scenario_engine=engine,
+            playbook=_make_playbook(market="KR"),
+            risk=MagicMock(),
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(
+                get_latest_timeframe=MagicMock(return_value=None),
+                set_context=MagicMock(),
+            ),
+            criticality_assessor=MagicMock(
+                assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                get_timeout=MagicMock(return_value=5.0),
+            ),
+            telegram=telegram,
+            settings=settings,
+            market=market,
+            stock_code="005930",
+            scan_candidates={"KR": {}},
+        )
+
+        # New BUY should proceed because broker confirms zero holdings.
+        broker.send_order.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_nxt_session_uses_nx_quote_for_domestic_price(self) -> None:
+        """NXT session must fetch domestic current price with market_div_code='NX'."""
+        db_conn = init_db(":memory:")
+
+        broker = MagicMock()
+        broker.get_current_price = AsyncMock(return_value=(65500.0, 0.0, 0.0))
+        broker.get_balance = AsyncMock(
+            return_value={
+                "output1": [],
+                "output2": [
+                    {
+                        "tot_evlu_amt": "120000000",
+                        "dnca_tot_amt": "100000000",
+                        "pchs_amt_smtl_amt": "20000000",
+                    }
+                ],
+            }
+        )
+        broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "주문접수"})
+
+        market = MagicMock()
+        market.name = "KR"
+        market.code = "KR"
+        market.exchange_code = "KRX"
+        market.is_domestic = True
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_buy_match("006800"))
+
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="d1")
+
+        settings = Settings(
+            KIS_APP_KEY="k",
+            KIS_APP_SECRET="s",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="g",
+            MODE="paper",
+        )
+
+        with patch("src.main.get_session_info", return_value=MagicMock(session_id="NXT_PRE")):
+            await trading_cycle(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(market="KR"),
+                risk=MagicMock(),
+                db_conn=db_conn,
+                decision_logger=decision_logger,
+                context_store=MagicMock(
+                    get_latest_timeframe=MagicMock(return_value=None),
+                    set_context=MagicMock(),
+                ),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                settings=settings,
+                market=market,
+                stock_code="006800",
+                scan_candidates={"KR": {}},
+            )
+
+        broker.get_current_price.assert_called_once_with("006800", market_div_code="NX")
+
 
 class TestHandleOverseasPendingOrders:
     """Tests for handle_overseas_pending_orders function."""
@@ -5755,6 +5915,40 @@ class TestHandleDomesticPendingOrders:
         assert call_kwargs["action"] == "BUY"
         assert call_kwargs["outcome"] == "cancelled"
         assert call_kwargs["market"] == "KR"
+
+    @pytest.mark.asyncio
+    async def test_buy_pending_uses_odno_when_orgn_odno_empty(self) -> None:
+        """KIS live pending can have empty orgn_odno; fallback to odno for cancel."""
+        settings = self._make_settings()
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "006800",
+            "odno": "0001411200",
+            "orgn_odno": "",
+            "ord_gno_brno": "91257",
+            "sll_buy_dvsn_cd": "02",  # BUY
+            "psbl_qty": "15",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+
+        sell_resubmit_counts: dict[str, int] = {}
+        buy_cooldown: dict[str, float] = {}
+
+        await handle_domestic_pending_orders(
+            broker, telegram, settings, sell_resubmit_counts, buy_cooldown
+        )
+
+        broker.cancel_domestic_order.assert_called_once_with(
+            stock_code="006800",
+            orgn_odno="0001411200",
+            krx_fwdg_ord_orgno="91257",
+            qty=15,
+        )
+        assert "KR:006800" in buy_cooldown
+        telegram.notify_unfilled_order.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_sell_pending_is_cancelled_then_resubmitted(self) -> None:
