@@ -20,7 +20,6 @@ class FeatureBuilder:
     """Build feature vectors from bar sequences with strict look-ahead prevention.
 
     All computation is restricted to bars[:entry_index+1].
-    Rolling z-score normalization prevents global scaling leakage.
     """
 
     MINIMUM_BARS = 15  # window + return lookback
@@ -34,6 +33,9 @@ class FeatureBuilder:
         """Return 1D feature vector for entry at entry_index.
 
         Uses only bars[:entry_index+1] — future data is inaccessible.
+
+        Note: Returns raw (unscaled) features. Callers should apply per-fold StandardScaler
+        fitted only on train data to prevent global scaling leakage.
         """
         # Seal: only past + current bar
         safe = bars[: entry_index + 1]
@@ -73,10 +75,6 @@ class FeatureBuilder:
         vol_ratio = self._volume_ratio(volumes, w)
 
         raw = np.array([return_1b, return_3b, return_5b, atr, hl_spread, rsi, vol_ratio], dtype=float)
-
-        # --- Rolling z-score normalization (entry_index 이전 window만 사용) ---
-        raw = self._rolling_zscore(raw)
-
         return raw
 
     # ------------------------------------------------------------------
@@ -123,14 +121,3 @@ class FeatureBuilder:
             return 1.0
         return float(volumes[i] / mean_vol)
 
-    def _rolling_zscore(self, raw: np.ndarray) -> np.ndarray:
-        """Normalize each scalar feature independently using its own rolling stats.
-
-        For vector features (each scalar here), z = (x - mean) / (std + eps).
-        Since we have a single-bar snapshot, we normalize against the feature
-        distribution computed from the current window — consistent with online inference.
-        This prevents global scaling leakage.
-        """
-        mean = np.mean(raw)
-        std = np.std(raw)
-        return (raw - mean) / (std + 1e-8)
