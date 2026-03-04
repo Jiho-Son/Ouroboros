@@ -104,6 +104,33 @@ class TestSmartVolatilityScanner:
         assert candidates[0].signal == "oversold"
 
     @pytest.mark.asyncio
+    async def test_scan_domestic_passes_session_id_to_rankings(
+        self, scanner: SmartVolatilityScanner, mock_broker: MagicMock
+    ) -> None:
+        fluctuation_rows = [
+            {
+                "stock_code": "005930",
+                "name": "Samsung",
+                "price": 70000,
+                "volume": 5000000,
+                "change_rate": 1.0,
+                "volume_increase_rate": 120,
+            },
+        ]
+        mock_broker.fetch_market_rankings.side_effect = [fluctuation_rows, fluctuation_rows]
+        mock_broker.get_daily_prices.return_value = [
+            {"open": 1, "high": 71000, "low": 69000, "close": 70000, "volume": 1000000},
+            {"open": 1, "high": 70000, "low": 68000, "close": 69000, "volume": 900000},
+        ]
+
+        await scanner.scan(domestic_session_id="NXT_PRE")
+
+        first_call = mock_broker.fetch_market_rankings.call_args_list[0]
+        second_call = mock_broker.fetch_market_rankings.call_args_list[1]
+        assert first_call.kwargs["session_id"] == "NXT_PRE"
+        assert second_call.kwargs["session_id"] == "NXT_PRE"
+
+    @pytest.mark.asyncio
     async def test_scan_domestic_finds_momentum_candidate(
         self, scanner: SmartVolatilityScanner, mock_broker: MagicMock
     ) -> None:

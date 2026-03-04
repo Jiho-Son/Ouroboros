@@ -12,7 +12,10 @@ from typing import Any, cast
 
 import aiohttp
 
+from src.broker.kr_exchange_router import KRExchangeRouter
 from src.config import Settings
+from src.core.order_policy import classify_session_id
+from src.markets.schedule import MARKETS
 
 # KIS virtual trading server has a known SSL certificate hostname mismatch.
 _KIS_VTS_HOST = "openapivts.koreainvestment.com"
@@ -92,6 +95,7 @@ class KISBroker:
         self._last_refresh_attempt: float = 0.0
         self._refresh_cooldown: float = 60.0  # Seconds (matches KIS 1/minute limit)
         self._rate_limiter = LeakyBucket(settings.RATE_LIMIT_RPS)
+        self._kr_router = KRExchangeRouter()
 
     def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -187,9 +191,12 @@ class KISBroker:
             if resp.status != 200:
                 text = await resp.text()
                 raise ConnectionError(f"Hash key request failed ({resp.status}): {text}")
-            data = await resp.json()
+            data = cast(dict[str, Any], await resp.json())
 
-        return data["HASH"]
+        hash_value = data.get("HASH")
+        if not isinstance(hash_value, str):
+            raise ConnectionError("Hash key response missing HASH")
+        return hash_value
 
     # ------------------------------------------------------------------
     # Common Headers
@@ -226,7 +233,7 @@ class KISBroker:
                 if resp.status != 200:
                     text = await resp.text()
                     raise ConnectionError(f"get_orderbook failed ({resp.status}): {text}")
-                return await resp.json()
+                return cast(dict[str, Any], await resp.json())
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching orderbook: {exc}") from exc
 
@@ -302,7 +309,7 @@ class KISBroker:
                 if resp.status != 200:
                     text = await resp.text()
                     raise ConnectionError(f"get_balance failed ({resp.status}): {text}")
-                return await resp.json()
+                return cast(dict[str, Any], await resp.json())
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching balance: {exc}") from exc
 
@@ -312,6 +319,7 @@ class KISBroker:
         order_type: str,  # "BUY" or "SELL"
         quantity: int,
         price: int = 0,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """Submit a buy or sell order.
 
@@ -341,10 +349,17 @@ class KISBroker:
             ord_dvsn = "01"  # 시장가
             ord_price = 0
 
+        resolved_session = session_id or classify_session_id(MARKETS["KR"])
+        resolution = self._kr_router.resolve_for_order(
+            stock_code=stock_code,
+            session_id=resolved_session,
+        )
+
         body = {
             "CANO": self._account_no,
             "ACNT_PRDT_CD": self._product_cd,
             "PDNO": stock_code,
+            "EXCG_ID_DVSN_CD": resolution.exchange_code,
             "ORD_DVSN": ord_dvsn,
             "ORD_QTY": str(quantity),
             "ORD_UNPR": str(ord_price),
@@ -361,12 +376,15 @@ class KISBroker:
                 if resp.status != 200:
                     text = await resp.text()
                     raise ConnectionError(f"send_order failed ({resp.status}): {text}")
-                data = await resp.json()
+                data = cast(dict[str, Any], await resp.json())
                 logger.info(
                     "Order submitted",
                     extra={
                         "stock_code": stock_code,
                         "action": order_type,
+                        "session_id": resolved_session,
+                        "exchange": resolution.exchange_code,
+                        "routing_reason": resolution.reason,
                     },
                 )
                 return data
@@ -377,6 +395,7 @@ class KISBroker:
         self,
         ranking_type: str = "volume",
         limit: int = 30,
+        session_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Fetch market rankings from KIS API.
 
@@ -394,12 +413,15 @@ class KISBroker:
         await self._rate_limiter.acquire()
         session = self._get_session()
 
+        resolved_session = session_id or classify_session_id(MARKETS["KR"])
+        ranking_market_code = self._kr_router.resolve_for_ranking(resolved_session)
+
         if ranking_type == "volume":
             # 거래량순위: FHPST01710000 / /quotations/volume-rank
             tr_id = "FHPST01710000"
             url = f"{self._base_url}/uapi/domestic-stock/v1/quotations/volume-rank"
             params: dict[str, str] = {
-                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_COND_MRKT_DIV_CODE": ranking_market_code,
                 "FID_COND_SCR_DIV_CODE": "20171",
                 "FID_INPUT_ISCD": "0000",
                 "FID_DIV_CLS_CODE": "0",
@@ -416,7 +438,7 @@ class KISBroker:
             tr_id = "FHPST01700000"
             url = f"{self._base_url}/uapi/domestic-stock/v1/ranking/fluctuation"
             params = {
-                "fid_cond_mrkt_div_code": "J",
+                "fid_cond_mrkt_div_code": ranking_market_code,
                 "fid_cond_scr_div_code": "20170",
                 "fid_input_iscd": "0000",
                 "fid_rank_sort_cls_code": "0",

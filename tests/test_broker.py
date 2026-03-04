@@ -400,6 +400,15 @@ class TestFetchMarketRankings:
         assert result[0]["stock_code"] == "015260"
         assert result[0]["change_rate"] == 29.74
 
+    @pytest.mark.asyncio
+    async def test_volume_uses_nx_market_code_in_nxt_session(self, broker: KISBroker) -> None:
+        mock_resp = _make_ranking_mock([])
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp) as mock_get:
+            await broker.fetch_market_rankings(ranking_type="volume", session_id="NXT_PRE")
+
+        params = mock_get.call_args[1].get("params", {})
+        assert params.get("FID_COND_MRKT_DIV_CODE") == "NX"
+
 
 # ---------------------------------------------------------------------------
 # KRX tick unit / round-down helpers (issue #157)
@@ -590,6 +599,27 @@ class TestSendOrderTickRounding:
         order_call = mock_post.call_args_list[1]
         body = order_call[1].get("json", {})
         assert body["ORD_DVSN"] == "01"
+
+    @pytest.mark.asyncio
+    async def test_send_order_sets_exchange_field_from_session(self, broker: KISBroker) -> None:
+        mock_hash = AsyncMock()
+        mock_hash.status = 200
+        mock_hash.json = AsyncMock(return_value={"HASH": "h"})
+        mock_hash.__aenter__ = AsyncMock(return_value=mock_hash)
+        mock_hash.__aexit__ = AsyncMock(return_value=False)
+
+        mock_order = AsyncMock()
+        mock_order.status = 200
+        mock_order.json = AsyncMock(return_value={"rt_cd": "0"})
+        mock_order.__aenter__ = AsyncMock(return_value=mock_order)
+        mock_order.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
+            await broker.send_order("005930", "BUY", 1, price=50000, session_id="NXT_PRE")
+
+        order_call = mock_post.call_args_list[1]
+        body = order_call[1].get("json", {})
+        assert body["EXCG_ID_DVSN_CD"] == "NXT"
 
 
 # ---------------------------------------------------------------------------
