@@ -145,3 +145,11 @@
 - next_ticket: #409
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: #409 코드수정/검증 후 프로그램 재시작 및 24h 런타임 모니터링 수행, 모니터 이상 징후는 별도 이슈 발행
+
+### 2026-03-04 | session=claude-issues412-413-414
+- branch: feature/issue-412-413-414-runtime-and-governance
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #412, #413, #414
+- next_ticket: #412, #413, #414
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: #413 pipefail fix (find_live_pids), #412 startup crash 로깅 강화, #414 PR 거버넌스 preflight 추가

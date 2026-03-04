@@ -30,6 +30,27 @@ Gitea 이슈/PR/코멘트 작업 전에 모든 에이전트는 아래를 먼저 
 - `tea` 실패 시 동일 명령 재시도 전에 원인/수정사항을 PR 코멘트에 남긴다.
 - 필요한 경우에만 Gitea API(`localhost:3000`)를 fallback으로 사용한다.
 
+## PR Governance Preflight (Mandatory before `tea pr create`)
+
+`tea pulls create` 실행 전에 아래 명령으로 PR 본문을 검증해야 한다.
+
+```bash
+# PR 본문을 파일로 저장한 뒤 검증
+python3 scripts/validate_pr_body.py --body-file /tmp/pr_body.md
+```
+
+검증 항목:
+- `\n` 이스케이프 없음
+- 마크다운 섹션 헤더(`## ...`) 존재
+- 리스트 아이템 존재
+- **REQ-ID** (`REQ-XXX-NNN`) 포함 — 거버넌스 traceability 필수
+- **TASK-ID** (`TASK-XXX-NNN`) 포함 — 거버넌스 traceability 필수
+- **TEST-ID** (`TEST-XXX-NNN`) 포함 — 거버넌스 traceability 필수
+
+강제 규칙:
+- 검증 실패 시 PR 본문에 해당 ID를 보강하고 재검증 통과 후에만 PR 생성
+- REQ/TASK/TEST ID는 `docs/ouroboros/` 문서의 실제 ID 사용 (placeholder `REQ-...` 금지)
+
 ## Session Handover Gate (Mandatory)
 
 새 세션에서 구현/검증을 시작하기 전에 아래를 선행해야 한다.

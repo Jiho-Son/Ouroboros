@@ -36,7 +36,10 @@ check_signal() {
 
 find_live_pids() {
   # Detect live-mode process even when run_overnight pid files are absent.
-  pgrep -af "[s]rc.main --mode=live" 2>/dev/null | awk '{print $1}' | tr '\n' ',' | sed 's/,$//'
+  # Use local variable to avoid pipefail triggering on pgrep no-match (exit 1).
+  local raw
+  raw=$(pgrep -af "[s]rc.main --mode=live" 2>/dev/null) || true
+  printf '%s\n' "$raw" | awk '{print $1}' | tr '\n' ',' | sed 's/,$//'
 }
 
 check_forbidden() {

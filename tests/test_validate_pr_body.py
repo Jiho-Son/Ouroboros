@@ -37,6 +37,7 @@ def test_validate_pr_body_text_allows_escaped_newline_in_code_blocks() -> None:
         [
             "## Summary",
             "- example uses `\\n` for explanation",
+            "- REQ-OPS-001 / TASK-OPS-001 / TEST-OPS-001",
             "```bash",
             "printf 'line1\\nline2\\n'",
             "```",
@@ -63,7 +64,7 @@ def test_validate_pr_body_text_passes_with_valid_markdown() -> None:
     text = "\n".join(
         [
             "## Summary",
-            "- item",
+            "- REQ-OPS-001 / TASK-OPS-001 / TEST-OPS-001",
             "",
             "## Validation",
             "```bash",
@@ -72,6 +73,54 @@ def test_validate_pr_body_text_passes_with_valid_markdown() -> None:
         ]
     )
     assert module.validate_pr_body_text(text) == []
+
+
+def test_validate_pr_body_text_detects_missing_req_id() -> None:
+    module = _load_module()
+    text = "## Summary\n- TASK-OPS-001 / TEST-OPS-001 item\n"
+    errors = module.validate_pr_body_text(text)
+    assert any("REQ-ID" in err for err in errors)
+
+
+def test_validate_pr_body_text_detects_missing_task_id() -> None:
+    module = _load_module()
+    text = "## Summary\n- REQ-OPS-001 / TEST-OPS-001 item\n"
+    errors = module.validate_pr_body_text(text)
+    assert any("TASK-ID" in err for err in errors)
+
+
+def test_validate_pr_body_text_detects_missing_test_id() -> None:
+    module = _load_module()
+    text = "## Summary\n- REQ-OPS-001 / TASK-OPS-001 item\n"
+    errors = module.validate_pr_body_text(text)
+    assert any("TEST-ID" in err for err in errors)
+
+
+def test_validate_pr_body_text_skips_governance_when_disabled() -> None:
+    module = _load_module()
+    text = "## Summary\n- item without any IDs\n"
+    errors = module.validate_pr_body_text(text, check_governance=False)
+    assert not any("REQ-ID" in err or "TASK-ID" in err or "TEST-ID" in err for err in errors)
+
+
+def test_validate_pr_body_text_rejects_governance_ids_in_code_block_only() -> None:
+    """Regression for review comment: IDs inside code fences must not count."""
+    module = _load_module()
+    text = "\n".join(
+        [
+            "## Summary",
+            "- no governance IDs in narrative text",
+            "```text",
+            "REQ-FAKE-999",
+            "TASK-FAKE-999",
+            "TEST-FAKE-999",
+            "```",
+        ]
+    )
+    errors = module.validate_pr_body_text(text)
+    assert any("REQ-ID" in err for err in errors)
+    assert any("TASK-ID" in err for err in errors)
+    assert any("TEST-ID" in err for err in errors)
 
 
 def test_fetch_pr_body_reads_body_from_tea_api(monkeypatch) -> None:
