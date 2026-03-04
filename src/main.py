@@ -723,22 +723,36 @@ def _resolve_buy_suppression_position(
     stock_code: str,
     market: MarketInfo,
 ) -> dict[str, float | int] | None:
-    """Return position info only when broker confirms current holdings.
+    """Resolve duplicate-BUY suppression position with market-specific source priority.
 
-    DB trade logs can contain accepted-but-unfilled BUY entries. For duplicate-BUY
-    suppression we only trust broker holdings and use DB price as metadata.
+    Domestic: trust live broker balance first because DB may contain stale accepted BUY
+    records (order accepted but not filled).
+    Overseas: preserve existing behavior and trust DB open-position state first, then
+    fallback to broker holdings if available.
     """
     broker_qty = _extract_held_qty_from_balance(
         balance_data, stock_code, is_domestic=market.is_domestic
     )
-    if broker_qty <= 0:
-        return None
-
     existing_position = get_open_position(db_conn, stock_code, market.code)
-    entry_price = 0.0
-    if existing_position and existing_position.get("price") is not None:
-        entry_price = float(existing_position["price"])
-    return {"price": entry_price, "quantity": broker_qty}
+
+    # Domestic duplicate-BUY suppression is broker-authoritative.
+    if market.is_domestic:
+        if broker_qty <= 0:
+            return None
+        entry_price = 0.0
+        if existing_position and existing_position.get("price") is not None:
+            entry_price = float(existing_position["price"])
+        return {"price": entry_price, "quantity": broker_qty}
+
+    # Overseas preserves DB-first suppression semantics.
+    if existing_position:
+        return {
+            "price": float(existing_position.get("price") or 0.0),
+            "quantity": int(existing_position.get("quantity") or 0),
+        }
+    if broker_qty > 0:
+        return {"price": 0.0, "quantity": broker_qty}
+    return None
 
 
 def _determine_order_quantity(
