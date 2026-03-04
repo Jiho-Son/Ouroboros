@@ -103,6 +103,26 @@ def test_validate_pr_body_text_skips_governance_when_disabled() -> None:
     assert not any("REQ-ID" in err or "TASK-ID" in err or "TEST-ID" in err for err in errors)
 
 
+def test_validate_pr_body_text_rejects_governance_ids_in_code_block_only() -> None:
+    """Regression for review comment: IDs inside code fences must not count."""
+    module = _load_module()
+    text = "\n".join(
+        [
+            "## Summary",
+            "- no governance IDs in narrative text",
+            "```text",
+            "REQ-FAKE-999",
+            "TASK-FAKE-999",
+            "TEST-FAKE-999",
+            "```",
+        ]
+    )
+    errors = module.validate_pr_body_text(text)
+    assert any("REQ-ID" in err for err in errors)
+    assert any("TASK-ID" in err for err in errors)
+    assert any("TEST-ID" in err for err in errors)
+
+
 def test_fetch_pr_body_reads_body_from_tea_api(monkeypatch) -> None:
     module = _load_module()
 

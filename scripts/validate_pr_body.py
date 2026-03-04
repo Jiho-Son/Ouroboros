@@ -50,11 +50,13 @@ def validate_pr_body_text(text: str, *, check_governance: bool = True) -> list[s
     if not LIST_ITEM_PATTERN.search(text):
         errors.append("body is missing markdown list items")
     if check_governance:
-        if not REQ_ID_PATTERN.search(text):
+        # Check governance IDs against code-stripped text so IDs hidden in code
+        # blocks or inline code are not counted (prevents spoof via code fences).
+        if not REQ_ID_PATTERN.search(searchable):
             errors.append("body is missing REQ-ID traceability (e.g. REQ-OPS-001)")
-        if not TASK_ID_PATTERN.search(text):
+        if not TASK_ID_PATTERN.search(searchable):
             errors.append("body is missing TASK-ID traceability (e.g. TASK-OPS-001)")
-        if not TEST_ID_PATTERN.search(text):
+        if not TEST_ID_PATTERN.search(searchable):
             errors.append("body is missing TEST-ID traceability (e.g. TEST-OPS-001)")
     return errors
 
