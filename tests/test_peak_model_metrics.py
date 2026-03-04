@@ -28,3 +28,8 @@ def test_perfect_brier_score() -> None:
 def test_empty_raises() -> None:
     with pytest.raises(ValueError, match="empty"):
         compute_pr_auc(y_true=[], y_prob=[])
+
+
+def test_empty_brier_raises() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        compute_brier_score(y_true=[], y_prob=[])
