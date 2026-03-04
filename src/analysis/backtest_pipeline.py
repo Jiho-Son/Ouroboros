@@ -203,6 +203,9 @@ def run_v2_backtest_pipeline(
                     fb.build(bars=feature_bars, entry_index=i)
                     for i in fold.test_indices
                 ])
+            except ValueError:
+                pass  # insufficient bars — skip this fold
+            else:
                 train_y = np.array([ordered_labels[i] for i in fold.train_indices])
                 test_y = np.array([ordered_labels[i] for i in fold.test_indices])
 
@@ -213,8 +216,6 @@ def run_v2_backtest_pipeline(
                 if sum(y_binary) > 0:
                     m1_pr_auc = compute_pr_auc(y_true=y_binary, y_prob=list(test_proba))
                     m1_brier = compute_brier_score(y_true=y_binary, y_prob=list(test_proba))
-            except ValueError:
-                pass
 
         fold_results.append(
             BacktestFoldResult(
