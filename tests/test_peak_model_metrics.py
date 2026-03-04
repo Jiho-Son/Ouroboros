@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from src.analysis.peak_model_metrics import compute_pr_auc, compute_brier_score
+from src.analysis.peak_model_metrics import compute_brier_score, compute_pr_auc
 
 
 def test_perfect_pr_auc() -> None:

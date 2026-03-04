@@ -239,6 +239,7 @@ def test_backtest_bar_has_volume() -> None:
 def test_fold_result_with_peak_model_produces_nondefault_metrics() -> None:
     """peak_model을 전달하면 m1_pr_auc와 m1_brier가 실제 계산된 값이어야 한다."""
     from datetime import UTC, datetime, timedelta
+
     from src.analysis.peak_probability_model import HistGBPeakModel
 
     base_ts = datetime(2026, 3, 1, 0, 0, tzinfo=UTC)
