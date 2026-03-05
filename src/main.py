@@ -4010,6 +4010,7 @@ async def run(settings: Settings) -> None:
 
     # Track playbooks per market (in-memory cache)
     playbooks: dict[str, DayPlaybook] = {}
+    mid_refreshed: set[str] = set()  # 당일 mid-session refresh가 완료된 마켓
 
     # Initialize Telegram notifications
     telegram = TelegramClient(
@@ -4539,6 +4540,7 @@ async def run(settings: Settings) -> None:
                             _market_states.pop(market_code, None)
                             # Clear playbook for closed market (new one generated next open)
                             playbooks.pop(market_code, None)
+                            mid_refreshed.discard(market_code)
 
                     # No markets open — wait until next market opens
                     try:
@@ -4606,6 +4608,22 @@ async def run(settings: Settings) -> None:
                         except Exception as exc:
                             logger.warning("Market open notification failed: %s", exc)
                         _market_states[market.code] = session_info.session_id
+
+                    # Mid-session playbook refresh (12:00 현지 시각)
+                    now_utc = datetime.now(UTC)
+                    if _should_mid_session_refresh(
+                        market_code=market.code,
+                        session_id=session_info.session_id,
+                        now=now_utc,
+                        mid_refreshed=mid_refreshed,
+                    ):
+                        logger.info(
+                            "Mid-session refresh triggered for %s (session=%s)",
+                            market.code,
+                            session_info.session_id,
+                        )
+                        playbooks.pop(market.code, None)
+                        mid_refreshed.add(market.code)
 
                     # Check and handle domestic pending (unfilled) limit orders.
                     if market.is_domestic:
@@ -4689,7 +4707,7 @@ async def run(settings: Settings) -> None:
                                         session_id=session_info.session_id,
                                     )
                                     stored_pb = (
-                                        playbook_store.load(market_today, market.code)
+                                        playbook_store.load_latest(market_today, market.code)
                                         if reuse_stored_pb
                                         else None
                                     )
@@ -4716,7 +4734,12 @@ async def run(settings: Settings) -> None:
                                                 candidates=candidates,
                                                 today=market_today,
                                             )
-                                            playbook_store.save(pb)
+                                            save_slot = (
+                                                "mid"
+                                                if market.code in mid_refreshed
+                                                else "open"
+                                            )
+                                            playbook_store.save(pb, slot=save_slot)
                                             playbooks[market.code] = pb
                                             try:
                                                 await telegram.notify_playbook_generated(
