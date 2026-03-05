@@ -83,6 +83,37 @@ class TestSchema:
         ).fetchone()
         assert row is not None
 
+    def test_playbooks_table_has_slot_column(self, conn) -> None:
+        """playbooks 테이블에 slot 컬럼이 존재해야 한다."""
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='playbooks'"
+        ).fetchone()
+        assert row is not None
+        assert "slot" in row[0]
+
+    def test_playbooks_unique_by_date_market_slot(self, conn, store) -> None:
+        """같은 (date, market, slot)은 upsert되어야 한다."""
+        pb = _make_playbook()
+        store.save(pb, slot="open")
+        store.save(pb, slot="open")  # 두 번 저장해도 1건
+        rows = conn.execute(
+            "SELECT COUNT(*) FROM playbooks WHERE date=? AND market=? AND slot=?",
+            (pb.date.isoformat(), pb.market, "open"),
+        ).fetchone()
+        assert rows[0] == 1
+
+    def test_playbooks_open_and_mid_coexist(self, conn, store) -> None:
+        """같은 date/market이라도 open과 mid는 별개 행으로 저장된다."""
+        pb = _make_playbook()
+        store.save(pb, slot="open")
+        store.save(pb, slot="mid")
+        rows = conn.execute(
+            "SELECT slot FROM playbooks WHERE date=? AND market=? ORDER BY slot",
+            (pb.date.isoformat(), pb.market),
+        ).fetchall()
+        slots = [r[0] for r in rows]
+        assert slots == ["mid", "open"]
+
     def test_unique_constraint(self, store: PlaybookStore) -> None:
         pb = _make_playbook()
         store.save(pb)

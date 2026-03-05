@@ -161,13 +161,14 @@ def init_db(db_path: str) -> sqlite3.Connection:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL,
             market TEXT NOT NULL,
+            slot TEXT NOT NULL DEFAULT 'open',
             status TEXT NOT NULL DEFAULT 'pending',
             playbook_json TEXT NOT NULL,
             generated_at TEXT NOT NULL,
             token_count INTEGER DEFAULT 0,
             scenario_count INTEGER DEFAULT 0,
             match_count INTEGER DEFAULT 0,
-            UNIQUE(date, market)
+            UNIQUE(date, market, slot)
         )
         """
     )
@@ -208,6 +209,13 @@ def init_db(db_path: str) -> sqlite3.Connection:
     )
 
     conn.commit()
+
+    # Migration: add slot column if not exists (issue #433)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(playbooks)").fetchall()}
+    if "slot" not in cols:
+        conn.execute("ALTER TABLE playbooks ADD COLUMN slot TEXT NOT NULL DEFAULT 'open'")
+        conn.commit()
+
     return conn
 
 
