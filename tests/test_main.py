@@ -47,6 +47,7 @@ from src.main import (
     _should_block_overseas_buy_for_fx_buffer,
     _should_force_exit_for_overnight,
     _should_rescan_market,
+    _should_reuse_stored_playbook,
     _split_trade_pnl_components,
     _start_dashboard_server,
     _stoploss_cooldown_minutes,
@@ -175,6 +176,13 @@ class TestRealtimeSessionStateHelpers:
             rescan_interval=300.0,
             session_changed=False,
         )
+
+    def test_should_reuse_stored_playbook_false_for_kr_regular_session(self) -> None:
+        assert not _should_reuse_stored_playbook(market_code="KR", session_id="KRX_REG")
+
+    def test_should_reuse_stored_playbook_true_for_non_kr_or_non_regular_session(self) -> None:
+        assert _should_reuse_stored_playbook(market_code="KR", session_id="NXT_PRE")
+        assert _should_reuse_stored_playbook(market_code="US_NASDAQ", session_id="US_REG")
 
 class TestMarketParallelRunner:
     """Tests for market-level parallel processing helper."""
