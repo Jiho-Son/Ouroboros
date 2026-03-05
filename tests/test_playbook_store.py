@@ -297,6 +297,63 @@ class TestListRecent:
 
 
 # ---------------------------------------------------------------------------
+# Slot parameter
+# ---------------------------------------------------------------------------
+
+
+class TestPlaybookStoreSlot:
+    def test_save_and_load_open_slot(self, store) -> None:
+        """slot='open'으로 저장하고 로드한다."""
+        pb = _make_playbook()
+        store.save(pb, slot="open")
+        loaded = store.load(pb.date, pb.market, slot="open")
+        assert loaded is not None
+        assert loaded.market == pb.market
+
+    def test_save_and_load_mid_slot(self, store) -> None:
+        """slot='mid'로 저장하고 로드한다."""
+        pb = _make_playbook()
+        store.save(pb, slot="mid")
+        loaded = store.load(pb.date, pb.market, slot="mid")
+        assert loaded is not None
+
+    def test_load_returns_none_for_missing_slot(self, store) -> None:
+        """존재하지 않는 slot은 None을 반환한다."""
+        pb = _make_playbook()
+        store.save(pb, slot="open")
+        assert store.load(pb.date, pb.market, slot="mid") is None
+
+    def test_load_latest_returns_mid_when_both_exist(self, store) -> None:
+        """open과 mid 모두 있을 때 load_latest는 mid를 반환한다."""
+        pb_open = _make_playbook(stock_codes=["000001"])
+        pb_mid = _make_playbook(stock_codes=["000002"])
+        store.save(pb_open, slot="open")
+        store.save(pb_mid, slot="mid")
+        latest = store.load_latest(pb_open.date, pb_open.market)
+        assert latest is not None
+        assert latest.stock_playbooks[0].stock_code == "000002"
+
+    def test_load_latest_returns_open_when_no_mid(self, store) -> None:
+        """mid가 없을 때 load_latest는 open을 반환한다."""
+        pb = _make_playbook(stock_codes=["000003"])
+        store.save(pb, slot="open")
+        latest = store.load_latest(pb.date, pb.market)
+        assert latest is not None
+        assert latest.stock_playbooks[0].stock_code == "000003"
+
+    def test_load_latest_returns_none_when_empty(self, store) -> None:
+        """아무것도 없으면 None을 반환한다."""
+        assert store.load_latest(date(2026, 1, 1), "KR") is None
+
+    def test_default_slot_is_open(self, store) -> None:
+        """slot 파라미터 없이 save/load하면 open 슬롯을 사용한다."""
+        pb = _make_playbook()
+        store.save(pb)  # slot 미지정
+        loaded = store.load(pb.date, pb.market)  # slot 미지정
+        assert loaded is not None
+
+
+# ---------------------------------------------------------------------------
 # Delete
 # ---------------------------------------------------------------------------
 
