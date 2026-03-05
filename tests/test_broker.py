@@ -902,6 +902,27 @@ class TestGetDomesticPendingOrders:
         assert result[1]["order_exchange"] == "KRX"
 
     @pytest.mark.asyncio
+    async def test_live_mode_logs_warning_for_unknown_pending_exchange_code(self, settings) -> None:
+        """Unknown pending exchange codes should warn and default to KRX."""
+        broker = self._make_broker(settings, "live")
+        pending = [{"odno": "001", "pdno": "005930", "psbl_qty": "10", "excg_dvsn_cd": "ZZ"}]
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"output": pending})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("aiohttp.ClientSession.get", return_value=mock_resp),
+            patch("src.broker.kis_api.logger.warning") as mock_warning,
+        ):
+            result = await broker.get_domestic_pending_orders()
+
+        assert result[0]["order_exchange"] == "KRX"
+        mock_warning.assert_called_once()
+        assert "Unknown domestic exchange code" in mock_warning.call_args[0][0]
+
+    @pytest.mark.asyncio
     async def test_live_mode_connection_error(self, settings) -> None:
         """Network error must raise ConnectionError."""
         import aiohttp as _aiohttp

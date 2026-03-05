@@ -3784,7 +3784,7 @@ def _should_reuse_stored_playbook(*, market_code: str, session_id: str) -> bool:
     """
     return not (
         (market_code == "KR" and session_id == "KRX_REG")
-        or (market_code.startswith("US_") and session_id == "US_DAY")
+        or (market_code.startswith("US") and session_id == "US_DAY")
     )
 
 
@@ -4547,9 +4547,10 @@ async def run(settings: Settings) -> None:
                     session_changed = _has_market_session_transition(
                         _market_states, market.code, session_info.session_id
                     )
-                    # Force KR regular-session playbook regeneration on session transition.
-                    # Without this, an in-memory playbook created in NXT_PRE can persist
-                    # into KRX_REG and bypass the stored-playbook reuse gate.
+                    # Force KR/US regular-session playbook regeneration on session transition.
+                    # Without this, an in-memory playbook created in pre-market sessions
+                    # (e.g., NXT_PRE, US_PRE) can persist into regular sessions
+                    # (KRX_REG, US_DAY) and bypass the stored-playbook reuse gate.
                     if _refresh_cached_playbook_on_session_transition(
                         playbooks=playbooks,
                         session_changed=session_changed,

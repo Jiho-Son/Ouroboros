@@ -29,6 +29,8 @@ def _normalize_domestic_exchange_code(value: Any) -> str:
         return "NXT"
     if raw in {"J", "KRX"}:
         return "KRX"
+    if raw:
+        logger.warning("Unknown domestic exchange code %r; defaulting to KRX", raw)
     return "KRX"
 
 

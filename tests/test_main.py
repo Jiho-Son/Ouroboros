@@ -192,6 +192,9 @@ class TestRealtimeSessionStateHelpers:
     def test_should_reuse_stored_playbook_false_for_us_regular_session(self) -> None:
         assert not _should_reuse_stored_playbook(market_code="US_NASDAQ", session_id="US_DAY")
 
+    def test_should_reuse_stored_playbook_false_for_us_regular_without_underscore(self) -> None:
+        assert not _should_reuse_stored_playbook(market_code="USNASDAQ", session_id="US_DAY")
+
     def test_should_reuse_stored_playbook_true_for_non_kr_even_with_krx_reg_session_id(
         self,
     ) -> None:
@@ -8001,6 +8004,7 @@ async def test_trigger_emergency_kill_switch_executes_operational_steps() -> Non
                 "orgn_odno": "1",
                 "ord_gno_brno": "01",
                 "psbl_qty": "3",
+                "order_exchange": "NXT",
             }
         ]
     )
@@ -8046,7 +8050,13 @@ async def test_trigger_emergency_kill_switch_executes_operational_steps() -> Non
         "snapshot_state",
         "notify",
     ]
-    broker.cancel_domestic_order.assert_called_once()
+    broker.cancel_domestic_order.assert_called_once_with(
+        stock_code="005930",
+        orgn_odno="1",
+        krx_fwdg_ord_orgno="01",
+        qty=3,
+        order_exchange="NXT",
+    )
     broker.get_balance.assert_called_once()
     telegram.notify_circuit_breaker.assert_called_once_with(
         pnl_pct=-3.2,
