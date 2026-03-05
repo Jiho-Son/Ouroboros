@@ -3778,6 +3778,26 @@ def _should_refresh_cached_playbook_on_session_transition(
     )
 
 
+def _refresh_cached_playbook_on_session_transition(
+    *,
+    playbooks: dict[str, DayPlaybook],
+    session_changed: bool,
+    market_code: str,
+    session_id: str,
+) -> bool:
+    """Drop cached playbook when a session transition requires fresh generation.
+
+    Returns True when an existing cache entry was removed.
+    """
+    if not _should_refresh_cached_playbook_on_session_transition(
+        session_changed=session_changed,
+        market_code=market_code,
+        session_id=session_id,
+    ):
+        return False
+    return playbooks.pop(market_code, None) is not None
+
+
 async def _run_markets_in_parallel(
     markets: list[Any], processor: Callable[[Any], Awaitable[None]]
 ) -> None:
@@ -4510,12 +4530,12 @@ async def run(settings: Settings) -> None:
                     # Force KR regular-session playbook regeneration on session transition.
                     # Without this, an in-memory playbook created in NXT_PRE can persist
                     # into KRX_REG and bypass the stored-playbook reuse gate.
-                    if _should_refresh_cached_playbook_on_session_transition(
+                    if _refresh_cached_playbook_on_session_transition(
+                        playbooks=playbooks,
                         session_changed=session_changed,
                         market_code=market.code,
                         session_id=session_info.session_id,
                     ):
-                        playbooks.pop(market.code, None)
                         logger.info(
                             "Session transition requires fresh playbook for %s session=%s",
                             market.code,

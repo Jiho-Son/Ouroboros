@@ -38,6 +38,7 @@ from src.main import (
     _has_market_session_transition,
     _inject_staged_exit_features,
     _maybe_queue_order_intent,
+    _refresh_cached_playbook_on_session_transition,
     _resolve_market_setting,
     _resolve_sell_qty_for_pnl,
     _retry_connection,
@@ -217,6 +218,30 @@ class TestRealtimeSessionStateHelpers:
             market_code="US_NASDAQ",
             session_id="KRX_REG",
         )
+
+    def test_refresh_cached_playbook_on_session_transition_drops_existing_kr_cache(self) -> None:
+        playbooks = {"KR": _make_playbook("KR")}
+        removed = _refresh_cached_playbook_on_session_transition(
+            playbooks=playbooks,
+            session_changed=True,
+            market_code="KR",
+            session_id="KRX_REG",
+        )
+        assert removed
+        assert "KR" not in playbooks
+
+    def test_refresh_cached_playbook_on_session_transition_keeps_cache_when_not_required(
+        self,
+    ) -> None:
+        playbooks = {"KR": _make_playbook("KR")}
+        removed = _refresh_cached_playbook_on_session_transition(
+            playbooks=playbooks,
+            session_changed=True,
+            market_code="KR",
+            session_id="NXT_PRE",
+        )
+        assert not removed
+        assert "KR" in playbooks
 
 class TestMarketParallelRunner:
     """Tests for market-level parallel processing helper."""
