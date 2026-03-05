@@ -3758,15 +3758,6 @@ def _should_rescan_market(
     return session_changed or (now_timestamp - last_scan >= rescan_interval)
 
 
-def _should_reuse_stored_playbook(*, market_code: str, session_id: str) -> bool:
-    """Return whether DB-stored playbook can be reused for realtime loop bootstrap.
-
-    For KR regular session (`KRX_REG`), always generate a fresh playbook instead of
-    reusing an earlier session's stored playbook (issue #419).
-    """
-    return not (market_code == "KR" and session_id == "KRX_REG")
-
-
 async def _run_markets_in_parallel(
     markets: list[Any], processor: Callable[[Any], Awaitable[None]]
 ) -> None:
@@ -4580,15 +4571,7 @@ async def run(settings: Settings) -> None:
 
                                 market_today = datetime.now(market.timezone).date()
                                 if market.code not in playbooks:
-                                    reuse_stored_pb = _should_reuse_stored_playbook(
-                                        market_code=market.code,
-                                        session_id=session_info.session_id,
-                                    )
-                                    stored_pb = (
-                                        playbook_store.load(market_today, market.code)
-                                        if reuse_stored_pb
-                                        else None
-                                    )
+                                    stored_pb = playbook_store.load(market_today, market.code)
                                     if stored_pb is not None:
                                         playbooks[market.code] = stored_pb
                                         logger.info(
@@ -4599,13 +4582,6 @@ async def run(settings: Settings) -> None:
                                             stored_pb.scenario_count,
                                         )
                                     else:
-                                        if not reuse_stored_pb:
-                                            logger.info(
-                                                "Skipping stored playbook for %s session=%s;"
-                                                " generating fresh playbook",
-                                                market.code,
-                                                session_info.session_id,
-                                            )
                                         try:
                                             pb = await pre_market_planner.generate_playbook(
                                                 market=market.code,
