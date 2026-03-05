@@ -914,7 +914,9 @@ def _apply_staged_exit_override_for_hold(
         if not math.isfinite(playbook_stop_loss_threshold):
             playbook_stop_loss_threshold = -2.0
         stop_loss_threshold = playbook_stop_loss_threshold
-        take_profit_threshold = stock_playbook.scenarios[0].take_profit_pct
+        take_profit_threshold = safe_float(stock_playbook.scenarios[0].take_profit_pct, 3.0)
+        if not math.isfinite(take_profit_threshold):
+            take_profit_threshold = 3.0
     atr_value = safe_float(market_data.get("atr_value"), 0.0)
     if market.code == "KR":
         dynamic_stop_loss_threshold = _compute_kr_dynamic_stop_loss_pct(

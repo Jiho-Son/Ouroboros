@@ -695,8 +695,97 @@ def test_apply_staged_exit_kr_handles_non_finite_playbook_stop_loss() -> None:
             settings=None,
         )
 
-    assert math.isfinite(captured["hard_stop_pct"])
     assert captured["hard_stop_pct"] == pytest.approx(-2.0)
+
+
+def test_apply_staged_exit_kr_without_playbook_uses_dynamic_stop() -> None:
+    market = MagicMock()
+    market.code = "KR"
+    market.name = "Korea"
+
+    decision = MagicMock()
+    decision.action = "HOLD"
+    decision.confidence = 70
+    decision.rationale = "hold"
+
+    captured: dict[str, float] = {}
+
+    def _fake_eval(**kwargs):  # type: ignore[no-untyped-def]
+        cfg = kwargs["config"]
+        captured["hard_stop_pct"] = cfg.hard_stop_pct
+
+        class _Out:
+            should_exit = False
+            reason = "none"
+            state = PositionState.HOLDING
+
+        return _Out()
+
+    with (
+        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-5.5),
+        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+    ):
+        _apply_staged_exit_override_for_hold(
+            decision=decision,
+            market=market,
+            stock_code="024060",
+            open_position={"price": 100.0, "quantity": 1, "decision_id": "d1", "timestamp": "t1"},
+            market_data={"current_price": 95.0, "atr_value": 3.0},
+            stock_playbook=None,
+            settings=None,
+        )
+
+    assert captured["hard_stop_pct"] == pytest.approx(-5.5)
+
+
+def test_apply_staged_exit_handles_non_finite_playbook_take_profit() -> None:
+    market = MagicMock()
+    market.code = "KR"
+    market.name = "Korea"
+
+    decision = MagicMock()
+    decision.action = "HOLD"
+    decision.confidence = 70
+    decision.rationale = "hold"
+
+    playbook_scenario = MagicMock()
+    playbook_scenario.stop_loss_pct = -3.0
+    playbook_scenario.take_profit_pct = "NaN"
+    stock_playbook = MagicMock()
+    stock_playbook.scenarios = [playbook_scenario]
+
+    captured: dict[str, float] = {}
+
+    def _fake_eval(**kwargs):  # type: ignore[no-untyped-def]
+        cfg = kwargs["config"]
+        captured["be_arm_pct"] = cfg.be_arm_pct
+        captured["arm_pct"] = cfg.arm_pct
+
+        class _Out:
+            should_exit = False
+            reason = "none"
+            state = PositionState.HOLDING
+
+        return _Out()
+
+    with (
+        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-3.0),
+        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+    ):
+        _apply_staged_exit_override_for_hold(
+            decision=decision,
+            market=market,
+            stock_code="024060",
+            open_position={"price": 100.0, "quantity": 1, "decision_id": "d1", "timestamp": "t1"},
+            market_data={"current_price": 95.0, "atr_value": 3.0},
+            stock_playbook=stock_playbook,
+            settings=None,
+        )
+
+    assert math.isfinite(captured["be_arm_pct"])
+    assert math.isfinite(captured["arm_pct"])
+    assert captured["be_arm_pct"] == pytest.approx(1.2)
+    assert captured["arm_pct"] == pytest.approx(3.0)
 
     def test_returns_zero_when_field_empty_string(self) -> None:
         """Returns 0.0 when pchs_avg_pric is an empty string."""
