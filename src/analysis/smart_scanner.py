@@ -63,6 +63,7 @@ class SmartVolatilityScanner:
         self.rsi_momentum = settings.RSI_MOMENTUM_THRESHOLD
         self.vol_multiplier = settings.VOL_MULTIPLIER
         self.top_n = settings.SCANNER_TOP_N
+        self.us_min_price = settings.US_MIN_PRICE
 
     async def scan(
         self,
@@ -280,7 +281,14 @@ class SmartVolatilityScanner:
             volatility_pct = max(abs(change_rate), intraday_range_pct)
 
             # Volatility-first filter (not simple gainers/value ranking).
-            if price <= 0 or volatility_pct < 0.8:
+            if price < self.us_min_price or volatility_pct < 0.8:
+                if 0 < price < self.us_min_price:
+                    logger.debug(
+                        "Overseas scanner: skipped %s (price=%.2f < US_MIN_PRICE=%.2f)",
+                        stock_code,
+                        price,
+                        self.us_min_price,
+                    )
                 continue
 
             volatility_score = min(volatility_pct / 10.0, 1.0) * 85.0

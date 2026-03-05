@@ -375,6 +375,65 @@ class TestSmartVolatilityScanner:
 
         assert [c.stock_code for c in candidates] == ["ABCD"]
 
+    @pytest.mark.asyncio
+    async def test_scan_overseas_rankings_filters_penny_stocks(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock, mock_settings: Settings
+    ) -> None:
+        """랭킹 API 결과에서 US_MIN_PRICE 미만 종목은 candidates에서 제외된다."""
+        analyzer = VolatilityAnalyzer()
+        scanner = SmartVolatilityScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=analyzer,
+            settings=mock_settings,
+        )
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        # IBO ($0.68), TPET ($1.35) — 둘 다 US_MIN_PRICE($5) 미만
+        # NVDA ($780.2) — 정상 통과
+        mock_overseas_broker.fetch_overseas_rankings.return_value = [
+            {"symb": "IBO", "last": "0.68", "rate": "25.0", "tvol": "50000000"},
+            {"symb": "TPET", "last": "1.35", "rate": "20.0", "tvol": "30000000"},
+            {"symb": "NVDA", "last": "780.2", "rate": "5.0", "tvol": "12000000"},
+        ]
+
+        candidates = await scanner.scan(market=market)
+
+        codes = [c.stock_code for c in candidates]
+        assert "IBO" not in codes
+        assert "TPET" not in codes
+        assert "NVDA" in codes
+
+    @pytest.mark.asyncio
+    async def test_scan_overseas_rankings_allows_stocks_above_min_price(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock, mock_settings: Settings
+    ) -> None:
+        """US_MIN_PRICE 이상 종목은 정상적으로 candidates에 포함된다."""
+        analyzer = VolatilityAnalyzer()
+        scanner = SmartVolatilityScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=analyzer,
+            settings=mock_settings,
+        )
+        market = MagicMock()
+        market.name = "NYSE"
+        market.code = "US_NYSE"
+        market.exchange_code = "NYSE"
+        market.is_domestic = False
+
+        mock_overseas_broker.fetch_overseas_rankings.return_value = [
+            {"symb": "GOTU", "last": "6.50", "rate": "8.0", "tvol": "5000000"},
+        ]
+
+        candidates = await scanner.scan(market=market)
+
+        assert any(c.stock_code == "GOTU" for c in candidates)
+
 
 class TestImpliedRSIFormula:
     """Test the implied_rsi formula in SmartVolatilityScanner (issue #181)."""
