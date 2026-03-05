@@ -2980,6 +2980,7 @@ async def run_daily_session(
                         stock_count=playbook.stock_count,
                         scenario_count=playbook.scenario_count,
                         token_count=playbook.token_count,
+                        slot="open",
                     )
                 except Exception as exc:
                     logger.warning("Playbook notification failed: %s", exc)
