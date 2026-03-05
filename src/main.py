@@ -2377,7 +2377,9 @@ async def handle_domestic_pending_orders(
     ``get_domestic_pending_orders`` returns [] immediately and this function
     exits without making further API calls.
 
-    BUY pending  → cancel (to free up balance) + optionally set cooldown.
+    BUY pending  → cancel then resubmit at +0.4% from last price (chase buy)
+                   at most once per key per session. On subsequent unfilled BUY,
+                   only cancel + set cooldown.
     SELL pending → cancel then resubmit at a wider spread (-0.4% from last
                    price, kr_round_down applied).  Resubmission is attempted
                    at most once per key per session to avoid infinite loops.
@@ -2530,9 +2532,10 @@ async def handle_overseas_pending_orders(
         overseas_broker: OverseasBroker instance.
         telegram: TelegramClient for notifications.
         settings: Application settings (MODE, ENABLED_MARKETS).
-        sell_resubmit_counts: Mutable dict tracking SELL resubmission attempts
-            per "{exchange_code}:{stock_code}" key.  Passed by reference so
-            counts persist across calls within the same session.
+        sell_resubmit_counts: Mutable dict tracking per-key resubmission attempts.
+            SELL uses "{exchange_code}:{stock_code}" key.
+            BUY uses "BUY:{exchange_code}:{stock_code}" key.
+            Passed by reference so counts persist across calls within the same session.
         buy_cooldown: Optional cooldown dict shared with the main trading loop.
             When provided, cancelled BUY orders are added with a
             _BUY_COOLDOWN_SECONDS expiry.
@@ -2593,19 +2596,79 @@ async def handle_overseas_pending_orders(
                     continue
 
                 if sll_buy == "02":
-                    # BUY pending → cancelled; set cooldown to avoid immediate re-buy.
-                    if buy_cooldown is not None:
-                        buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
-                    try:
-                        await telegram.notify_unfilled_order(
-                            stock_code=stock_code,
-                            market=order_exchange,
-                            action="BUY",
-                            quantity=nccs_qty,
-                            outcome="cancelled",
+                    # BUY pending — attempt one chase resubmit, then give up.
+                    buy_resubmit_key = f"BUY:{key}"
+                    if sell_resubmit_counts.get(buy_resubmit_key, 0) >= 1:
+                        if buy_cooldown is not None:
+                            buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                        logger.warning(
+                            "BUY %s %s already resubmitted once — cancel only + cooldown",
+                            order_exchange,
+                            stock_code,
                         )
-                    except Exception as notify_exc:
-                        logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                        try:
+                            await telegram.notify_unfilled_order(
+                                stock_code=stock_code,
+                                market=order_exchange,
+                                action="BUY",
+                                quantity=nccs_qty,
+                                outcome="cancelled",
+                            )
+                        except Exception as notify_exc:
+                            logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                    else:
+                        try:
+                            price_data = await overseas_broker.get_overseas_price(
+                                order_exchange, stock_code
+                            )
+                            last_price = float(price_data.get("output", {}).get("last", "0") or "0")
+                            if last_price <= 0:
+                                raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
+                            new_price = round(last_price * 1.004, 4)
+                            market_info = next(
+                                (
+                                    m
+                                    for m in MARKETS.values()
+                                    if m.exchange_code == order_exchange and not m.is_domestic
+                                ),
+                                None,
+                            )
+                            if market_info is not None:
+                                validate_order_policy(
+                                    market=market_info,
+                                    order_type="BUY",
+                                    price=float(new_price),
+                                )
+                            await overseas_broker.send_overseas_order(
+                                exchange_code=order_exchange,
+                                stock_code=stock_code,
+                                order_type="BUY",
+                                quantity=nccs_qty,
+                                price=new_price,
+                            )
+                            sell_resubmit_counts[buy_resubmit_key] = (
+                                sell_resubmit_counts.get(buy_resubmit_key, 0) + 1
+                            )
+                            try:
+                                await telegram.notify_unfilled_order(
+                                    stock_code=stock_code,
+                                    market=order_exchange,
+                                    action="BUY",
+                                    quantity=nccs_qty,
+                                    outcome="resubmitted",
+                                    new_price=new_price,
+                                )
+                            except Exception as notify_exc:
+                                logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                        except Exception as exc:
+                            logger.error(
+                                "BUY resubmit failed for %s %s: %s",
+                                order_exchange,
+                                stock_code,
+                                exc,
+                            )
+                            if buy_cooldown is not None:
+                                buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
 
                 elif sll_buy == "01":
                     # SELL pending — attempt one resubmit at a wider spread.

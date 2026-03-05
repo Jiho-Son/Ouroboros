@@ -5708,8 +5708,8 @@ class TestHandleOverseasPendingOrders:
         return t
 
     @pytest.mark.asyncio
-    async def test_buy_pending_is_cancelled_and_cooldown_set(self) -> None:
-        """BUY pending order should be cancelled and buy_cooldown should be set."""
+    async def test_buy_pending_is_cancelled_then_resubmitted_once(self) -> None:
+        """First unfilled BUY should be cancelled then resubmitted at +0.4%."""
         settings = self._make_settings("US_NASDAQ")
         telegram = self._make_telegram()
 
@@ -5723,6 +5723,8 @@ class TestHandleOverseasPendingOrders:
         overseas_broker = MagicMock()
         overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
         overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "200.0"}})
+        overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
 
         sell_resubmit_counts: dict[str, int] = {}
         buy_cooldown: dict[str, float] = {}
@@ -5737,6 +5739,44 @@ class TestHandleOverseasPendingOrders:
             odno="ORD001",
             qty=3,
         )
+        overseas_broker.send_overseas_order.assert_called_once()
+        resubmit_kwargs = overseas_broker.send_overseas_order.call_args[1]
+        assert resubmit_kwargs["order_type"] == "BUY"
+        assert resubmit_kwargs["price"] == round(200.0 * 1.004, 4)
+        assert "BUY:NASD:AAPL" in sell_resubmit_counts
+        assert "NASD:AAPL" not in buy_cooldown
+        telegram.notify_unfilled_order.assert_called_once()
+        call_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert call_kwargs["action"] == "BUY"
+        assert call_kwargs["outcome"] == "resubmitted"
+
+    @pytest.mark.asyncio
+    async def test_buy_already_resubmitted_is_only_cancelled_with_cooldown(self) -> None:
+        """Second unfilled BUY should only cancel and set cooldown, no further chase."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "AAPL",
+            "odno": "ORD001-B",
+            "sll_buy_dvsn_cd": "02",  # BUY
+            "nccs_qty": "3",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.send_overseas_order = AsyncMock()
+
+        sell_resubmit_counts: dict[str, int] = {"BUY:NASD:AAPL": 1}
+        buy_cooldown: dict[str, float] = {}
+
+        await handle_overseas_pending_orders(
+            overseas_broker, telegram, settings, sell_resubmit_counts, buy_cooldown
+        )
+
+        overseas_broker.cancel_overseas_order.assert_called_once()
+        overseas_broker.send_overseas_order.assert_not_called()
         assert "NASD:AAPL" in buy_cooldown
         telegram.notify_unfilled_order.assert_called_once()
         call_kwargs = telegram.notify_unfilled_order.call_args[1]
