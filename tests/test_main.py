@@ -4433,6 +4433,92 @@ class TestOverseasBrokerIntegration:
         overseas_broker.send_overseas_order.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_overseas_buy_suppressed_by_db_open_position(
+        self,
+    ) -> None:
+        """BUY must be suppressed when DB shows an open position (DB-first semantics).
+
+        Scenario: DB has a BUY record with no corresponding SELL, so
+        get_open_position returns an open position. Broker balance shows zero
+        (e.g., position not yet reflected). Expected: send_overseas_order is NOT called.
+        """
+        db_conn = init_db(":memory:")
+        # DB: BUY recorded, no SELL → open position exists
+        log_trade(
+            conn=db_conn,
+            stock_code="AAPL",
+            action="BUY",
+            confidence=90,
+            rationale="entry",
+            quantity=10,
+            price=180.0,
+            market="US_NASDAQ",
+            exchange_code="NASD",
+        )
+
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "182.50"}})
+        # 브로커: AAPL 미보유 (아직 반영 안 됨)
+        overseas_broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output1": [],
+                "output2": [
+                    {
+                        "frcr_evlu_tota": "60000.00",
+                        "frcr_buy_amt_smtl": "0.00",
+                    }
+                ],
+            }
+        )
+        overseas_broker.get_overseas_buying_power = AsyncMock(
+            return_value={"output": {"ovrs_ord_psbl_amt": "50000.00"}}
+        )
+        overseas_broker.send_overseas_order = AsyncMock(return_value={"msg1": "주문접수"})
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_buy_match("AAPL"))
+
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+        await trading_cycle(
+            broker=MagicMock(),
+            overseas_broker=overseas_broker,
+            scenario_engine=engine,
+            playbook=_make_playbook(market="US"),
+            risk=MagicMock(),
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(
+                get_latest_timeframe=MagicMock(return_value=None),
+                set_context=MagicMock(),
+            ),
+            criticality_assessor=MagicMock(
+                assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                get_timeout=MagicMock(return_value=5.0),
+            ),
+            telegram=telegram,
+            market=market,
+            stock_code="AAPL",
+            scan_candidates={},
+        )
+
+        # DB에 오픈 포지션이 있으므로 BUY 주문이 억제되어야 함 (DB-first 억제)
+        overseas_broker.send_overseas_order.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_overseas_buy_proceeds_when_broker_shows_no_holding(
         self,
     ) -> None:
@@ -5664,6 +5750,79 @@ class TestDomesticBuyDoublePreventionTradingCycle:
         )
 
         with patch("src.main.get_session_info", return_value=MagicMock(session_id="NXT_PRE")):
+            await trading_cycle(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(market="KR"),
+                risk=MagicMock(),
+                db_conn=db_conn,
+                decision_logger=decision_logger,
+                context_store=MagicMock(
+                    get_latest_timeframe=MagicMock(return_value=None),
+                    set_context=MagicMock(),
+                ),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                settings=settings,
+                market=market,
+                stock_code="006800",
+                scan_candidates={"KR": {}},
+            )
+
+        broker.get_current_price.assert_called_once_with("006800", market_div_code="NX")
+
+    @pytest.mark.asyncio
+    async def test_nxt_after_session_uses_nx_quote_for_domestic_price(self) -> None:
+        """NXT_AFTER session must also fetch domestic current price with market_div_code='NX'."""
+        db_conn = init_db(":memory:")
+
+        broker = MagicMock()
+        broker.get_current_price = AsyncMock(return_value=(65500.0, 0.0, 0.0))
+        broker.get_balance = AsyncMock(
+            return_value={
+                "output1": [],
+                "output2": [
+                    {
+                        "tot_evlu_amt": "120000000",
+                        "dnca_tot_amt": "100000000",
+                        "pchs_amt_smtl_amt": "20000000",
+                    }
+                ],
+            }
+        )
+        broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "주문접수"})
+
+        market = MagicMock()
+        market.name = "KR"
+        market.code = "KR"
+        market.exchange_code = "KRX"
+        market.is_domestic = True
+
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=_make_buy_match("006800"))
+
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="d1")
+
+        settings = Settings(
+            KIS_APP_KEY="k",
+            KIS_APP_SECRET="s",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="g",
+            MODE="paper",
+        )
+
+        with patch("src.main.get_session_info", return_value=MagicMock(session_id="NXT_AFTER")):
             await trading_cycle(
                 broker=broker,
                 overseas_broker=MagicMock(),

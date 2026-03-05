@@ -2369,6 +2369,7 @@ async def handle_domestic_pending_orders(
     settings: Settings,
     sell_resubmit_counts: dict[str, int],
     buy_cooldown: dict[str, float] | None = None,
+    quote_market_div_code: str = "J",
 ) -> None:
     """Check and handle unfilled (pending) domestic limit orders.
 
@@ -2395,6 +2396,8 @@ async def handle_domestic_pending_orders(
         buy_cooldown: Optional cooldown dict shared with the main trading loop.
             When provided, cancelled BUY orders are added with a
             _BUY_COOLDOWN_SECONDS expiry.
+        quote_market_div_code: KIS market division code used for price queries
+            ("NX" for NXT_PRE/NXT_AFTER sessions, "J" otherwise).
     """
     try:
         orders = await broker.get_domestic_pending_orders()
@@ -2454,7 +2457,9 @@ async def handle_domestic_pending_orders(
                         logger.warning("notify_unfilled_order failed: %s", notify_exc)
                 else:
                     try:
-                        last_price, _, _ = await broker.get_current_price(stock_code)
+                        last_price, _, _ = await broker.get_current_price(
+                            stock_code, market_div_code=quote_market_div_code
+                        )
                         if last_price <= 0:
                             raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
                         new_price = kr_round_down(last_price * 1.004)
@@ -2841,7 +2846,8 @@ async def run_daily_session(
     # BUY cooldown: prevents retrying stocks rejected for insufficient balance
     daily_buy_cooldown: dict[str, float] = {}  # "{market_code}:{stock_code}" -> expiry timestamp
 
-    # Tracks SELL resubmission attempts per "{exchange_code}:{stock_code}" (max 1 per session).
+    # Tracks resubmission attempts per key (max 1 per session).
+    # SELL: "{exchange_code}:{stock_code}", BUY: "BUY:{exchange_code}:{stock_code}".
     sell_resubmit_counts: dict[str, int] = {}
 
     # Process each open market
@@ -2867,6 +2873,7 @@ async def run_daily_session(
                     settings,
                     sell_resubmit_counts,
                     daily_buy_cooldown,
+                    quote_market_div_code=domestic_quote_market_div_code,
                 )
             except Exception as exc:
                 logger.warning("Domestic pending order check failed: %s", exc)
@@ -4253,7 +4260,8 @@ async def run(settings: Settings) -> None:
     # BUY cooldown: prevents retrying a stock rejected for insufficient balance
     buy_cooldown: dict[str, float] = {}  # "{market_code}:{stock_code}" -> expiry timestamp
 
-    # Tracks SELL resubmission attempts per "{exchange_code}:{stock_code}" (max 1 until restart).
+    # Tracks resubmission attempts per key (max 1 until restart).
+    # SELL: "{exchange_code}:{stock_code}", BUY: "BUY:{exchange_code}:{stock_code}".
     sell_resubmit_counts: dict[str, int] = {}
 
     # Initialize latency control system
@@ -4475,6 +4483,9 @@ async def run(settings: Settings) -> None:
                                 settings,
                                 sell_resubmit_counts,
                                 buy_cooldown,
+                                quote_market_div_code=_resolve_domestic_quote_market_div_code(
+                                    session_info.session_id
+                                ),
                             )
                         except Exception as exc:
                             logger.warning("Domestic pending order check failed: %s", exc)
