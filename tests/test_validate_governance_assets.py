@@ -66,10 +66,14 @@ def test_load_changed_files_with_range_uses_git_diff(monkeypatch) -> None:
     errors: list[str] = []
 
     def fake_run(cmd, check, capture_output, text):  # noqa: ANN001
-        assert cmd[:3] == ["git", "diff", "--name-only"]
-        assert check is True
+        assert cmd[0] == "git"
         assert capture_output is True
         assert text is True
+        if cmd[:4] == ["git", "rev-parse", "--verify", "--quiet"]:
+            assert check is False
+            return SimpleNamespace(returncode=0, stdout="")
+        assert cmd[:3] == ["git", "diff", "--name-only"]
+        assert check is True
         return SimpleNamespace(
             stdout="docs/ouroboros/85_loss_recovery_action_plan.md\nsrc/main.py\n"
         )
@@ -81,6 +85,27 @@ def test_load_changed_files_with_range_uses_git_diff(monkeypatch) -> None:
         "docs/ouroboros/85_loss_recovery_action_plan.md",
         "src/main.py",
     ]
+
+
+def test_load_changed_files_with_range_skips_when_before_sha_unreachable(monkeypatch) -> None:
+    module = _load_module()
+    errors: list[str] = []
+
+    def fake_run(cmd, check, capture_output, text):  # noqa: ANN001
+        assert cmd[0] == "git"
+        assert capture_output is True
+        assert text is True
+        if cmd[:4] == ["git", "rev-parse", "--verify", "--quiet"]:
+            assert check is False
+            if cmd[-1] == "missing^{commit}":
+                return SimpleNamespace(returncode=1, stdout="")
+            return SimpleNamespace(returncode=0, stdout="")
+        raise AssertionError("git diff should not run when before SHA is unreachable")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    changed = module.load_changed_files(["missing...head"], errors)
+    assert errors == []
+    assert changed == []
 
 
 def test_validate_task_req_mapping_reports_missing_req_reference(tmp_path) -> None:

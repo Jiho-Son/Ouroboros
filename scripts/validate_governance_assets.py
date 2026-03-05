@@ -46,6 +46,19 @@ def is_policy_file(path: str) -> bool:
     return normalized != REQUIREMENTS_REGISTRY
 
 
+def _git_revision_exists(revision: str) -> bool:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"{revision}^{{commit}}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return False
+    return completed.returncode == 0
+
+
 def load_changed_files(args: list[str], errors: list[str]) -> list[str]:
     if not args:
         return []
@@ -53,6 +66,17 @@ def load_changed_files(args: list[str], errors: list[str]) -> list[str]:
     # Single range input (e.g. BASE..HEAD or BASE...HEAD)
     if len(args) == 1 and ".." in args[0]:
         range_spec = args[0]
+        if "..." in range_spec:
+            lhs, rhs = range_spec.split("...", 1)
+        else:
+            lhs, rhs = range_spec.split("..", 1)
+        if not lhs or not rhs:
+            errors.append(f"invalid range spec: '{range_spec}'")
+            return []
+        # Force-push updates can reference an unreachable "before" SHA on CI runners.
+        # In that case, skip changed-file narrowing and run full governance checks.
+        if not _git_revision_exists(lhs) or not _git_revision_exists(rhs):
+            return []
         try:
             completed = subprocess.run(
                 ["git", "diff", "--name-only", range_spec],
