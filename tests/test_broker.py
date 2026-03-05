@@ -501,8 +501,33 @@ class TestGetCurrentPrice:
         call_kwargs = mock_get.call_args
         url = call_kwargs[0][0] if call_kwargs[0] else call_kwargs[1].get("url", "")
         headers = call_kwargs[1].get("headers", {})
+        params = call_kwargs[1].get("params", {})
         assert "inquire-price" in url
         assert headers.get("tr_id") == "FHKST01010100"
+        assert params.get("FID_COND_MRKT_DIV_CODE") == "J"
+
+    @pytest.mark.asyncio
+    async def test_market_div_code_can_be_overridden(self, broker: KISBroker) -> None:
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={
+                "rt_cd": "0",
+                "output": {
+                    "stck_prpr": "56500",
+                    "prdy_ctrt": "0.00",
+                    "frgn_ntby_qty": "0",
+                },
+            }
+        )
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp) as mock_get:
+            await broker.get_current_price("006800", market_div_code="NX")
+
+        params = mock_get.call_args[1].get("params", {})
+        assert params.get("FID_COND_MRKT_DIV_CODE") == "NX"
 
     @pytest.mark.asyncio
     async def test_http_error_raises_connection_error(self, broker: KISBroker) -> None:

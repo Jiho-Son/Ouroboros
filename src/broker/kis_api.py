@@ -316,7 +316,12 @@ class KISBroker:
         )
         return is_dual_listed, spread_krx, spread_nxt, liquidity_krx, liquidity_nxt
 
-    async def get_current_price(self, stock_code: str) -> tuple[float, float, float]:
+    async def get_current_price(
+        self,
+        stock_code: str,
+        *,
+        market_div_code: str = "J",
+    ) -> tuple[float, float, float]:
         """Fetch current price data for a domestic stock.
 
         Uses the ``inquire-price`` API (FHKST01010100), which works in both
@@ -332,10 +337,7 @@ class KISBroker:
         session = self._get_session()
 
         headers = await self._auth_headers("FHKST01010100")
-        params = {
-            "FID_COND_MRKT_DIV_CODE": "J",
-            "FID_INPUT_ISCD": stock_code,
-        }
+        params = {"FID_COND_MRKT_DIV_CODE": market_div_code, "FID_INPUT_ISCD": stock_code}
         url = f"{self._base_url}/uapi/domestic-stock/v1/quotations/inquire-price"
 
         def _f(val: str | None) -> float:

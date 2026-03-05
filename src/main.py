@@ -716,6 +716,45 @@ def _extract_avg_price_from_balance(
     return 0.0
 
 
+def _resolve_buy_suppression_position(
+    *,
+    db_conn: Any,
+    balance_data: dict[str, Any],
+    stock_code: str,
+    market: MarketInfo,
+) -> dict[str, float | int] | None:
+    """Resolve duplicate-BUY suppression position with market-specific source priority.
+
+    Domestic: trust live broker balance first because DB may contain stale accepted BUY
+    records (order accepted but not filled).
+    Overseas: preserve existing behavior and trust DB open-position state first, then
+    fallback to broker holdings if available.
+    """
+    broker_qty = _extract_held_qty_from_balance(
+        balance_data, stock_code, is_domestic=market.is_domestic
+    )
+    existing_position = get_open_position(db_conn, stock_code, market.code)
+
+    # Domestic duplicate-BUY suppression is broker-authoritative.
+    if market.is_domestic:
+        if broker_qty <= 0:
+            return None
+        entry_price = 0.0
+        if existing_position and existing_position.get("price") is not None:
+            entry_price = float(existing_position["price"])
+        return {"price": entry_price, "quantity": broker_qty}
+
+    # Overseas preserves DB-first suppression semantics.
+    if existing_position:
+        return {
+            "price": float(existing_position.get("price") or 0.0),
+            "quantity": int(existing_position.get("quantity") or 0),
+        }
+    if broker_qty > 0:
+        return {"price": 0.0, "quantity": broker_qty}
+    return None
+
+
 def _determine_order_quantity(
     *,
     action: str,
@@ -821,6 +860,11 @@ def _should_force_exit_for_overnight(
         default=True,
     )
     return not bool(overnight_enabled)
+
+
+def _resolve_domestic_quote_market_div_code(session_id: str) -> str:
+    """Resolve domestic quote market code from current KR session."""
+    return "NX" if session_id in {"NXT_PRE", "NXT_AFTER"} else "J"
 
 
 def _build_runtime_position_key(
@@ -1483,12 +1527,17 @@ async def trading_cycle(
     """Execute one trading cycle for a single stock."""
     cycle_start_time = asyncio.get_event_loop().time()
     _session_risk_overrides(market=market, settings=settings)
+    runtime_session_id = get_session_info(market).session_id
 
     # 1. Fetch market data
     balance_info: dict[str, Any] = {}
     price_output: dict[str, Any] = {}  # Populated for overseas markets; used for fallback metrics
     if market.is_domestic:
-        current_price, price_change_pct, foreigner_net = await broker.get_current_price(stock_code)
+        quote_market_div_code = _resolve_domestic_quote_market_div_code(runtime_session_id)
+        current_price, price_change_pct, foreigner_net = await broker.get_current_price(
+            stock_code,
+            market_div_code=quote_market_div_code,
+        )
         balance_data = await broker.get_balance()
 
         output2 = balance_data.get("output2", [{}])
@@ -1756,15 +1805,12 @@ async def trading_cycle(
 
     # BUY 결정 전 기존 포지션 체크 (중복 매수 방지)
     if decision.action == "BUY":
-        existing_position = get_open_position(db_conn, stock_code, market.code)
-        if not existing_position:
-            # SELL 지정가 접수 후 미체결 시 DB는 종료로 기록되나 브로커는 여전히 보유 중.
-            # 국내/해외 모두 라이브 브로커 잔고를 authoritative source로 사용.
-            broker_qty = _extract_held_qty_from_balance(
-                balance_data, stock_code, is_domestic=market.is_domestic
-            )
-            if broker_qty > 0:
-                existing_position = {"price": 0.0, "quantity": broker_qty}
+        existing_position = _resolve_buy_suppression_position(
+            db_conn=db_conn,
+            balance_data=balance_data,
+            stock_code=stock_code,
+            market=market,
+        )
         if existing_position:
             decision = TradeDecision(
                 action="HOLD",
@@ -1910,7 +1956,6 @@ async def trading_cycle(
         "pnl_pct": pnl_pct,
     }
 
-    runtime_session_id = get_session_info(market).session_id
     decision_id = decision_logger.log_decision(
         stock_code=stock_code,
         market=market.code,
@@ -2324,6 +2369,7 @@ async def handle_domestic_pending_orders(
     settings: Settings,
     sell_resubmit_counts: dict[str, int],
     buy_cooldown: dict[str, float] | None = None,
+    quote_market_div_code: str = "J",
 ) -> None:
     """Check and handle unfilled (pending) domestic limit orders.
 
@@ -2332,7 +2378,9 @@ async def handle_domestic_pending_orders(
     ``get_domestic_pending_orders`` returns [] immediately and this function
     exits without making further API calls.
 
-    BUY pending  → cancel (to free up balance) + optionally set cooldown.
+    BUY pending  → cancel then resubmit at +0.4% from last price (chase buy)
+                   at most once per key per session. On subsequent unfilled BUY,
+                   only cancel + set cooldown.
     SELL pending → cancel then resubmit at a wider spread (-0.4% from last
                    price, kr_round_down applied).  Resubmission is attempted
                    at most once per key per session to avoid infinite loops.
@@ -2341,12 +2389,15 @@ async def handle_domestic_pending_orders(
         broker: KISBroker instance.
         telegram: TelegramClient for notifications.
         settings: Application settings.
-        sell_resubmit_counts: Mutable dict tracking SELL resubmission attempts
-            per "KR:{stock_code}" key.  Passed by reference so counts persist
-            across calls within the same session.
+        sell_resubmit_counts: Mutable dict tracking per-key resubmission attempts.
+            SELL uses "KR:{stock_code}" key.
+            BUY uses "BUY:KR:{stock_code}" key.
+            Passed by reference so counts persist across calls within the same session.
         buy_cooldown: Optional cooldown dict shared with the main trading loop.
             When provided, cancelled BUY orders are added with a
             _BUY_COOLDOWN_SECONDS expiry.
+        quote_market_div_code: KIS market division code used for price queries
+            ("NX" for NXT_PRE/NXT_AFTER sessions, "J" otherwise).
     """
     try:
         orders = await broker.get_domestic_pending_orders()
@@ -2359,7 +2410,7 @@ async def handle_domestic_pending_orders(
     for order in orders:
         try:
             stock_code = order.get("pdno", "")
-            orgn_odno = order.get("orgn_odno", "")
+            orgn_odno = order.get("orgn_odno", "") or order.get("odno", "")
             krx_fwdg_ord_orgno = order.get("ord_gno_brno", "")
             sll_buy = order.get("sll_buy_dvsn_cd", "")  # "01"=SELL, "02"=BUY
             psbl_qty = int(order.get("psbl_qty", "0") or "0")
@@ -2385,19 +2436,67 @@ async def handle_domestic_pending_orders(
                 continue
 
             if sll_buy == "02":
-                # BUY pending → cancelled; set cooldown to avoid immediate re-buy.
-                if buy_cooldown is not None:
-                    buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
-                try:
-                    await telegram.notify_unfilled_order(
-                        stock_code=stock_code,
-                        market="KR",
-                        action="BUY",
-                        quantity=psbl_qty,
-                        outcome="cancelled",
+                # BUY pending — attempt one chase resubmit, then give up.
+                buy_resubmit_key = f"BUY:{key}"
+                if sell_resubmit_counts.get(buy_resubmit_key, 0) >= 1:
+                    if buy_cooldown is not None:
+                        buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                    logger.warning(
+                        "BUY KR %s already resubmitted once — cancel only + cooldown",
+                        stock_code,
                     )
-                except Exception as notify_exc:
-                    logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                    try:
+                        await telegram.notify_unfilled_order(
+                            stock_code=stock_code,
+                            market="KR",
+                            action="BUY",
+                            quantity=psbl_qty,
+                            outcome="cancelled",
+                        )
+                    except Exception as notify_exc:
+                        logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                else:
+                    try:
+                        last_price, _, _ = await broker.get_current_price(
+                            stock_code, market_div_code=quote_market_div_code
+                        )
+                        if last_price <= 0:
+                            raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
+                        new_price = kr_round_down(last_price * 1.004)
+                        validate_order_policy(
+                            market=MARKETS["KR"],
+                            order_type="BUY",
+                            price=float(new_price),
+                        )
+                        await broker.send_order(
+                            stock_code=stock_code,
+                            order_type="BUY",
+                            quantity=psbl_qty,
+                            price=new_price,
+                            session_id=classify_session_id(MARKETS["KR"]),
+                        )
+                        sell_resubmit_counts[buy_resubmit_key] = (
+                            sell_resubmit_counts.get(buy_resubmit_key, 0) + 1
+                        )
+                        try:
+                            await telegram.notify_unfilled_order(
+                                stock_code=stock_code,
+                                market="KR",
+                                action="BUY",
+                                quantity=psbl_qty,
+                                outcome="resubmitted",
+                                new_price=float(new_price),
+                            )
+                        except Exception as notify_exc:
+                            logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                    except Exception as exc:
+                        logger.error(
+                            "BUY resubmit failed for KR %s: %s",
+                            stock_code,
+                            exc,
+                        )
+                        if buy_cooldown is not None:
+                            buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
 
             elif sll_buy == "01":
                 # SELL pending — attempt one resubmit at a wider spread.
@@ -2476,7 +2575,9 @@ async def handle_overseas_pending_orders(
     In paper mode the KIS pending-orders API (TTTS3018R) is unsupported, so
     this function returns immediately without making any API calls.
 
-    BUY pending  → cancel (to free up balance) + optionally set cooldown.
+    BUY pending  → cancel then resubmit at +0.4% from last price (chase buy)
+                   at most once per key per session. On subsequent unfilled BUY,
+                   only cancel + set cooldown.
     SELL pending → cancel then resubmit at a wider spread (-0.4% from last
                    price).  Resubmission is attempted at most once per key
                    per session to avoid infinite retry loops.
@@ -2485,9 +2586,10 @@ async def handle_overseas_pending_orders(
         overseas_broker: OverseasBroker instance.
         telegram: TelegramClient for notifications.
         settings: Application settings (MODE, ENABLED_MARKETS).
-        sell_resubmit_counts: Mutable dict tracking SELL resubmission attempts
-            per "{exchange_code}:{stock_code}" key.  Passed by reference so
-            counts persist across calls within the same session.
+        sell_resubmit_counts: Mutable dict tracking per-key resubmission attempts.
+            SELL uses "{exchange_code}:{stock_code}" key.
+            BUY uses "BUY:{exchange_code}:{stock_code}" key.
+            Passed by reference so counts persist across calls within the same session.
         buy_cooldown: Optional cooldown dict shared with the main trading loop.
             When provided, cancelled BUY orders are added with a
             _BUY_COOLDOWN_SECONDS expiry.
@@ -2548,19 +2650,79 @@ async def handle_overseas_pending_orders(
                     continue
 
                 if sll_buy == "02":
-                    # BUY pending → cancelled; set cooldown to avoid immediate re-buy.
-                    if buy_cooldown is not None:
-                        buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
-                    try:
-                        await telegram.notify_unfilled_order(
-                            stock_code=stock_code,
-                            market=order_exchange,
-                            action="BUY",
-                            quantity=nccs_qty,
-                            outcome="cancelled",
+                    # BUY pending — attempt one chase resubmit, then give up.
+                    buy_resubmit_key = f"BUY:{key}"
+                    if sell_resubmit_counts.get(buy_resubmit_key, 0) >= 1:
+                        if buy_cooldown is not None:
+                            buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                        logger.warning(
+                            "BUY %s %s already resubmitted once — cancel only + cooldown",
+                            order_exchange,
+                            stock_code,
                         )
-                    except Exception as notify_exc:
-                        logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                        try:
+                            await telegram.notify_unfilled_order(
+                                stock_code=stock_code,
+                                market=order_exchange,
+                                action="BUY",
+                                quantity=nccs_qty,
+                                outcome="cancelled",
+                            )
+                        except Exception as notify_exc:
+                            logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                    else:
+                        try:
+                            price_data = await overseas_broker.get_overseas_price(
+                                order_exchange, stock_code
+                            )
+                            last_price = float(price_data.get("output", {}).get("last", "0") or "0")
+                            if last_price <= 0:
+                                raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
+                            new_price = round(last_price * 1.004, 4)
+                            market_info = next(
+                                (
+                                    m
+                                    for m in MARKETS.values()
+                                    if m.exchange_code == order_exchange and not m.is_domestic
+                                ),
+                                None,
+                            )
+                            if market_info is not None:
+                                validate_order_policy(
+                                    market=market_info,
+                                    order_type="BUY",
+                                    price=float(new_price),
+                                )
+                            await overseas_broker.send_overseas_order(
+                                exchange_code=order_exchange,
+                                stock_code=stock_code,
+                                order_type="BUY",
+                                quantity=nccs_qty,
+                                price=new_price,
+                            )
+                            sell_resubmit_counts[buy_resubmit_key] = (
+                                sell_resubmit_counts.get(buy_resubmit_key, 0) + 1
+                            )
+                            try:
+                                await telegram.notify_unfilled_order(
+                                    stock_code=stock_code,
+                                    market=order_exchange,
+                                    action="BUY",
+                                    quantity=nccs_qty,
+                                    outcome="resubmitted",
+                                    new_price=new_price,
+                                )
+                            except Exception as notify_exc:
+                                logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                        except Exception as exc:
+                            logger.error(
+                                "BUY resubmit failed for %s %s: %s",
+                                order_exchange,
+                                stock_code,
+                                exc,
+                            )
+                            if buy_cooldown is not None:
+                                buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
 
                 elif sll_buy == "01":
                     # SELL pending — attempt one resubmit at a wider spread.
@@ -2684,12 +2846,15 @@ async def run_daily_session(
     # BUY cooldown: prevents retrying stocks rejected for insufficient balance
     daily_buy_cooldown: dict[str, float] = {}  # "{market_code}:{stock_code}" -> expiry timestamp
 
-    # Tracks SELL resubmission attempts per "{exchange_code}:{stock_code}" (max 1 per session).
+    # Tracks resubmission attempts per key (max 1 per session).
+    # SELL: "{exchange_code}:{stock_code}", BUY: "BUY:{exchange_code}:{stock_code}".
     sell_resubmit_counts: dict[str, int] = {}
 
     # Process each open market
     for market in open_markets:
         _session_risk_overrides(market=market, settings=settings)
+        runtime_session_id = get_session_info(market).session_id
+        domestic_quote_market_div_code = _resolve_domestic_quote_market_div_code(runtime_session_id)
         await process_blackout_recovery_orders(
             broker=broker,
             overseas_broker=overseas_broker,
@@ -2708,6 +2873,7 @@ async def run_daily_session(
                     settings,
                     sell_resubmit_counts,
                     daily_buy_cooldown,
+                    quote_market_div_code=domestic_quote_market_div_code,
                 )
             except Exception as exc:
                 logger.warning("Domestic pending order check failed: %s", exc)
@@ -2805,6 +2971,7 @@ async def run_daily_session(
                     current_price, price_change_pct, foreigner_net = await _retry_connection(
                         broker.get_current_price,
                         stock_code,
+                        market_div_code=domestic_quote_market_div_code,
                         label=stock_code,
                     )
                 else:
@@ -2992,15 +3159,12 @@ async def run_daily_session(
 
             # BUY 중복 방지: 브로커 잔고 기반 (미체결 SELL 리밋 주문 보호)
             if decision.action == "BUY":
-                daily_existing = get_open_position(db_conn, stock_code, market.code)
-                if not daily_existing:
-                    # SELL 지정가 접수 후 미체결 시 DB는 종료로 기록되나 브로커는 여전히 보유 중.
-                    # 국내/해외 모두 라이브 브로커 잔고를 authoritative source로 사용.
-                    broker_qty = _extract_held_qty_from_balance(
-                        balance_data, stock_code, is_domestic=market.is_domestic
-                    )
-                    if broker_qty > 0:
-                        daily_existing = {"price": 0.0, "quantity": broker_qty}
+                daily_existing = _resolve_buy_suppression_position(
+                    db_conn=db_conn,
+                    balance_data=balance_data,
+                    stock_code=stock_code,
+                    market=market,
+                )
                 if daily_existing:
                     decision = TradeDecision(
                         action="HOLD",
@@ -4096,7 +4260,8 @@ async def run(settings: Settings) -> None:
     # BUY cooldown: prevents retrying a stock rejected for insufficient balance
     buy_cooldown: dict[str, float] = {}  # "{market_code}:{stock_code}" -> expiry timestamp
 
-    # Tracks SELL resubmission attempts per "{exchange_code}:{stock_code}" (max 1 until restart).
+    # Tracks resubmission attempts per key (max 1 until restart).
+    # SELL: "{exchange_code}:{stock_code}", BUY: "BUY:{exchange_code}:{stock_code}".
     sell_resubmit_counts: dict[str, int] = {}
 
     # Initialize latency control system
@@ -4318,6 +4483,9 @@ async def run(settings: Settings) -> None:
                                 settings,
                                 sell_resubmit_counts,
                                 buy_cooldown,
+                                quote_market_div_code=_resolve_domestic_quote_market_div_code(
+                                    session_info.session_id
+                                ),
                             )
                         except Exception as exc:
                             logger.warning("Domestic pending order check failed: %s", exc)
