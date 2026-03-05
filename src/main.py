@@ -16,6 +16,7 @@ import threading
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from src.analysis.smart_scanner import ScanCandidate, SmartVolatilityScanner
 from src.analysis.volatility import VolatilityAnalyzer
@@ -3772,6 +3773,43 @@ def _should_rescan_market(
 ) -> bool:
     """Force rescan on session transition; otherwise follow interval cadence."""
     return session_changed or (now_timestamp - last_scan >= rescan_interval)
+
+
+_MID_SESSION_REFRESH_SESSIONS: dict[str, str] = {
+    "US_NASDAQ": "US_REG",
+    "US_NYSE": "US_REG",
+    "US_AMEX": "US_REG",
+    "KR": "KRX_REG",
+}
+
+_MID_SESSION_REFRESH_TZ: dict[str, ZoneInfo] = {
+    "US_NASDAQ": ZoneInfo("America/New_York"),
+    "US_NYSE": ZoneInfo("America/New_York"),
+    "US_AMEX": ZoneInfo("America/New_York"),
+    "KR": ZoneInfo("Asia/Seoul"),
+}
+
+
+def _should_mid_session_refresh(
+    *,
+    market_code: str,
+    session_id: str,
+    now: datetime,
+    mid_refreshed: set[str],
+) -> bool:
+    """Return True when a mid-session playbook refresh should fire.
+
+    Triggers once per day at 12:00 (local market time) during the regular session.
+    Considers all stored slots; 'mid' takes priority over all others.
+    """
+    expected_session = _MID_SESSION_REFRESH_SESSIONS.get(market_code)
+    if expected_session is None or session_id != expected_session:
+        return False
+    if market_code in mid_refreshed:
+        return False
+    market_tz = _MID_SESSION_REFRESH_TZ.get(market_code, UTC)
+    local_now = now.astimezone(market_tz)
+    return local_now.hour == 12 and local_now.minute == 0
 
 
 def _should_reuse_stored_playbook(*, market_code: str, session_id: str) -> bool:
