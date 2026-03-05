@@ -2388,9 +2388,10 @@ async def handle_domestic_pending_orders(
         broker: KISBroker instance.
         telegram: TelegramClient for notifications.
         settings: Application settings.
-        sell_resubmit_counts: Mutable dict tracking SELL resubmission attempts
-            per "KR:{stock_code}" key.  Passed by reference so counts persist
-            across calls within the same session.
+        sell_resubmit_counts: Mutable dict tracking per-key resubmission attempts.
+            SELL uses "KR:{stock_code}" key.
+            BUY uses "BUY:KR:{stock_code}" key.
+            Passed by reference so counts persist across calls within the same session.
         buy_cooldown: Optional cooldown dict shared with the main trading loop.
             When provided, cancelled BUY orders are added with a
             _BUY_COOLDOWN_SECONDS expiry.
@@ -2432,19 +2433,65 @@ async def handle_domestic_pending_orders(
                 continue
 
             if sll_buy == "02":
-                # BUY pending → cancelled; set cooldown to avoid immediate re-buy.
-                if buy_cooldown is not None:
-                    buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
-                try:
-                    await telegram.notify_unfilled_order(
-                        stock_code=stock_code,
-                        market="KR",
-                        action="BUY",
-                        quantity=psbl_qty,
-                        outcome="cancelled",
+                # BUY pending — attempt one chase resubmit, then give up.
+                buy_resubmit_key = f"BUY:{key}"
+                if sell_resubmit_counts.get(buy_resubmit_key, 0) >= 1:
+                    if buy_cooldown is not None:
+                        buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                    logger.warning(
+                        "BUY KR %s already resubmitted once — cancel only + cooldown",
+                        stock_code,
                     )
-                except Exception as notify_exc:
-                    logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                    try:
+                        await telegram.notify_unfilled_order(
+                            stock_code=stock_code,
+                            market="KR",
+                            action="BUY",
+                            quantity=psbl_qty,
+                            outcome="cancelled",
+                        )
+                    except Exception as notify_exc:
+                        logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                else:
+                    try:
+                        last_price, _, _ = await broker.get_current_price(stock_code)
+                        if last_price <= 0:
+                            raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
+                        new_price = kr_round_down(last_price * 1.004)
+                        validate_order_policy(
+                            market=MARKETS["KR"],
+                            order_type="BUY",
+                            price=float(new_price),
+                        )
+                        await broker.send_order(
+                            stock_code=stock_code,
+                            order_type="BUY",
+                            quantity=psbl_qty,
+                            price=new_price,
+                            session_id=classify_session_id(MARKETS["KR"]),
+                        )
+                        sell_resubmit_counts[buy_resubmit_key] = (
+                            sell_resubmit_counts.get(buy_resubmit_key, 0) + 1
+                        )
+                        try:
+                            await telegram.notify_unfilled_order(
+                                stock_code=stock_code,
+                                market="KR",
+                                action="BUY",
+                                quantity=psbl_qty,
+                                outcome="resubmitted",
+                                new_price=float(new_price),
+                            )
+                        except Exception as notify_exc:
+                            logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                    except Exception as exc:
+                        logger.error(
+                            "BUY resubmit failed for KR %s: %s",
+                            stock_code,
+                            exc,
+                        )
+                        if buy_cooldown is not None:
+                            buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
 
             elif sll_buy == "01":
                 # SELL pending — attempt one resubmit at a wider spread.

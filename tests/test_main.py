@@ -5920,8 +5920,10 @@ class TestHandleDomesticPendingOrders:
         return t
 
     @pytest.mark.asyncio
-    async def test_buy_pending_is_cancelled_and_cooldown_set(self) -> None:
-        """BUY pending order should be cancelled and buy_cooldown should be set."""
+    async def test_buy_pending_is_cancelled_then_resubmitted_once(self) -> None:
+        """First unfilled BUY should be cancelled then resubmitted at +0.4%."""
+        from src.broker.kis_api import kr_round_down
+
         settings = self._make_settings()
         telegram = self._make_telegram()
 
@@ -5935,6 +5937,8 @@ class TestHandleDomesticPendingOrders:
         broker = MagicMock()
         broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
         broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(50000.0, 0.0, 0.0))
+        broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
 
         sell_resubmit_counts: dict[str, int] = {}
         buy_cooldown: dict[str, float] = {}
@@ -5949,11 +5953,16 @@ class TestHandleDomesticPendingOrders:
             krx_fwdg_ord_orgno="BRN01",
             qty=3,
         )
-        assert "KR:005930" in buy_cooldown
+        broker.send_order.assert_called_once()
+        resubmit_kwargs = broker.send_order.call_args[1]
+        assert resubmit_kwargs["order_type"] == "BUY"
+        assert resubmit_kwargs["price"] == kr_round_down(50000.0 * 1.004)
+        assert "BUY:KR:005930" in sell_resubmit_counts
+        assert "KR:005930" not in buy_cooldown
         telegram.notify_unfilled_order.assert_called_once()
         call_kwargs = telegram.notify_unfilled_order.call_args[1]
         assert call_kwargs["action"] == "BUY"
-        assert call_kwargs["outcome"] == "cancelled"
+        assert call_kwargs["outcome"] == "resubmitted"
         assert call_kwargs["market"] == "KR"
 
     @pytest.mark.asyncio
@@ -5973,8 +5982,10 @@ class TestHandleDomesticPendingOrders:
         broker = MagicMock()
         broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
         broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(65000.0, 0.0, 0.0))
+        broker.send_order = AsyncMock()
 
-        sell_resubmit_counts: dict[str, int] = {}
+        sell_resubmit_counts: dict[str, int] = {"BUY:KR:006800": 1}
         buy_cooldown: dict[str, float] = {}
 
         await handle_domestic_pending_orders(
@@ -5987,6 +5998,7 @@ class TestHandleDomesticPendingOrders:
             krx_fwdg_ord_orgno="91257",
             qty=15,
         )
+        broker.send_order.assert_not_called()
         assert "KR:006800" in buy_cooldown
         telegram.notify_unfilled_order.assert_called_once()
 
