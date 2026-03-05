@@ -224,8 +224,11 @@ class SmartVolatilityScanner:
             )
             return []
 
-        candidates = await self._scan_overseas_from_rankings(market)
-        if not candidates:
+        candidates, had_ranking_data = await self._scan_overseas_from_rankings(market)
+        # Fallback is allowed only when ranking API had no usable rows (empty/failure).
+        # If ranking rows existed but all were filtered out (e.g., penny stocks), do not
+        # re-open the universe via fallback symbols.
+        if not candidates and not had_ranking_data:
             candidates = await self._scan_overseas_from_symbols(market, fallback_stocks)
 
         candidates.sort(key=lambda c: c.score, reverse=True)
@@ -234,7 +237,7 @@ class SmartVolatilityScanner:
     async def _scan_overseas_from_rankings(
         self,
         market: MarketInfo,
-    ) -> list[ScanCandidate]:
+    ) -> tuple[list[ScanCandidate], bool]:
         """Build overseas candidates from ranking APIs using volatility-first scoring."""
         assert self.overseas_broker is not None
         try:
@@ -248,7 +251,7 @@ class SmartVolatilityScanner:
             fluct_rows = []
 
         if not fluct_rows:
-            return []
+            return [], False
 
         volume_rank_bonus: dict[str, float] = {}
         try:
@@ -315,7 +318,7 @@ class SmartVolatilityScanner:
                 len(candidates),
                 market.name,
             )
-        return candidates
+        return candidates, True
 
     async def _scan_overseas_from_symbols(
         self,

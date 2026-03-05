@@ -468,6 +468,35 @@ class TestSmartVolatilityScanner:
         assert "IBO" not in codes
         assert "NVDA" in codes
 
+    @pytest.mark.asyncio
+    async def test_scan_overseas_does_not_fallback_when_rankings_filtered_all_out(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock, mock_settings: Settings
+    ) -> None:
+        """랭킹 응답은 있었지만 전량 필터링된 경우 fallback symbols를 사용하지 않는다."""
+        analyzer = VolatilityAnalyzer()
+        scanner = SmartVolatilityScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=analyzer,
+            settings=mock_settings,
+        )
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        # 랭킹 API 데이터는 존재하지만 전부 US_MIN_PRICE 미만.
+        mock_overseas_broker.fetch_overseas_rankings.return_value = [
+            {"symb": "IBO", "last": "0.68", "rate": "25.0", "tvol": "50000000"},
+            {"symb": "TPET", "last": "1.35", "rate": "20.0", "tvol": "30000000"},
+        ]
+
+        candidates = await scanner.scan(market=market, fallback_stocks=["NVDA"])
+
+        assert candidates == []
+        mock_overseas_broker.get_overseas_price.assert_not_called()
+
 
 class TestImpliedRSIFormula:
     """Test the implied_rsi formula in SmartVolatilityScanner (issue #181)."""
