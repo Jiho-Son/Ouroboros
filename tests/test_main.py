@@ -243,6 +243,33 @@ class TestRealtimeSessionStateHelpers:
         assert not removed
         assert "KR" in playbooks
 
+    def test_refresh_cached_playbook_on_session_transition_false_when_session_unchanged(
+        self,
+    ) -> None:
+        playbooks = {"KR": _make_playbook("KR")}
+        removed = _refresh_cached_playbook_on_session_transition(
+            playbooks=playbooks,
+            session_changed=False,
+            market_code="KR",
+            session_id="KRX_REG",
+        )
+        assert not removed
+        assert "KR" in playbooks
+
+    def test_refresh_cached_playbook_on_session_transition_false_when_cache_missing(
+        self,
+    ) -> None:
+        playbooks: dict[str, DayPlaybook] = {}
+        removed = _refresh_cached_playbook_on_session_transition(
+            playbooks=playbooks,
+            session_changed=True,
+            market_code="KR",
+            session_id="KRX_REG",
+        )
+        assert not removed
+        assert playbooks == {}
+
+
 class TestMarketParallelRunner:
     """Tests for market-level parallel processing helper."""
 
