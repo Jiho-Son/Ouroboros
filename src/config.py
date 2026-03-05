@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # This value is used as a fallback when the balance API returns 0 in paper mode.
     PAPER_OVERSEAS_CASH: float = Field(default=50000.0, ge=0.0)
     USD_BUFFER_MIN: float = Field(default=1000.0, ge=0.0)
-    US_MIN_PRICE: float = Field(default=5.0, ge=0.0)
+    US_MIN_PRICE: float = Field(default=5.0, ge=1.0)
     STAGED_EXIT_BE_ARM_PCT: float = Field(default=1.2, gt=0.0, le=30.0)
     STAGED_EXIT_ARM_PCT: float = Field(default=3.0, gt=0.0, le=100.0)
     STOPLOSS_REENTRY_COOLDOWN_MINUTES: int = Field(default=120, ge=1, le=1440)
