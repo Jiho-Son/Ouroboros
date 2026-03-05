@@ -4506,10 +4506,20 @@ async def run(settings: Settings) -> None:
             # Realtime trading mode: original per-stock loop
             logger.info("Realtime trading mode: 60s interval per stock")
 
+            _mid_last_date: str = ""
+
             while not shutdown.is_set():
                 # Wait for trading to be unpaused
                 await pause_trading.wait()
                 _run_context_scheduler(context_scheduler, now=datetime.now(UTC))
+
+                # Reset mid_refreshed on a new calendar date so each trading day
+                # gets a fresh mid-session refresh opportunity.
+                _today = datetime.now(UTC).date().isoformat()
+                if _today != _mid_last_date:
+                    _mid_last_date = _today
+                    mid_refreshed.clear()
+                    logger.debug("New trading day %s — mid_refreshed reset", _today)
 
                 # Get currently open markets
                 open_markets = get_open_markets(
@@ -4540,7 +4550,6 @@ async def run(settings: Settings) -> None:
                             _market_states.pop(market_code, None)
                             # Clear playbook for closed market (new one generated next open)
                             playbooks.pop(market_code, None)
-                            mid_refreshed.discard(market_code)
 
                     # No markets open — wait until next market opens
                     try:
