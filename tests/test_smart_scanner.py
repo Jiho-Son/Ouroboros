@@ -434,6 +434,40 @@ class TestSmartVolatilityScanner:
 
         assert any(c.stock_code == "GOTU" for c in candidates)
 
+    @pytest.mark.asyncio
+    async def test_scan_overseas_symbols_filters_penny_stocks(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock, mock_settings: Settings
+    ) -> None:
+        """fallback symbols 경로에서도 US_MIN_PRICE 미만 종목은 제외된다."""
+        analyzer = VolatilityAnalyzer()
+        scanner = SmartVolatilityScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=analyzer,
+            settings=mock_settings,
+        )
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        # 랭킹 API 비활성화 → fallback 경로 사용
+        mock_overseas_broker.fetch_overseas_rankings.return_value = []
+
+        # IBO($0.68, 변동성 25%) — US_MIN_PRICE 미만으로 제외
+        # NVDA($780.2, 변동성 5%) — 정상 포함
+        mock_overseas_broker.get_overseas_price.side_effect = [
+            {"output": {"last": "0.68", "rate": "25.0", "tvol": "50000000"}},
+            {"output": {"last": "780.2", "rate": "5.0", "tvol": "12000000"}},
+        ]
+
+        candidates = await scanner.scan(market=market, fallback_stocks=["IBO", "NVDA"])
+
+        codes = [c.stock_code for c in candidates]
+        assert "IBO" not in codes
+        assert "NVDA" in codes
+
 
 class TestImpliedRSIFormula:
     """Test the implied_rsi formula in SmartVolatilityScanner (issue #181)."""
