@@ -178,3 +178,4 @@ cython_debug/
 # But NOT src/data/ which contains source code
 data/
 !src/data/
+.worktrees/
