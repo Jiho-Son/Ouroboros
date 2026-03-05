@@ -4768,6 +4768,7 @@ async def run(settings: Settings) -> None:
                                                     stock_count=pb.stock_count,
                                                     scenario_count=pb.scenario_count,
                                                     token_count=pb.token_count,
+                                                    slot=save_slot,
                                                 )
                                             except Exception as exc:
                                                 logger.warning(
