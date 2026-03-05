@@ -4720,6 +4720,18 @@ async def run(settings: Settings) -> None:
                                         if reuse_stored_pb
                                         else None
                                     )
+                                    # If a mid-session playbook exists in the DB, mark this
+                                    # market as already refreshed to avoid re-triggering the
+                                    # 12:00 mid-session refresh on restart.
+                                    if reuse_stored_pb and playbook_store.load(
+                                        market_today, market.code, slot="mid"
+                                    ) is not None:
+                                        mid_refreshed.add(market.code)
+                                        logger.debug(
+                                            "Resumed with mid-session playbook for %s"
+                                            " — suppressing refresh trigger",
+                                            market.code,
+                                        )
                                     if stored_pb is not None:
                                         playbooks[market.code] = stored_pb
                                         logger.info(
