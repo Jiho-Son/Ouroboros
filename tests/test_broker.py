@@ -1016,7 +1016,13 @@ class TestCancelDomesticOrder:
         mock_hash, mock_order = self._make_post_mocks({"rt_cd": "0"})
 
         with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
-            await broker.cancel_domestic_order("005930", "ORD123", "BRN456", 3, order_exchange="NXT")
+            await broker.cancel_domestic_order(
+                "005930",
+                "ORD123",
+                "BRN456",
+                3,
+                order_exchange="NXT",
+            )
 
         body = mock_post.call_args_list[1][1].get("json", {})
         assert body["EXCG_ID_DVSN_CD"] == "NXT"
