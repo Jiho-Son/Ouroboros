@@ -2523,7 +2523,9 @@ async def handle_overseas_pending_orders(
     In paper mode the KIS pending-orders API (TTTS3018R) is unsupported, so
     this function returns immediately without making any API calls.
 
-    BUY pending  → cancel (to free up balance) + optionally set cooldown.
+    BUY pending  → cancel then resubmit at +0.4% from last price (chase buy)
+                   at most once per key per session. On subsequent unfilled BUY,
+                   only cancel + set cooldown.
     SELL pending → cancel then resubmit at a wider spread (-0.4% from last
                    price).  Resubmission is attempted at most once per key
                    per session to avoid infinite retry loops.
