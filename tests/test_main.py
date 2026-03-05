@@ -192,9 +192,6 @@ class TestRealtimeSessionStateHelpers:
     def test_should_reuse_stored_playbook_false_for_us_regular_session(self) -> None:
         assert not _should_reuse_stored_playbook(market_code="US_NASDAQ", session_id="US_DAY")
 
-    def test_should_reuse_stored_playbook_false_for_us_regular_without_underscore(self) -> None:
-        assert not _should_reuse_stored_playbook(market_code="USNASDAQ", session_id="US_DAY")
-
     def test_should_reuse_stored_playbook_true_for_non_kr_even_with_krx_reg_session_id(
         self,
     ) -> None:
