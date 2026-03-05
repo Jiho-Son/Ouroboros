@@ -7,7 +7,7 @@ import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -67,6 +67,7 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
                     SELECT status
                     FROM playbooks
                     WHERE date = ? AND market = ?
+                    ORDER BY generated_at DESC
                     LIMIT 1
                     """,
                     (today, market),
@@ -127,22 +128,40 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
             }
 
     @app.get("/api/playbook/{date_str}")
-    def get_playbook(date_str: str, market: str = Query("KR")) -> dict[str, Any]:
+    def get_playbook(
+        date_str: str,
+        market: str = Query("KR"),
+        slot: Annotated[str | None, Query()] = None,
+    ) -> dict[str, Any]:
         with _connect(db_path) as conn:
-            row = conn.execute(
-                """
-                SELECT date, market, status, playbook_json, generated_at,
-                       token_count, scenario_count, match_count
-                FROM playbooks
-                WHERE date = ? AND market = ?
-                """,
-                (date_str, market),
-            ).fetchone()
+            if slot is not None:
+                row = conn.execute(
+                    """
+                    SELECT date, market, slot, status, playbook_json, generated_at,
+                           token_count, scenario_count, match_count
+                    FROM playbooks
+                    WHERE date = ? AND market = ? AND slot = ?
+                    """,
+                    (date_str, market, slot),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """
+                    SELECT date, market, slot, status, playbook_json, generated_at,
+                           token_count, scenario_count, match_count
+                    FROM playbooks
+                    WHERE date = ? AND market = ?
+                    ORDER BY generated_at DESC
+                    LIMIT 1
+                    """,
+                    (date_str, market),
+                ).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail="playbook not found")
             return {
                 "date": row["date"],
                 "market": row["market"],
+                "slot": row["slot"],
                 "status": row["status"],
                 "playbook": json.loads(row["playbook_json"]),
                 "generated_at": row["generated_at"],
