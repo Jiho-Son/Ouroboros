@@ -3758,6 +3758,46 @@ def _should_rescan_market(
     return session_changed or (now_timestamp - last_scan >= rescan_interval)
 
 
+def _should_reuse_stored_playbook(*, market_code: str, session_id: str) -> bool:
+    """Return whether DB-stored playbook can be reused for realtime loop bootstrap.
+
+    For KR regular session (`KRX_REG`), always generate a fresh playbook instead of
+    reusing an earlier session's stored playbook (issue #419). Other markets/sessions
+    keep existing behavior and may reuse stored playbooks.
+    """
+    return not (market_code == "KR" and session_id == "KRX_REG")
+
+
+def _should_refresh_cached_playbook_on_session_transition(
+    *, session_changed: bool, market_code: str, session_id: str
+) -> bool:
+    """Return True when session transition requires dropping cached playbook."""
+    return session_changed and not _should_reuse_stored_playbook(
+        market_code=market_code,
+        session_id=session_id,
+    )
+
+
+def _refresh_cached_playbook_on_session_transition(
+    *,
+    playbooks: dict[str, DayPlaybook],
+    session_changed: bool,
+    market_code: str,
+    session_id: str,
+) -> bool:
+    """Drop cached playbook when a session transition requires fresh generation.
+
+    Returns True when an existing cache entry was removed.
+    """
+    if not _should_refresh_cached_playbook_on_session_transition(
+        session_changed=session_changed,
+        market_code=market_code,
+        session_id=session_id,
+    ):
+        return False
+    return playbooks.pop(market_code, None) is not None
+
+
 async def _run_markets_in_parallel(
     markets: list[Any], processor: Callable[[Any], Awaitable[None]]
 ) -> None:
@@ -4487,6 +4527,20 @@ async def run(settings: Settings) -> None:
                     session_changed = _has_market_session_transition(
                         _market_states, market.code, session_info.session_id
                     )
+                    # Force KR regular-session playbook regeneration on session transition.
+                    # Without this, an in-memory playbook created in NXT_PRE can persist
+                    # into KRX_REG and bypass the stored-playbook reuse gate.
+                    if _refresh_cached_playbook_on_session_transition(
+                        playbooks=playbooks,
+                        session_changed=session_changed,
+                        market_code=market.code,
+                        session_id=session_info.session_id,
+                    ):
+                        logger.info(
+                            "Session transition requires fresh playbook for %s session=%s",
+                            market.code,
+                            session_info.session_id,
+                        )
                     if session_changed:
                         try:
                             await telegram.notify_market_open(market.name)
@@ -4571,7 +4625,15 @@ async def run(settings: Settings) -> None:
 
                                 market_today = datetime.now(market.timezone).date()
                                 if market.code not in playbooks:
-                                    stored_pb = playbook_store.load(market_today, market.code)
+                                    reuse_stored_pb = _should_reuse_stored_playbook(
+                                        market_code=market.code,
+                                        session_id=session_info.session_id,
+                                    )
+                                    stored_pb = (
+                                        playbook_store.load(market_today, market.code)
+                                        if reuse_stored_pb
+                                        else None
+                                    )
                                     if stored_pb is not None:
                                         playbooks[market.code] = stored_pb
                                         logger.info(
@@ -4582,6 +4644,13 @@ async def run(settings: Settings) -> None:
                                             stored_pb.scenario_count,
                                         )
                                     else:
+                                        if not reuse_stored_pb:
+                                            logger.info(
+                                                "Skipping stored playbook for %s session=%s;"
+                                                " generating fresh playbook",
+                                                market.code,
+                                                session_info.session_id,
+                                            )
                                         try:
                                             pb = await pre_market_planner.generate_playbook(
                                                 market=market.code,
