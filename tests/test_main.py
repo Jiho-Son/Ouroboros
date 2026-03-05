@@ -557,6 +557,53 @@ def test_apply_staged_exit_uses_independent_arm_threshold_settings() -> None:
     assert captured["be_arm_pct"] == pytest.approx(2.2)
     assert captured["arm_pct"] == pytest.approx(5.4)
 
+
+def test_apply_staged_exit_kr_does_not_loosen_beyond_playbook_stop() -> None:
+    market = MagicMock()
+    market.code = "KR"
+    market.name = "Korea"
+
+    decision = MagicMock()
+    decision.action = "HOLD"
+    decision.confidence = 70
+    decision.rationale = "hold"
+
+    playbook_scenario = MagicMock()
+    playbook_scenario.stop_loss_pct = -3.0
+    playbook_scenario.take_profit_pct = 5.0
+    stock_playbook = MagicMock()
+    stock_playbook.scenarios = [playbook_scenario]
+
+    captured: dict[str, float] = {}
+
+    def _fake_eval(**kwargs):  # type: ignore[no-untyped-def]
+        cfg = kwargs["config"]
+        captured["hard_stop_pct"] = cfg.hard_stop_pct
+
+        class _Out:
+            should_exit = False
+            reason = "none"
+            state = PositionState.HOLDING
+
+        return _Out()
+
+    with (
+        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-7.0),
+        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+    ):
+        out = _apply_staged_exit_override_for_hold(
+            decision=decision,
+            market=market,
+            stock_code="024060",
+            open_position={"price": 100.0, "quantity": 1, "decision_id": "d1", "timestamp": "t1"},
+            market_data={"current_price": 95.0, "atr_value": 3.0},
+            stock_playbook=stock_playbook,
+            settings=None,
+        )
+
+    assert out is decision
+    assert captured["hard_stop_pct"] == pytest.approx(-3.0)
+
     def test_returns_zero_when_field_empty_string(self) -> None:
         """Returns 0.0 when pchs_avg_pric is an empty string."""
         balance = {"output1": [{"pdno": "005930", "pchs_avg_pric": ""}]}

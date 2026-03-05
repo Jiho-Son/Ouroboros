@@ -906,19 +906,26 @@ def _apply_staged_exit_override_for_hold(
         return decision
 
     stop_loss_threshold = -2.0
+    playbook_stop_loss_threshold: float | None = None
     take_profit_threshold = 3.0
     if stock_playbook and stock_playbook.scenarios:
-        stop_loss_threshold = stock_playbook.scenarios[0].stop_loss_pct
+        playbook_stop_loss_threshold = safe_float(stock_playbook.scenarios[0].stop_loss_pct, -2.0)
+        stop_loss_threshold = playbook_stop_loss_threshold
         take_profit_threshold = stock_playbook.scenarios[0].take_profit_pct
     atr_value = safe_float(market_data.get("atr_value"), 0.0)
     if market.code == "KR":
-        stop_loss_threshold = _compute_kr_dynamic_stop_loss_pct(
+        dynamic_stop_loss_threshold = _compute_kr_dynamic_stop_loss_pct(
             market=market,
             entry_price=entry_price,
             atr_value=atr_value,
             fallback_stop_loss_pct=stop_loss_threshold,
             settings=settings,
         )
+        # Keep KR ATR-adaptive behavior, but never loosen beyond an explicit playbook stop.
+        if playbook_stop_loss_threshold is not None:
+            stop_loss_threshold = max(playbook_stop_loss_threshold, dynamic_stop_loss_threshold)
+        else:
+            stop_loss_threshold = dynamic_stop_loss_threshold
     if settings is None:
         be_arm_pct = max(0.5, take_profit_threshold * 0.4)
         arm_pct = take_profit_threshold
