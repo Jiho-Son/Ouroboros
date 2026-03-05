@@ -176,7 +176,6 @@ class TestRealtimeSessionStateHelpers:
             session_changed=False,
         )
 
-
 class TestMarketParallelRunner:
     """Tests for market-level parallel processing helper."""
 
@@ -6037,6 +6036,40 @@ class TestHandleOverseasPendingOrders:
         assert notify_kwargs["action"] == "SELL"
 
     @pytest.mark.asyncio
+    async def test_buy_resubmit_failure_notifies_cancelled(self) -> None:
+        """If overseas BUY cancel succeeded but resubmit failed, cancelled alert must be sent."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "AAPL",
+            "odno": "ORD005",
+            "sll_buy_dvsn_cd": "02",  # BUY
+            "nccs_qty": "2",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(side_effect=ConnectionError("network down"))
+        overseas_broker.send_overseas_order = AsyncMock()
+
+        sell_resubmit_counts: dict[str, int] = {}
+        buy_cooldown: dict[str, float] = {}
+
+        await handle_overseas_pending_orders(
+            overseas_broker, telegram, settings, sell_resubmit_counts, buy_cooldown
+        )
+
+        telegram.notify_unfilled_order.assert_called_once()
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["stock_code"] == "AAPL"
+        assert notify_kwargs["market"] == "NASD"
+        assert notify_kwargs["action"] == "BUY"
+        assert notify_kwargs["quantity"] == 2
+        assert notify_kwargs["outcome"] == "cancelled"
+
+    @pytest.mark.asyncio
     async def test_us_exchanges_deduplicated_to_nasd(self) -> None:
         """US_NASDAQ, US_NYSE, US_AMEX should result in only one NASD query."""
         settings = self._make_settings("US_NASDAQ,US_NYSE,US_AMEX")
@@ -6251,6 +6284,40 @@ class TestHandleDomesticPendingOrders:
         notify_kwargs = telegram.notify_unfilled_order.call_args[1]
         assert notify_kwargs["outcome"] == "cancelled"
         assert notify_kwargs["action"] == "SELL"
+
+    @pytest.mark.asyncio
+    async def test_buy_resubmit_failure_notifies_cancelled(self) -> None:
+        """If BUY cancel succeeded but resubmit failed, cancelled notification must be sent."""
+        settings = self._make_settings()
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "024060",
+            "orgn_odno": "ORD005",
+            "ord_gno_brno": "BRN05",
+            "sll_buy_dvsn_cd": "02",  # BUY
+            "psbl_qty": "1",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(side_effect=ConnectionError("Server disconnected"))
+        broker.send_order = AsyncMock()
+
+        sell_resubmit_counts: dict[str, int] = {}
+        buy_cooldown: dict[str, float] = {}
+
+        await handle_domestic_pending_orders(
+            broker, telegram, settings, sell_resubmit_counts, buy_cooldown
+        )
+
+        telegram.notify_unfilled_order.assert_called_once()
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["stock_code"] == "024060"
+        assert notify_kwargs["market"] == "KR"
+        assert notify_kwargs["action"] == "BUY"
+        assert notify_kwargs["quantity"] == 1
+        assert notify_kwargs["outcome"] == "cancelled"
 
 
 # ---------------------------------------------------------------------------

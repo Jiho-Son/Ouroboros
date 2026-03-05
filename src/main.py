@@ -2495,6 +2495,16 @@ async def handle_domestic_pending_orders(
                             stock_code,
                             exc,
                         )
+                        try:
+                            await telegram.notify_unfilled_order(
+                                stock_code=stock_code,
+                                market="KR",
+                                action="BUY",
+                                quantity=psbl_qty,
+                                outcome="cancelled",
+                            )
+                        except Exception as notify_exc:
+                            logger.warning("notify_unfilled_order failed: %s", notify_exc)
                         if buy_cooldown is not None:
                             buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
 
@@ -2721,6 +2731,16 @@ async def handle_overseas_pending_orders(
                                 stock_code,
                                 exc,
                             )
+                            try:
+                                await telegram.notify_unfilled_order(
+                                    stock_code=stock_code,
+                                    market=order_exchange,
+                                    action="BUY",
+                                    quantity=nccs_qty,
+                                    outcome="cancelled",
+                                )
+                            except Exception as notify_exc:
+                                logger.warning("notify_unfilled_order failed: %s", notify_exc)
                             if buy_cooldown is not None:
                                 buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
 
