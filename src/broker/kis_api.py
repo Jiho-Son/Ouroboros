@@ -23,6 +23,30 @@ _KIS_VTS_HOST = "openapivts.koreainvestment.com"
 logger = logging.getLogger(__name__)
 
 
+def _normalize_domestic_exchange_code(value: Any) -> str:
+    raw = str(value or "").strip().upper()
+    if raw in {"NX", "NXT"}:
+        return "NXT"
+    if raw in {"J", "KRX"}:
+        return "KRX"
+    return "KRX"
+
+
+def _extract_domestic_pending_order_exchange(order: dict[str, Any]) -> str:
+    for key in (
+        "order_exchange",
+        "excg_id_dvsn_cd",
+        "EXCG_ID_DVSN_CD",
+        "excg_dvsn_cd",
+        "EXCG_DVSN_CD",
+        "ord_excg_cd",
+        "ORD_EXCG_CD",
+    ):
+        if key in order:
+            return _normalize_domestic_exchange_code(order.get(key))
+    return "KRX"
+
+
 def kr_tick_unit(price: float) -> int:
     """Return KRX tick size for the given price level.
 
@@ -627,7 +651,17 @@ class KISBroker:
                         f"get_domestic_pending_orders failed ({resp.status}): {text}"
                     )
                 data = await resp.json()
-                return data.get("output", []) or []
+                output = data.get("output", []) or []
+                normalized_orders: list[dict[str, Any]] = []
+                for raw_order in output:
+                    if not isinstance(raw_order, dict):
+                        continue
+                    normalized = dict(raw_order)
+                    normalized["order_exchange"] = _extract_domestic_pending_order_exchange(
+                        raw_order
+                    )
+                    normalized_orders.append(normalized)
+                return normalized_orders
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching domestic pending orders: {exc}") from exc
 
@@ -637,6 +671,7 @@ class KISBroker:
         orgn_odno: str,
         krx_fwdg_ord_orgno: str,
         qty: int,
+        order_exchange: str = "KRX",
     ) -> dict[str, Any]:
         """Cancel an unfilled domestic limit order.
 
@@ -663,6 +698,7 @@ class KISBroker:
             "ACNT_PRDT_CD": self._product_cd,
             "KRX_FWDG_ORD_ORGNO": krx_fwdg_ord_orgno,
             "ORGN_ODNO": orgn_odno,
+            "EXCG_ID_DVSN_CD": _normalize_domestic_exchange_code(order_exchange),
             "ORD_DVSN": "00",
             "ORD_QTY": str(qty),
             "ORD_UNPR": "0",

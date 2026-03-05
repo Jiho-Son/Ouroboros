@@ -872,12 +872,34 @@ class TestGetDomesticPendingOrders:
         with patch("aiohttp.ClientSession.get", return_value=mock_resp) as mock_get:
             result = await broker.get_domestic_pending_orders()
 
-        assert result == pending
+        assert len(result) == 1
+        assert result[0]["odno"] == "001"
+        assert result[0]["order_exchange"] == "KRX"
         headers = mock_get.call_args[1].get("headers", {})
         assert headers["tr_id"] == "TTTC0084R"
         params = mock_get.call_args[1].get("params", {})
         assert params["INQR_DVSN_1"] == "0"
         assert params["INQR_DVSN_2"] == "0"
+
+    @pytest.mark.asyncio
+    async def test_live_mode_normalizes_pending_exchange_code(self, settings) -> None:
+        """Pending orders should include normalized order_exchange (KRX/NXT)."""
+        broker = self._make_broker(settings, "live")
+        pending = [
+            {"odno": "001", "pdno": "005930", "psbl_qty": "10", "excg_dvsn_cd": "NXT"},
+            {"odno": "002", "pdno": "000660", "psbl_qty": "3"},
+        ]
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"output": pending})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp):
+            result = await broker.get_domestic_pending_orders()
+
+        assert result[0]["order_exchange"] == "NXT"
+        assert result[1]["order_exchange"] == "KRX"
 
     @pytest.mark.asyncio
     async def test_live_mode_connection_error(self, settings) -> None:
@@ -986,6 +1008,18 @@ class TestCancelDomesticOrder:
         assert body["KRX_FWDG_ORD_ORGNO"] == "BRN456"
         assert body["ORGN_ODNO"] == "ORD123"
         assert body["ORD_QTY"] == "3"
+
+    @pytest.mark.asyncio
+    async def test_cancel_sets_exchange_code_in_body(self, settings) -> None:
+        """Cancel body must include explicit EXCG_ID_DVSN_CD."""
+        broker = self._make_broker(settings, "live")
+        mock_hash, mock_order = self._make_post_mocks({"rt_cd": "0"})
+
+        with patch("aiohttp.ClientSession.post", side_effect=[mock_hash, mock_order]) as mock_post:
+            await broker.cancel_domestic_order("005930", "ORD123", "BRN456", 3, order_exchange="NXT")
+
+        body = mock_post.call_args_list[1][1].get("json", {})
+        assert body["EXCG_ID_DVSN_CD"] == "NXT"
 
     @pytest.mark.asyncio
     async def test_cancel_sets_hashkey_header(self, settings) -> None:
