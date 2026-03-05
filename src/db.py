@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def init_db(db_path: str) -> sqlite3.Connection:
@@ -215,6 +218,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
     if "slot" not in cols:
         conn.execute("ALTER TABLE playbooks ADD COLUMN slot TEXT NOT NULL DEFAULT 'open'")
         conn.commit()
+        logger.info("DB migration: added slot column to playbooks table")
 
     return conn
 

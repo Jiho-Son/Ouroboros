@@ -158,30 +158,56 @@ class PlaybookStore:
         }
 
     def list_recent(self, market: str | None = None, limit: int = 7) -> list[dict]:
-        """List recent playbooks with summary info.
+        """List recent playbooks with summary info, one row per (date, market).
+
+        When a date/market has both 'open' and 'mid' slots, only the 'mid' slot
+        is returned. If only 'open' exists, 'open' is returned.
 
         Args:
             market: Filter by market code. None for all markets.
             limit: Max number of results.
 
         Returns:
-            List of dicts with date, market, status, scenario_count, match_count.
+            List of dicts with date, market, slot, status, scenario_count, match_count.
         """
         if market is not None:
             rows = self._conn.execute(
                 """
-                SELECT date, market, status, scenario_count, match_count
-                FROM playbooks WHERE market = ?
-                ORDER BY date DESC LIMIT ?
+                SELECT p.date, p.market, p.slot, p.status, p.scenario_count, p.match_count
+                FROM playbooks p
+                INNER JOIN (
+                    SELECT date, market,
+                           MAX(CASE slot WHEN 'mid' THEN 1 ELSE 0 END) AS has_mid
+                    FROM playbooks
+                    WHERE market = ?
+                    GROUP BY date, market
+                ) latest ON p.market = latest.market
+                        AND p.date = latest.date
+                        AND (
+                            (latest.has_mid = 1 AND p.slot = 'mid')
+                            OR (latest.has_mid = 0 AND p.slot = 'open')
+                        )
+                ORDER BY p.date DESC LIMIT ?
                 """,
                 (market, limit),
             ).fetchall()
         else:
             rows = self._conn.execute(
                 """
-                SELECT date, market, status, scenario_count, match_count
-                FROM playbooks
-                ORDER BY date DESC LIMIT ?
+                SELECT p.date, p.market, p.slot, p.status, p.scenario_count, p.match_count
+                FROM playbooks p
+                INNER JOIN (
+                    SELECT date, market,
+                           MAX(CASE slot WHEN 'mid' THEN 1 ELSE 0 END) AS has_mid
+                    FROM playbooks
+                    GROUP BY date, market
+                ) latest ON p.market = latest.market
+                        AND p.date = latest.date
+                        AND (
+                            (latest.has_mid = 1 AND p.slot = 'mid')
+                            OR (latest.has_mid = 0 AND p.slot = 'open')
+                        )
+                ORDER BY p.date DESC LIMIT ?
                 """,
                 (limit,),
             ).fetchall()
@@ -189,9 +215,10 @@ class PlaybookStore:
             {
                 "date": row[0],
                 "market": row[1],
-                "status": row[2],
-                "scenario_count": row[3],
-                "match_count": row[4],
+                "slot": row[2],
+                "status": row[3],
+                "scenario_count": row[4],
+                "match_count": row[5],
             }
             for row in rows
         ]
