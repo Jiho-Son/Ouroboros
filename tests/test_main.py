@@ -189,6 +189,9 @@ class TestRealtimeSessionStateHelpers:
     def test_should_reuse_stored_playbook_true_for_non_kr_market(self) -> None:
         assert _should_reuse_stored_playbook(market_code="US_NASDAQ", session_id="US_REG")
 
+    def test_should_reuse_stored_playbook_false_for_us_regular_session(self) -> None:
+        assert not _should_reuse_stored_playbook(market_code="US_NASDAQ", session_id="US_DAY")
+
     def test_should_reuse_stored_playbook_true_for_non_kr_even_with_krx_reg_session_id(
         self,
     ) -> None:
@@ -213,11 +216,11 @@ class TestRealtimeSessionStateHelpers:
             session_id="KRX_REG",
         )
 
-    def test_should_refresh_cached_playbook_on_session_transition_false_for_non_kr(self) -> None:
-        assert not _should_refresh_cached_playbook_on_session_transition(
+    def test_should_refresh_cached_playbook_on_session_transition_true_for_us_regular(self) -> None:
+        assert _should_refresh_cached_playbook_on_session_transition(
             session_changed=True,
             market_code="US_NASDAQ",
-            session_id="KRX_REG",
+            session_id="US_DAY",
         )
 
     def test_refresh_cached_playbook_on_session_transition_drops_existing_kr_cache(self) -> None:
@@ -269,6 +272,17 @@ class TestRealtimeSessionStateHelpers:
         )
         assert not removed
         assert playbooks == {}
+
+    def test_refresh_cached_playbook_on_session_transition_drops_existing_us_cache(self) -> None:
+        playbooks = {"US_NASDAQ": _make_playbook("US_NASDAQ")}
+        removed = _refresh_cached_playbook_on_session_transition(
+            playbooks=playbooks,
+            session_changed=True,
+            market_code="US_NASDAQ",
+            session_id="US_DAY",
+        )
+        assert removed
+        assert "US_NASDAQ" not in playbooks
 
 
 class TestMarketParallelRunner:
@@ -6469,6 +6483,7 @@ class TestHandleDomesticPendingOrders:
             orgn_odno="ORD001",
             krx_fwdg_ord_orgno="BRN01",
             qty=3,
+            order_exchange="KRX",
         )
         broker.send_order.assert_called_once()
         resubmit_kwargs = broker.send_order.call_args[1]
@@ -6514,10 +6529,46 @@ class TestHandleDomesticPendingOrders:
             orgn_odno="0001411200",
             krx_fwdg_ord_orgno="91257",
             qty=15,
+            order_exchange="KRX",
         )
         broker.send_order.assert_not_called()
         assert "KR:006800" in buy_cooldown
         telegram.notify_unfilled_order.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_domestic_pending_cancel_uses_normalized_order_exchange(self) -> None:
+        """Cancel must use order_exchange from normalized pending order payload."""
+        settings = self._make_settings()
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "006800",
+            "orgn_odno": "0001411200",
+            "ord_gno_brno": "91257",
+            "sll_buy_dvsn_cd": "02",  # BUY
+            "psbl_qty": "15",
+            "order_exchange": "NXT",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(65000.0, 0.0, 0.0))
+        broker.send_order = AsyncMock()
+
+        sell_resubmit_counts: dict[str, int] = {"BUY:KR:006800": 1}
+        buy_cooldown: dict[str, float] = {}
+
+        await handle_domestic_pending_orders(
+            broker, telegram, settings, sell_resubmit_counts, buy_cooldown
+        )
+
+        broker.cancel_domestic_order.assert_called_once_with(
+            stock_code="006800",
+            orgn_odno="0001411200",
+            krx_fwdg_ord_orgno="91257",
+            qty=15,
+            order_exchange="NXT",
+        )
 
     @pytest.mark.asyncio
     async def test_sell_pending_is_cancelled_then_resubmitted(self) -> None:
@@ -7950,6 +8001,7 @@ async def test_trigger_emergency_kill_switch_executes_operational_steps() -> Non
                 "orgn_odno": "1",
                 "ord_gno_brno": "01",
                 "psbl_qty": "3",
+                "order_exchange": "NXT",
             }
         ]
     )
@@ -7995,7 +8047,13 @@ async def test_trigger_emergency_kill_switch_executes_operational_steps() -> Non
         "snapshot_state",
         "notify",
     ]
-    broker.cancel_domestic_order.assert_called_once()
+    broker.cancel_domestic_order.assert_called_once_with(
+        stock_code="005930",
+        orgn_odno="1",
+        krx_fwdg_ord_orgno="01",
+        qty=3,
+        order_exchange="NXT",
+    )
     broker.get_balance.assert_called_once()
     telegram.notify_circuit_breaker.assert_called_once_with(
         pnl_pct=-3.2,

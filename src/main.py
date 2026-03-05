@@ -1370,6 +1370,7 @@ async def _cancel_pending_orders_for_kill_switch(
             try:
                 orgn_odno = order.get("orgn_odno", "")
                 krx_fwdg_ord_orgno = order.get("ord_gno_brno", "")
+                order_exchange = str(order.get("order_exchange") or "KRX")
                 psbl_qty = int(order.get("psbl_qty", "0") or "0")
                 if not stock_code or not orgn_odno or psbl_qty <= 0:
                     continue
@@ -1378,6 +1379,7 @@ async def _cancel_pending_orders_for_kill_switch(
                     orgn_odno=orgn_odno,
                     krx_fwdg_ord_orgno=krx_fwdg_ord_orgno,
                     qty=psbl_qty,
+                    order_exchange=order_exchange,
                 )
                 if cancel_result.get("rt_cd") != "0":
                     failures.append(
@@ -2424,6 +2426,7 @@ async def handle_domestic_pending_orders(
             stock_code = order.get("pdno", "")
             orgn_odno = order.get("orgn_odno", "") or order.get("odno", "")
             krx_fwdg_ord_orgno = order.get("ord_gno_brno", "")
+            order_exchange = str(order.get("order_exchange") or "KRX")
             sll_buy = order.get("sll_buy_dvsn_cd", "")  # "01"=SELL, "02"=BUY
             psbl_qty = int(order.get("psbl_qty", "0") or "0")
             key = f"KR:{stock_code}"
@@ -2437,6 +2440,7 @@ async def handle_domestic_pending_orders(
                 orgn_odno=orgn_odno,
                 krx_fwdg_ord_orgno=krx_fwdg_ord_orgno,
                 qty=psbl_qty,
+                order_exchange=order_exchange,
             )
             if cancel_result.get("rt_cd") != "0":
                 logger.warning(
@@ -3774,10 +3778,14 @@ def _should_reuse_stored_playbook(*, market_code: str, session_id: str) -> bool:
     """Return whether DB-stored playbook can be reused for realtime loop bootstrap.
 
     For KR regular session (`KRX_REG`), always generate a fresh playbook instead of
-    reusing an earlier session's stored playbook (issue #419). Other markets/sessions
-    keep existing behavior and may reuse stored playbooks.
+    reusing an earlier session's stored playbook (issue #419). For US regular
+    session (`US_DAY`), also generate a fresh playbook on session transition so
+    pre-market assumptions do not leak into regular session.
     """
-    return not (market_code == "KR" and session_id == "KRX_REG")
+    return not (
+        (market_code == "KR" and session_id == "KRX_REG")
+        or (market_code.startswith("US") and session_id == "US_DAY")
+    )
 
 
 def _should_refresh_cached_playbook_on_session_transition(
@@ -4539,9 +4547,10 @@ async def run(settings: Settings) -> None:
                     session_changed = _has_market_session_transition(
                         _market_states, market.code, session_info.session_id
                     )
-                    # Force KR regular-session playbook regeneration on session transition.
-                    # Without this, an in-memory playbook created in NXT_PRE can persist
-                    # into KRX_REG and bypass the stored-playbook reuse gate.
+                    # Force KR/US regular-session playbook regeneration on session transition.
+                    # Without this, an in-memory playbook created in pre-market sessions
+                    # (e.g., NXT_PRE, US_PRE) can persist into regular sessions
+                    # (KRX_REG, US_DAY) and bypass the stored-playbook reuse gate.
                     if _refresh_cached_playbook_on_session_transition(
                         playbooks=playbooks,
                         session_changed=session_changed,
