@@ -46,6 +46,7 @@ from src.main import (
     _run_markets_in_parallel,
     _should_block_overseas_buy_for_fx_buffer,
     _should_force_exit_for_overnight,
+    _should_refresh_cached_playbook_on_session_transition,
     _should_rescan_market,
     _should_reuse_stored_playbook,
     _split_trade_pnl_components,
@@ -180,9 +181,42 @@ class TestRealtimeSessionStateHelpers:
     def test_should_reuse_stored_playbook_false_for_kr_regular_session(self) -> None:
         assert not _should_reuse_stored_playbook(market_code="KR", session_id="KRX_REG")
 
-    def test_should_reuse_stored_playbook_true_for_non_kr_or_non_regular_session(self) -> None:
+    def test_should_reuse_stored_playbook_true_for_kr_non_regular_session(self) -> None:
         assert _should_reuse_stored_playbook(market_code="KR", session_id="NXT_PRE")
+
+    def test_should_reuse_stored_playbook_true_for_non_kr_market(self) -> None:
         assert _should_reuse_stored_playbook(market_code="US_NASDAQ", session_id="US_REG")
+
+    def test_should_reuse_stored_playbook_true_for_non_kr_even_with_krx_reg_session_id(
+        self,
+    ) -> None:
+        assert _should_reuse_stored_playbook(market_code="US_NASDAQ", session_id="KRX_REG")
+
+    def test_should_reuse_stored_playbook_true_for_kr_nxt_after_session(self) -> None:
+        assert _should_reuse_stored_playbook(market_code="KR", session_id="NXT_AFTER")
+
+    def test_should_refresh_cached_playbook_on_session_transition_true_for_kr_krx_reg(self) -> None:
+        assert _should_refresh_cached_playbook_on_session_transition(
+            session_changed=True,
+            market_code="KR",
+            session_id="KRX_REG",
+        )
+
+    def test_should_refresh_cached_playbook_on_session_transition_false_without_transition(
+        self,
+    ) -> None:
+        assert not _should_refresh_cached_playbook_on_session_transition(
+            session_changed=False,
+            market_code="KR",
+            session_id="KRX_REG",
+        )
+
+    def test_should_refresh_cached_playbook_on_session_transition_false_for_non_kr(self) -> None:
+        assert not _should_refresh_cached_playbook_on_session_transition(
+            session_changed=True,
+            market_code="US_NASDAQ",
+            session_id="KRX_REG",
+        )
 
 class TestMarketParallelRunner:
     """Tests for market-level parallel processing helper."""
@@ -5059,6 +5093,7 @@ class TestDailyCBBaseline:
 
         # Must return the original baseline, NOT the new total_eval (58000)
         assert result == 55000.0
+
 
 
 @pytest.mark.asyncio

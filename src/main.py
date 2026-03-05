@@ -3768,6 +3768,16 @@ def _should_reuse_stored_playbook(*, market_code: str, session_id: str) -> bool:
     return not (market_code == "KR" and session_id == "KRX_REG")
 
 
+def _should_refresh_cached_playbook_on_session_transition(
+    *, session_changed: bool, market_code: str, session_id: str
+) -> bool:
+    """Return True when session transition requires dropping cached playbook."""
+    return session_changed and not _should_reuse_stored_playbook(
+        market_code=market_code,
+        session_id=session_id,
+    )
+
+
 async def _run_markets_in_parallel(
     markets: list[Any], processor: Callable[[Any], Awaitable[None]]
 ) -> None:
@@ -4497,6 +4507,20 @@ async def run(settings: Settings) -> None:
                     session_changed = _has_market_session_transition(
                         _market_states, market.code, session_info.session_id
                     )
+                    # Force KR regular-session playbook regeneration on session transition.
+                    # Without this, an in-memory playbook created in NXT_PRE can persist
+                    # into KRX_REG and bypass the stored-playbook reuse gate.
+                    if _should_refresh_cached_playbook_on_session_transition(
+                        session_changed=session_changed,
+                        market_code=market.code,
+                        session_id=session_info.session_id,
+                    ):
+                        playbooks.pop(market.code, None)
+                        logger.info(
+                            "Session transition requires fresh playbook for %s session=%s",
+                            market.code,
+                            session_info.session_id,
+                        )
                     if session_changed:
                         try:
                             await telegram.notify_market_open(market.name)
