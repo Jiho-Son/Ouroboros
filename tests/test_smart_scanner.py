@@ -375,6 +375,128 @@ class TestSmartVolatilityScanner:
 
         assert [c.stock_code for c in candidates] == ["ABCD"]
 
+    @pytest.mark.asyncio
+    async def test_scan_overseas_rankings_filters_penny_stocks(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock, mock_settings: Settings
+    ) -> None:
+        """랭킹 API 결과에서 US_MIN_PRICE 미만 종목은 candidates에서 제외된다."""
+        analyzer = VolatilityAnalyzer()
+        scanner = SmartVolatilityScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=analyzer,
+            settings=mock_settings,
+        )
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        # IBO ($0.68), TPET ($1.35) — 둘 다 US_MIN_PRICE($5) 미만
+        # NVDA ($780.2) — 정상 통과
+        mock_overseas_broker.fetch_overseas_rankings.return_value = [
+            {"symb": "IBO", "last": "0.68", "rate": "25.0", "tvol": "50000000"},
+            {"symb": "TPET", "last": "1.35", "rate": "20.0", "tvol": "30000000"},
+            {"symb": "NVDA", "last": "780.2", "rate": "5.0", "tvol": "12000000"},
+        ]
+
+        candidates = await scanner.scan(market=market)
+
+        codes = [c.stock_code for c in candidates]
+        assert "IBO" not in codes
+        assert "TPET" not in codes
+        assert "NVDA" in codes
+
+    @pytest.mark.asyncio
+    async def test_scan_overseas_rankings_allows_stocks_above_min_price(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock, mock_settings: Settings
+    ) -> None:
+        """US_MIN_PRICE 이상 종목은 정상적으로 candidates에 포함된다."""
+        analyzer = VolatilityAnalyzer()
+        scanner = SmartVolatilityScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=analyzer,
+            settings=mock_settings,
+        )
+        market = MagicMock()
+        market.name = "NYSE"
+        market.code = "US_NYSE"
+        market.exchange_code = "NYSE"
+        market.is_domestic = False
+
+        mock_overseas_broker.fetch_overseas_rankings.return_value = [
+            {"symb": "GOTU", "last": "6.50", "rate": "8.0", "tvol": "5000000"},
+        ]
+
+        candidates = await scanner.scan(market=market)
+
+        assert any(c.stock_code == "GOTU" for c in candidates)
+
+    @pytest.mark.asyncio
+    async def test_scan_overseas_symbols_filters_penny_stocks(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock, mock_settings: Settings
+    ) -> None:
+        """fallback symbols 경로에서도 US_MIN_PRICE 미만 종목은 제외된다."""
+        analyzer = VolatilityAnalyzer()
+        scanner = SmartVolatilityScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=analyzer,
+            settings=mock_settings,
+        )
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        # 랭킹 API 비활성화 → fallback 경로 사용
+        mock_overseas_broker.fetch_overseas_rankings.return_value = []
+
+        # IBO($0.68, 변동성 25%) — US_MIN_PRICE 미만으로 제외
+        # NVDA($780.2, 변동성 5%) — 정상 포함
+        mock_overseas_broker.get_overseas_price.side_effect = [
+            {"output": {"last": "0.68", "rate": "25.0", "tvol": "50000000"}},
+            {"output": {"last": "780.2", "rate": "5.0", "tvol": "12000000"}},
+        ]
+
+        candidates = await scanner.scan(market=market, fallback_stocks=["IBO", "NVDA"])
+
+        codes = [c.stock_code for c in candidates]
+        assert "IBO" not in codes
+        assert "NVDA" in codes
+
+    @pytest.mark.asyncio
+    async def test_scan_overseas_does_not_fallback_when_rankings_filtered_all_out(
+        self, mock_broker: MagicMock, mock_overseas_broker: MagicMock, mock_settings: Settings
+    ) -> None:
+        """랭킹 응답은 있었지만 전량 필터링된 경우 fallback symbols를 사용하지 않는다."""
+        analyzer = VolatilityAnalyzer()
+        scanner = SmartVolatilityScanner(
+            broker=mock_broker,
+            overseas_broker=mock_overseas_broker,
+            volatility_analyzer=analyzer,
+            settings=mock_settings,
+        )
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+
+        # 랭킹 API 데이터는 존재하지만 전부 US_MIN_PRICE 미만.
+        mock_overseas_broker.fetch_overseas_rankings.return_value = [
+            {"symb": "IBO", "last": "0.68", "rate": "25.0", "tvol": "50000000"},
+            {"symb": "TPET", "last": "1.35", "rate": "20.0", "tvol": "30000000"},
+        ]
+
+        candidates = await scanner.scan(market=market, fallback_stocks=["NVDA"])
+
+        assert candidates == []
+        mock_overseas_broker.get_overseas_price.assert_not_called()
+
 
 class TestImpliedRSIFormula:
     """Test the implied_rsi formula in SmartVolatilityScanner (issue #181)."""
