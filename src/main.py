@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import signal
 import threading
 from collections.abc import Awaitable, Callable
@@ -910,6 +911,8 @@ def _apply_staged_exit_override_for_hold(
     take_profit_threshold = 3.0
     if stock_playbook and stock_playbook.scenarios:
         playbook_stop_loss_threshold = safe_float(stock_playbook.scenarios[0].stop_loss_pct, -2.0)
+        if not math.isfinite(playbook_stop_loss_threshold):
+            playbook_stop_loss_threshold = -2.0
         stop_loss_threshold = playbook_stop_loss_threshold
         take_profit_threshold = stock_playbook.scenarios[0].take_profit_pct
     atr_value = safe_float(market_data.get("atr_value"), 0.0)
