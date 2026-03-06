@@ -433,6 +433,53 @@ async def _compute_kr_atr_value(
     return max(0.0, _VOLATILITY_ANALYZER.calculate_atr(highs, lows, closes, period=period))
 
 
+async def _compute_overseas_atr_value(
+    *,
+    overseas_broker: OverseasBroker,
+    exchange_code: str,
+    stock_code: str,
+    period: int = 14,
+) -> float:
+    """Compute ATR(period) for overseas stocks using daily OHLC."""
+    days = max(period + 1, 30)
+    try:
+        daily_prices = await _retry_connection(
+            overseas_broker.get_daily_prices,
+            exchange_code,
+            stock_code,
+            days=days,
+            label=f"overseas_daily_prices:{exchange_code}:{stock_code}",
+        )
+    except ConnectionError as exc:
+        logger.warning("Overseas ATR source unavailable for %s/%s: %s", exchange_code, stock_code, exc)
+        return 0.0
+    except Exception as exc:
+        logger.warning("Unexpected overseas ATR fetch failure for %s/%s: %s", exchange_code, stock_code, exc)
+        return 0.0
+
+    if not isinstance(daily_prices, list):
+        return 0.0
+
+    highs: list[float] = []
+    lows: list[float] = []
+    closes: list[float] = []
+    for row in daily_prices:
+        if not isinstance(row, dict):
+            continue
+        high = safe_float(row.get("high"), 0.0)
+        low = safe_float(row.get("low"), 0.0)
+        close = safe_float(row.get("close"), 0.0)
+        if high <= 0 or low <= 0 or close <= 0:
+            continue
+        highs.append(high)
+        lows.append(low)
+        closes.append(close)
+
+    if len(highs) < period + 1 or len(lows) < period + 1 or len(closes) < period + 1:
+        return 0.0
+    return max(0.0, _VOLATILITY_ANALYZER.calculate_atr(highs, lows, closes, period=period))
+
+
 async def _inject_staged_exit_features(
     *,
     market: MarketInfo,
@@ -440,6 +487,7 @@ async def _inject_staged_exit_features(
     open_position: dict[str, Any] | None,
     market_data: dict[str, Any],
     broker: KISBroker | None,
+    overseas_broker: OverseasBroker | None = None,
 ) -> None:
     """Inject ATR/pred_down_prob used by staged exit evaluation."""
     if not open_position:
@@ -455,6 +503,14 @@ async def _inject_staged_exit_features(
     if market.is_domestic and broker is not None:
         market_data["atr_value"] = await _compute_kr_atr_value(
             broker=broker,
+            stock_code=stock_code,
+        )
+        return
+
+    if not market.is_domestic and overseas_broker is not None:
+        market_data["atr_value"] = await _compute_overseas_atr_value(
+            overseas_broker=overseas_broker,
+            exchange_code=market.exchange_code,
             stock_code=stock_code,
         )
         return
@@ -1903,6 +1959,7 @@ async def trading_cycle(
             open_position=open_position,
             market_data=market_data,
             broker=broker,
+            overseas_broker=overseas_broker,
         )
         decision = _apply_staged_exit_override_for_hold(
             decision=decision,
@@ -3279,6 +3336,7 @@ async def run_daily_session(
                     open_position=daily_open,
                     market_data=stock_data,
                     broker=broker,
+                    overseas_broker=overseas_broker,
                 )
                 decision = _apply_staged_exit_override_for_hold(
                     decision=decision,

@@ -56,6 +56,61 @@ class OverseasBroker:
         """
         self._broker = kis_broker
 
+    async def get_daily_prices(
+        self,
+        exchange_code: str,
+        stock_code: str,
+        days: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Fetch overseas daily OHLCV history for a stock."""
+        await self._broker._rate_limiter.acquire()
+        session = self._broker._get_session()
+
+        headers = await self._broker._auth_headers("HHDFS76240000")
+        price_excd = _PRICE_EXCHANGE_MAP.get(exchange_code, exchange_code)
+        params = {
+            "AUTH": "",
+            "EXCD": price_excd,
+            "SYMB": stock_code,
+            "GUBN": "0",
+            "BYMD": "",
+            "MODP": "1",
+        }
+        url = f"{self._broker._base_url}/uapi/overseas-price/v1/quotations/dailyprice"
+
+        try:
+            async with session.get(url, headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise ConnectionError(f"get_daily_prices failed ({resp.status}): {text}")
+                data = await resp.json()
+
+            def _safe_float(value: str | float | None, default: float = 0.0) -> float:
+                if value is None or value == "":
+                    return default
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    return default
+
+            prices: list[dict[str, Any]] = []
+            for item in data.get("output2", []):
+                prices.append(
+                    {
+                        "date": item.get("xymd", ""),
+                        "open": _safe_float(item.get("open"), 0.0),
+                        "high": _safe_float(item.get("high"), 0.0),
+                        "low": _safe_float(item.get("low"), 0.0),
+                        "close": _safe_float(item.get("clos"), 0.0),
+                        "volume": _safe_float(item.get("tvol"), 0.0),
+                    }
+                )
+
+            prices.reverse()
+            return prices[:days]
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise ConnectionError(f"Network error fetching overseas daily prices: {exc}") from exc
+
     async def get_overseas_price(self, exchange_code: str, stock_code: str) -> dict[str, Any]:
         """
         Fetch overseas stock price.

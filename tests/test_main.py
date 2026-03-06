@@ -616,6 +616,82 @@ async def test_inject_staged_exit_features_sets_pred_down_prob_and_atr_for_kr() 
     assert stock_data["atr_value"] > 0.0
 
 
+@pytest.mark.asyncio
+async def test_inject_staged_exit_features_sets_atr_for_overseas() -> None:
+    market = MagicMock()
+    market.is_domestic = False
+    market.exchange_code = "NASD"
+    stock_data: dict[str, float] = {"rsi": 55.0}
+
+    overseas_broker = MagicMock()
+    overseas_broker.get_daily_prices = AsyncMock(
+        return_value=[
+            {"high": 102.0 + i, "low": 98.0 + i, "close": 100.0 + i}
+            for i in range(40)
+        ]
+    )
+
+    await _inject_staged_exit_features(
+        market=market,
+        stock_code="AAPL",
+        open_position={"price": 100.0, "quantity": 1},
+        market_data=stock_data,
+        broker=None,
+        overseas_broker=overseas_broker,
+    )
+
+    assert stock_data["pred_down_prob"] == pytest.approx(0.55)
+    assert stock_data["atr_value"] > 0.0
+
+
+@pytest.mark.asyncio
+async def test_inject_staged_exit_features_returns_zero_atr_for_overseas_short_series() -> None:
+    market = MagicMock()
+    market.is_domestic = False
+    market.exchange_code = "NASD"
+    stock_data: dict[str, float] = {"rsi": 55.0}
+
+    overseas_broker = MagicMock()
+    overseas_broker.get_daily_prices = AsyncMock(
+        return_value=[{"high": 102.0, "low": 98.0, "close": 100.0}] * 10
+    )
+
+    await _inject_staged_exit_features(
+        market=market,
+        stock_code="AAPL",
+        open_position={"price": 100.0, "quantity": 1},
+        market_data=stock_data,
+        broker=None,
+        overseas_broker=overseas_broker,
+    )
+
+    assert stock_data["pred_down_prob"] == pytest.approx(0.55)
+    assert stock_data["atr_value"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_inject_staged_exit_features_returns_zero_atr_on_overseas_connection_error() -> None:
+    market = MagicMock()
+    market.is_domestic = False
+    market.exchange_code = "NASD"
+    stock_data: dict[str, float] = {"rsi": 55.0}
+
+    overseas_broker = MagicMock()
+    overseas_broker.get_daily_prices = AsyncMock(side_effect=ConnectionError("timeout"))
+
+    await _inject_staged_exit_features(
+        market=market,
+        stock_code="AAPL",
+        open_position={"price": 100.0, "quantity": 1},
+        market_data=stock_data,
+        broker=None,
+        overseas_broker=overseas_broker,
+    )
+
+    assert stock_data["pred_down_prob"] == pytest.approx(0.55)
+    assert stock_data["atr_value"] == 0.0
+
+
 def test_apply_staged_exit_uses_independent_arm_threshold_settings() -> None:
     market = MagicMock()
     market.code = "KR"
