@@ -86,6 +86,12 @@ _SESSION_RISK_LAST_BY_MARKET: dict[str, str] = {}
 _SESSION_RISK_OVERRIDES_BY_MARKET: dict[str, dict[str, Any]] = {}
 
 
+def _ensure_runtime_mode_allowed(mode: str) -> None:
+    """Reject runtime execution modes that are banned by policy."""
+    if mode == "paper":
+        raise ValueError("paper mode runtime execution is banned")
+
+
 def safe_float(value: str | float | None, default: float = 0.0) -> float:
     """Convert to float, handling empty strings and None.
 
@@ -427,6 +433,63 @@ async def _compute_kr_atr_value(
     return max(0.0, _VOLATILITY_ANALYZER.calculate_atr(highs, lows, closes, period=period))
 
 
+async def _compute_overseas_atr_value(
+    *,
+    overseas_broker: OverseasBroker,
+    exchange_code: str,
+    stock_code: str,
+    period: int = 14,
+) -> float:
+    """Compute ATR(period) for overseas stocks using daily OHLC."""
+    days = max(period + 1, 30)
+    try:
+        daily_prices = await _retry_connection(
+            overseas_broker.get_daily_prices,
+            exchange_code,
+            stock_code,
+            days=days,
+            label=f"overseas_daily_prices:{exchange_code}:{stock_code}",
+        )
+    except ConnectionError as exc:
+        logger.warning(
+            "Overseas ATR source unavailable for %s/%s: %s",
+            exchange_code,
+            stock_code,
+            exc,
+        )
+        return 0.0
+    except Exception as exc:
+        logger.warning(
+            "Unexpected overseas ATR fetch failure for %s/%s: %s",
+            exchange_code,
+            stock_code,
+            exc,
+        )
+        return 0.0
+
+    if not isinstance(daily_prices, list):
+        return 0.0
+
+    highs: list[float] = []
+    lows: list[float] = []
+    closes: list[float] = []
+    for row in daily_prices:
+        if not isinstance(row, dict):
+            continue
+        high = safe_float(row.get("high"), 0.0)
+        low = safe_float(row.get("low"), 0.0)
+        close = safe_float(row.get("close"), 0.0)
+        if high <= 0 or low <= 0 or close <= 0:
+            continue
+        highs.append(high)
+        lows.append(low)
+        closes.append(close)
+
+    if len(highs) < period + 1 or len(lows) < period + 1 or len(closes) < period + 1:
+        return 0.0
+    return max(0.0, _VOLATILITY_ANALYZER.calculate_atr(highs, lows, closes, period=period))
+
+
 async def _inject_staged_exit_features(
     *,
     market: MarketInfo,
@@ -434,6 +497,7 @@ async def _inject_staged_exit_features(
     open_position: dict[str, Any] | None,
     market_data: dict[str, Any],
     broker: KISBroker | None,
+    overseas_broker: OverseasBroker | None = None,
 ) -> None:
     """Inject ATR/pred_down_prob used by staged exit evaluation."""
     if not open_position:
@@ -449,6 +513,14 @@ async def _inject_staged_exit_features(
     if market.is_domestic and broker is not None:
         market_data["atr_value"] = await _compute_kr_atr_value(
             broker=broker,
+            stock_code=stock_code,
+        )
+        return
+
+    if not market.is_domestic and overseas_broker is not None:
+        market_data["atr_value"] = await _compute_overseas_atr_value(
+            overseas_broker=overseas_broker,
+            exchange_code=market.exchange_code,
             stock_code=stock_code,
         )
         return
@@ -1897,6 +1969,7 @@ async def trading_cycle(
             open_position=open_position,
             market_data=market_data,
             broker=broker,
+            overseas_broker=overseas_broker,
         )
         decision = _apply_staged_exit_override_for_hold(
             decision=decision,
@@ -3273,6 +3346,7 @@ async def run_daily_session(
                     open_position=daily_open,
                     market_data=stock_data,
                     broker=broker,
+                    overseas_broker=overseas_broker,
                 )
                 decision = _apply_staged_exit_override_for_hold(
                     decision=decision,
@@ -3800,7 +3874,7 @@ def _should_mid_session_refresh(
 ) -> bool:
     """Return True when a mid-session playbook refresh should fire.
 
-    Triggers once per day at 12:00 (local market time) during the regular session.
+    Triggers once per day at or after 12:00 (local market time) during the regular session.
     Considers all stored slots; 'mid' takes priority over all others.
     """
     expected_session = _MID_SESSION_REFRESH_SESSIONS.get(market_code)
@@ -3810,7 +3884,7 @@ def _should_mid_session_refresh(
         return False
     market_tz = _MID_SESSION_REFRESH_TZ.get(market_code, UTC)
     local_now = now.astimezone(market_tz)
-    return local_now.hour == 12 and local_now.minute == 0
+    return local_now.hour >= 12
 
 
 def _should_reuse_stored_playbook(*, market_code: str, session_id: str) -> bool:
@@ -3970,6 +4044,7 @@ def _apply_dashboard_flag(settings: Settings, dashboard_flag: bool) -> Settings:
 
 async def run(settings: Settings) -> None:
     """Main async loop — iterate over open markets on a timer."""
+    _ensure_runtime_mode_allowed(settings.MODE)
     global BLACKOUT_ORDER_MANAGER
     BLACKOUT_ORDER_MANAGER = BlackoutOrderManager(
         enabled=settings.ORDER_BLACKOUT_ENABLED,
@@ -4955,8 +5030,8 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         choices=["paper", "live"],
-        default="paper",
-        help="Trading mode (default: paper)",
+        default=None,
+        help="Trading mode override (live only; omit to use environment/default settings)",
     )
     parser.add_argument(
         "--dashboard",
@@ -4966,7 +5041,8 @@ def main() -> None:
     args = parser.parse_args()
 
     setup_logging()
-    settings = Settings(MODE=args.mode)  # type: ignore[call-arg]
+    settings = Settings() if args.mode is None else Settings(MODE=args.mode)  # type: ignore[call-arg]
+    _ensure_runtime_mode_allowed(settings.MODE)
     settings = _apply_dashboard_flag(settings, args.dashboard)
     asyncio.run(run(settings))
 

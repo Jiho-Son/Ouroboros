@@ -211,6 +211,173 @@ class TestFetchOverseasRankings:
         result = await overseas_broker.fetch_overseas_rankings("NASD")
         assert result == []
 
+
+class TestGetDailyPrices:
+    """Test overseas daily-price history fetch for ATR calculation."""
+
+    @pytest.mark.asyncio
+    async def test_get_daily_prices_uses_kis_dailyprice_api(
+        self,
+        overseas_broker: OverseasBroker,
+    ) -> None:
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={
+                "output2": [
+                    {
+                        "xymd": "20260307",
+                        "open": "101.0",
+                        "high": "105.0",
+                        "low": "99.0",
+                        "clos": "104.0",
+                        "tvol": "12345",
+                    },
+                    {
+                        "xymd": "20260306",
+                        "open": "100.0",
+                        "high": "104.0",
+                        "low": "98.0",
+                        "clos": "103.0",
+                        "tvol": "12000",
+                    },
+                ]
+            }
+        )
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
+
+        _setup_broker_mocks(overseas_broker, mock_session)
+        overseas_broker._broker._auth_headers = AsyncMock(
+            return_value={"authorization": "Bearer test"}
+        )
+
+        rows = await overseas_broker.get_daily_prices("NASD", "AAPL", days=2)
+
+        assert rows == [
+            {
+                "date": "20260306",
+                "open": 100.0,
+                "high": 104.0,
+                "low": 98.0,
+                "close": 103.0,
+                "volume": 12000.0,
+            },
+            {
+                "date": "20260307",
+                "open": 101.0,
+                "high": 105.0,
+                "low": 99.0,
+                "close": 104.0,
+                "volume": 12345.0,
+            },
+        ]
+
+        call_args = mock_session.get.call_args
+        url = call_args[0][0]
+        params = call_args[1]["params"]
+        assert "/uapi/overseas-price/v1/quotations/dailyprice" in url
+        assert params["AUTH"] == ""
+        assert params["EXCD"] == "NAS"
+        assert params["SYMB"] == "AAPL"
+        assert params["GUBN"] == "0"
+        assert params["MODP"] == "1"
+
+        overseas_broker._broker._auth_headers.assert_called_with("HHDFS76240000")
+
+    @pytest.mark.asyncio
+    async def test_get_daily_prices_returns_most_recent_days_in_chronological_order(
+        self,
+        overseas_broker: OverseasBroker,
+    ) -> None:
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={
+                "output2": [
+                    {
+                        "xymd": "20260307",
+                        "open": "107",
+                        "high": "108",
+                        "low": "106",
+                        "clos": "107.5",
+                        "tvol": "1007",
+                    },
+                    {
+                        "xymd": "20260306",
+                        "open": "106",
+                        "high": "107",
+                        "low": "105",
+                        "clos": "106.5",
+                        "tvol": "1006",
+                    },
+                    {
+                        "xymd": "20260305",
+                        "open": "105",
+                        "high": "106",
+                        "low": "104",
+                        "clos": "105.5",
+                        "tvol": "1005",
+                    },
+                    {
+                        "xymd": "20260304",
+                        "open": "104",
+                        "high": "105",
+                        "low": "103",
+                        "clos": "104.5",
+                        "tvol": "1004",
+                    },
+                ]
+            }
+        )
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
+
+        _setup_broker_mocks(overseas_broker, mock_session)
+        overseas_broker._broker._auth_headers = AsyncMock(
+            return_value={"authorization": "Bearer test"}
+        )
+
+        rows = await overseas_broker.get_daily_prices("NASD", "AAPL", days=2)
+
+        assert [row["date"] for row in rows] == ["20260306", "20260307"]
+
+    @pytest.mark.asyncio
+    async def test_get_daily_prices_raises_on_non_200(
+        self,
+        overseas_broker: OverseasBroker,
+    ) -> None:
+        mock_resp = AsyncMock()
+        mock_resp.status = 500
+        mock_resp.text = AsyncMock(return_value="Internal Server Error")
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
+
+        _setup_broker_mocks(overseas_broker, mock_session)
+
+        with pytest.raises(ConnectionError, match="500"):
+            await overseas_broker.get_daily_prices("NASD", "AAPL")
+
+    @pytest.mark.asyncio
+    async def test_get_daily_prices_raises_on_network_error(
+        self,
+        overseas_broker: OverseasBroker,
+    ) -> None:
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(side_effect=aiohttp.ClientError("timeout"))
+        cm.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=cm)
+
+        _setup_broker_mocks(overseas_broker, mock_session)
+
+        with pytest.raises(ConnectionError, match="Network error"):
+            await overseas_broker.get_daily_prices("NASD", "AAPL")
+
     @pytest.mark.asyncio
     async def test_ranking_disabled_returns_empty(self, overseas_broker: OverseasBroker) -> None:
         """When OVERSEAS_RANKING_ENABLED=False, should return empty immediately."""
