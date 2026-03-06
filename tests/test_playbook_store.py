@@ -188,6 +188,18 @@ class TestSchema:
             slots = [r[0] for r in rows]
             assert "open" in slots
             assert "mid" in slots
+
+            # Step 6: 보조 인덱스가 재생성됐는지 확인 (issue #435 Medium)
+            index_names = {
+                r[1]
+                for r in conn_new.execute("PRAGMA index_list('playbooks')").fetchall()
+            }
+            assert "idx_playbooks_date" in index_names, (
+                f"idx_playbooks_date missing after rebuild; found: {index_names}"
+            )
+            assert "idx_playbooks_market" in index_names, (
+                f"idx_playbooks_market missing after rebuild; found: {index_names}"
+            )
             conn_new.close()
         finally:
             os.unlink(db_path)

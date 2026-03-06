@@ -262,6 +262,13 @@ def init_db(db_path: str) -> sqlite3.Connection:
             )
             conn.execute("DROP TABLE playbooks")
             conn.execute("ALTER TABLE playbooks_v2 RENAME TO playbooks")
+            # Restore indexes dropped with the old table (issue #435)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playbooks_date ON playbooks(date)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playbooks_market ON playbooks(market)"
+            )
             conn.commit()
             logger.info(
                 "DB migration: rebuilt playbooks table with UNIQUE(date, market, slot)"
