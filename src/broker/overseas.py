@@ -107,7 +107,7 @@ class OverseasBroker:
                 )
 
             prices.reverse()
-            return prices[:days]
+            return prices[-days:]
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching overseas daily prices: {exc}") from exc
 

@@ -5030,8 +5030,8 @@ def main() -> None:
     parser.add_argument(
         "--mode",
         choices=["paper", "live"],
-        default="paper",
-        help="Trading mode (default: paper)",
+        default=None,
+        help="Trading mode override (live only; omit to use environment/default settings)",
     )
     parser.add_argument(
         "--dashboard",
@@ -5041,8 +5041,8 @@ def main() -> None:
     args = parser.parse_args()
 
     setup_logging()
-    _ensure_runtime_mode_allowed(args.mode)
-    settings = Settings(MODE=args.mode)  # type: ignore[call-arg]
+    settings = Settings() if args.mode is None else Settings(MODE=args.mode)  # type: ignore[call-arg]
+    _ensure_runtime_mode_allowed(settings.MODE)
     settings = _apply_dashboard_flag(settings, args.dashboard)
     asyncio.run(run(settings))
 

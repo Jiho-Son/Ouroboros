@@ -107,6 +107,25 @@ def test_main_rejects_paper_mode() -> None:
     mock_asyncio_run.assert_not_called()
 
 
+def test_main_does_not_force_mode_when_flag_omitted() -> None:
+    args = MagicMock(mode=None, dashboard=False)
+    settings = MagicMock()
+    settings.MODE = "live"
+
+    with (
+        patch("argparse.ArgumentParser.parse_args", return_value=args),
+        patch("src.main.setup_logging"),
+        patch("src.main.Settings", return_value=settings) as mock_settings,
+        patch("src.main._apply_dashboard_flag", side_effect=lambda s, _: s),
+        patch("src.main.asyncio.run", side_effect=lambda coro: coro.close()) as mock_asyncio_run,
+        patch("src.main.run", new=AsyncMock()),
+    ):
+        main_module.main()
+
+    mock_settings.assert_called_once_with()
+    mock_asyncio_run.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_run_rejects_paper_mode_before_runtime_init() -> None:
     settings = _make_settings(MODE="paper")
