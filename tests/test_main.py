@@ -8297,20 +8297,12 @@ class TestMidSessionRefresh:
             now=now, mid_refreshed=set()
         ) is False
 
-    def test_does_not_trigger_after_noon(self) -> None:
-        """12:01에는 False."""
-        now = self._make_dt(12, 1, "America/New_York")
-        assert _should_mid_session_refresh(
-            market_code="US_AMEX", session_id="US_REG",
-            now=now, mid_refreshed=set()
-        ) is False
-
     def test_triggers_after_noon_if_not_yet_refreshed(self) -> None:
         """루프 드리프트로 12:01에 도달해도 아직 미실행이면 True."""
         now = self._make_dt(12, 1, "America/New_York")
         assert _should_mid_session_refresh(
             market_code="US_AMEX", session_id="US_REG",
-            now=now, mid_refreshed=set(),
+            now=now, mid_refreshed=set()
         ) is True
 
     def test_does_not_trigger_wrong_session(self) -> None:
