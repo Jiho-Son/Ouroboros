@@ -3874,7 +3874,7 @@ def _should_mid_session_refresh(
 ) -> bool:
     """Return True when a mid-session playbook refresh should fire.
 
-    Triggers once per day at 12:00 (local market time) during the regular session.
+    Triggers once per day at or after 12:00 (local market time) during the regular session.
     Considers all stored slots; 'mid' takes priority over all others.
     """
     expected_session = _MID_SESSION_REFRESH_SESSIONS.get(market_code)
@@ -3884,7 +3884,7 @@ def _should_mid_session_refresh(
         return False
     market_tz = _MID_SESSION_REFRESH_TZ.get(market_code, UTC)
     local_now = now.astimezone(market_tz)
-    return local_now.hour == 12 and local_now.minute == 0
+    return local_now.hour >= 12
 
 
 def _should_reuse_stored_playbook(*, market_code: str, session_id: str) -> bool:
