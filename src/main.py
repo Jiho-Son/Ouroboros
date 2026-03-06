@@ -86,6 +86,12 @@ _SESSION_RISK_LAST_BY_MARKET: dict[str, str] = {}
 _SESSION_RISK_OVERRIDES_BY_MARKET: dict[str, dict[str, Any]] = {}
 
 
+def _ensure_runtime_mode_allowed(mode: str) -> None:
+    """Reject runtime execution modes that are banned by policy."""
+    if mode == "paper":
+        raise ValueError("paper mode runtime execution is banned")
+
+
 def safe_float(value: str | float | None, default: float = 0.0) -> float:
     """Convert to float, handling empty strings and None.
 
@@ -3970,6 +3976,7 @@ def _apply_dashboard_flag(settings: Settings, dashboard_flag: bool) -> Settings:
 
 async def run(settings: Settings) -> None:
     """Main async loop — iterate over open markets on a timer."""
+    _ensure_runtime_mode_allowed(settings.MODE)
     global BLACKOUT_ORDER_MANAGER
     BLACKOUT_ORDER_MANAGER = BlackoutOrderManager(
         enabled=settings.ORDER_BLACKOUT_ENABLED,
@@ -4966,6 +4973,7 @@ def main() -> None:
     args = parser.parse_args()
 
     setup_logging()
+    _ensure_runtime_mode_allowed(args.mode)
     settings = Settings(MODE=args.mode)  # type: ignore[call-arg]
     settings = _apply_dashboard_flag(settings, args.dashboard)
     asyncio.run(run(settings))

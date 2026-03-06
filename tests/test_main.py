@@ -80,6 +80,43 @@ def _make_playbook(market: str = "KR") -> DayPlaybook:
     return DayPlaybook(date=date(2026, 2, 8), market=market)
 
 
+def _make_settings(**overrides: Any) -> Settings:
+    base = {
+        "KIS_APP_KEY": "k",
+        "KIS_APP_SECRET": "s",
+        "KIS_ACCOUNT_NO": "12345678-01",
+        "GEMINI_API_KEY": "g",
+        "MODE": "live",
+    }
+    base.update(overrides)
+    return Settings(**base)
+
+
+def test_main_rejects_paper_mode() -> None:
+    args = MagicMock(mode="paper", dashboard=False)
+
+    with (
+        patch("argparse.ArgumentParser.parse_args", return_value=args),
+        patch("src.main.setup_logging"),
+        patch("src.main.asyncio.run") as mock_asyncio_run,
+        pytest.raises(ValueError, match="paper"),
+    ):
+        main_module.main()
+
+    mock_asyncio_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_rejects_paper_mode_before_runtime_init() -> None:
+    settings = _make_settings(MODE="paper")
+
+    with (
+        patch("src.main.KISBroker", side_effect=AssertionError("runtime initialized")),
+        pytest.raises(ValueError, match="paper"),
+    ):
+        await main_module.run(settings)
+
+
 def _make_buy_match(stock_code: str = "005930") -> ScenarioMatch:
     """Create a ScenarioMatch that returns BUY."""
     return ScenarioMatch(
