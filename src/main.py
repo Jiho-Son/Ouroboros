@@ -4012,6 +4012,7 @@ async def run(settings: Settings) -> None:
     # Track playbooks per market (in-memory cache)
     playbooks: dict[str, DayPlaybook] = {}
     mid_refreshed: set[str] = set()  # 당일 mid-session refresh가 완료된 마켓
+    _pre_refresh_playbooks: dict[str, DayPlaybook | None] = {}  # rollback용 백업 (issue #436)
 
     # Initialize Telegram notifications
     telegram = TelegramClient(
@@ -4520,6 +4521,7 @@ async def run(settings: Settings) -> None:
                 if _today != _mid_last_date:
                     _mid_last_date = _today
                     mid_refreshed.clear()
+                    _pre_refresh_playbooks.clear()
                     logger.debug("New trading day %s — mid_refreshed reset", _today)
 
                 # Get currently open markets
@@ -4632,7 +4634,8 @@ async def run(settings: Settings) -> None:
                             market.code,
                             session_info.session_id,
                         )
-                        playbooks.pop(market.code, None)
+                        # Back up playbook before evicting; restored on failure (issue #436)
+                        _pre_refresh_playbooks[market.code] = playbooks.pop(market.code, None)
                         mid_refreshed.add(market.code)
 
                     # Check and handle domestic pending (unfilled) limit orders.
@@ -4763,6 +4766,8 @@ async def run(settings: Settings) -> None:
                                             )
                                             playbook_store.save(pb, slot=save_slot)
                                             playbooks[market.code] = pb
+                                            # Generation succeeded — discard pre-refresh backup
+                                            _pre_refresh_playbooks.pop(market.code, None)
                                             try:
                                                 await telegram.notify_playbook_generated(
                                                     market=market.code,
@@ -4788,11 +4793,23 @@ async def run(settings: Settings) -> None:
                                                 )
                                             except Exception:
                                                 pass
-                                            playbooks[market.code] = (
-                                                PreMarketPlanner._empty_playbook(
-                                                    market_today, market.code
-                                                )
+                                            # Restore pre-refresh playbook if available (issue #436)
+                                            fallback = _pre_refresh_playbooks.pop(
+                                                market.code, None
                                             )
+                                            if fallback is not None:
+                                                playbooks[market.code] = fallback
+                                                logger.warning(
+                                                    "Mid-session refresh failed for %s;"
+                                                    " retaining pre-refresh open playbook",
+                                                    market.code,
+                                                )
+                                            else:
+                                                playbooks[market.code] = (
+                                                    PreMarketPlanner._empty_playbook(
+                                                        market_today, market.code
+                                                    )
+                                                )
                             else:
                                 logger.info(
                                     "Smart Scanner: No candidates for %s — no trades", market.name

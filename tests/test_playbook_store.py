@@ -124,6 +124,74 @@ class TestSchema:
         assert loaded is not None
         assert loaded.stock_count == 2
 
+    def test_legacy_schema_migration_rebuilds_unique_constraint(self) -> None:
+        """구 UNIQUE(date, market) → UNIQUE(date, market, slot) 마이그레이션 검증."""
+        import os
+        import sqlite3
+        import tempfile
+
+        # 파일 기반 DB 필요 — in-memory DB는 재연결 시 초기화됨
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+        try:
+            # 구 스키마 DB 생성 (slot 컬럼 없음, UNIQUE(date, market))
+            conn_old = sqlite3.connect(db_path)
+            conn_old.execute(
+                """
+                CREATE TABLE playbooks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    market TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    playbook_json TEXT NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    token_count INTEGER DEFAULT 0,
+                    scenario_count INTEGER DEFAULT 0,
+                    match_count INTEGER DEFAULT 0,
+                    UNIQUE(date, market)
+                )
+                """
+            )
+            conn_old.execute(
+                "INSERT INTO playbooks"
+                " (date, market, status, playbook_json, generated_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("2026-01-01", "KR", "ready", '{"v":1}', "2026-01-01T09:00:00"),
+            )
+            conn_old.commit()
+            conn_old.close()
+
+            # init_db 재실행 → 마이그레이션 수행
+            conn_new = init_db(db_path)
+
+            # UNIQUE 제약이 (date, market, slot)으로 변경됐는지 확인
+            ddl_row = conn_new.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='playbooks'"
+            ).fetchone()
+            assert ddl_row is not None
+            ddl = ddl_row[0].replace(" ", "").replace("\n", "")
+            assert "UNIQUE(date,market,slot)" in ddl, (
+                f"Expected UNIQUE(date,market,slot), got: {ddl_row[0]}"
+            )
+
+            # open + mid 동시 저장 가능한지 확인
+            from src.strategy.playbook_store import PlaybookStore  # noqa: PLC0415
+            store_new = PlaybookStore(conn_new)
+            pb = _make_playbook()
+            store_new.save(pb, slot="open")
+            store_new.save(pb, slot="mid")  # 구 스키마라면 여기서 IntegrityError
+
+            rows = conn_new.execute(
+                "SELECT slot FROM playbooks WHERE date=? AND market=? ORDER BY slot",
+                (pb.date.isoformat(), pb.market),
+            ).fetchall()
+            slots = [r[0] for r in rows]
+            assert "open" in slots
+            assert "mid" in slots
+            conn_new.close()
+        finally:
+            os.unlink(db_path)
+
 
 # ---------------------------------------------------------------------------
 # Save / Load
