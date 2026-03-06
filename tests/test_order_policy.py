@@ -12,10 +12,22 @@ def test_classify_kr_nxt_after() -> None:
     assert classify_session_id(MARKETS["KR"], now) == "NXT_AFTER"
 
 
+def test_classify_kr_weekend_is_off_even_during_extended_hours() -> None:
+    # 2026-03-07 08:00 KST == 2026-03-06 23:00 UTC (Saturday)
+    now = datetime(2026, 3, 6, 23, 0, tzinfo=UTC)
+    assert classify_session_id(MARKETS["KR"], now) == "KR_OFF"
+
+
 def test_classify_us_pre() -> None:
     # 2026-02-26 19:00 KST == 10:00 UTC
     now = datetime(2026, 2, 26, 10, 0, tzinfo=UTC)
     assert classify_session_id(MARKETS["US_NASDAQ"], now) == "US_PRE"
+
+
+def test_classify_us_weekend_is_off_even_during_kst_session_window() -> None:
+    # 2026-03-08 00:30 KST == 2026-03-07 15:30 UTC, still Saturday in New York.
+    now = datetime(2026, 3, 7, 15, 30, tzinfo=UTC)
+    assert classify_session_id(MARKETS["US_NASDAQ"], now) == "US_OFF"
 
 
 def test_reject_market_order_in_low_liquidity_session() -> None:

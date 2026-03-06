@@ -137,6 +137,21 @@ async def test_run_rejects_paper_mode_before_runtime_init() -> None:
         await main_module.run(settings)
 
 
+@pytest.mark.asyncio
+async def test_run_rejects_duplicate_live_instance_before_runtime_init() -> None:
+    settings = _make_settings(MODE="live")
+
+    with (
+        patch(
+            "src.main._acquire_live_runtime_lock",
+            side_effect=RuntimeError("another live runtime is already active"),
+        ),
+        patch("src.main.KISBroker", side_effect=AssertionError("runtime initialized")),
+        pytest.raises(RuntimeError, match="already active"),
+    ):
+        await main_module.run(settings)
+
+
 def _make_buy_match(stock_code: str = "005930") -> ScenarioMatch:
     """Create a ScenarioMatch that returns BUY."""
     return ScenarioMatch(
@@ -1090,6 +1105,23 @@ class TestExtractHeldCodesFromBalance:
         balance = {"output1": [{"ovrs_pdno": "TSLA", "ovrs_cblc_qty": "3"}]}
         result = _extract_held_codes_from_balance(balance, is_domestic=False)
         assert "TSLA" in result
+
+    def test_overseas_filters_holdings_by_exchange_code_when_present(self) -> None:
+        balance = {
+            "output1": [
+                {"ovrs_pdno": "KORE", "ord_psbl_qty": "5", "ovrs_excg_cd": "NASD"},
+                {"ovrs_pdno": "KORE", "ord_psbl_qty": "5", "ovrs_excg_cd": "NYSE"},
+                {"ovrs_pdno": "AAPL", "ord_psbl_qty": "2", "ovrs_excg_cd": "NASD"},
+            ]
+        }
+
+        result = _extract_held_codes_from_balance(
+            balance,
+            is_domestic=False,
+            exchange_code="NASD",
+        )
+
+        assert result == ["KORE", "AAPL"]
 
 
 class TestDetermineOrderQuantity:

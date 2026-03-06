@@ -33,10 +33,13 @@ class SessionInfo:
 def classify_session_id(market: MarketInfo, now: datetime | None = None) -> str:
     """Classify current session by KST schedule used in v3 docs."""
     now = now or datetime.now(UTC)
+    local_now = now.astimezone(market.timezone)
     # v3 session tables are explicitly defined in KST perspective.
     kst_time = now.astimezone(ZoneInfo("Asia/Seoul")).timetz().replace(tzinfo=None)
 
     if market.code == "KR":
+        if local_now.weekday() >= 5:
+            return "KR_OFF"
         if time(8, 0) <= kst_time < time(8, 50):
             return "NXT_PRE"
         if time(9, 0) <= kst_time < time(15, 30):
@@ -46,6 +49,8 @@ def classify_session_id(market: MarketInfo, now: datetime | None = None) -> str:
         return "KR_OFF"
 
     if market.code.startswith("US"):
+        if local_now.weekday() >= 5:
+            return "US_OFF"
         if time(10, 0) <= kst_time < time(18, 0):
             return "US_DAY"
         if time(18, 0) <= kst_time < time(23, 30):
