@@ -8,6 +8,13 @@ import sys
 from pathlib import Path
 
 DOC_DIR = Path("docs/ouroboros")
+RUNTIME_DOC_PATHS = (
+    Path("README.md"),
+    Path("docs/commands.md"),
+    Path("docs/skills.md"),
+    Path("docs/live-trading-checklist.md"),
+    Path("src/notifications/README.md"),
+)
 META_PATTERN = re.compile(
     r"<!--\n"
     r"Doc-ID: (?P<doc_id>[^\n]+)\n"
@@ -36,6 +43,15 @@ ALLOWED_PLAN_TARGETS = {
 ISSUE_REF_PATTERN = re.compile(r"#(?P<issue>\d+)")
 ISSUE_DONE_PATTERN = re.compile(r"(?:✅|머지|해소|완료)")
 ISSUE_PENDING_PATTERN = re.compile(r"(?:잔여|오픈 상태|추적 이슈)")
+FORBIDDEN_RUNTIME_PAPER_COMMAND_PATTERN = re.compile(
+    r"(?P<cmd>(?:[A-Z_][A-Z0-9_]*=[^\s`]+\s+)*python\s+-m\s+src\.main\b[^\n`]*--mode=paper\b)"
+)
+RUNTIME_PAPER_ALLOWLIST_HINTS = (
+    "banned",
+    "금지",
+    "do not run",
+    "실행 금지",
+)
 
 
 def iter_docs() -> list[Path]:
@@ -154,6 +170,22 @@ def validate_issue_status_consistency(path: Path, text: str, errors: list[str]) 
         )
 
 
+def validate_forbidden_runtime_paper_commands(path: Path, text: str, errors: list[str]) -> None:
+    for line_no, raw_line in enumerate(text.splitlines(), start=1):
+        line = raw_line.strip()
+        if "--mode=paper" not in line or "python -m src.main" not in line:
+            continue
+        lowered = line.lower()
+        if any(hint in lowered for hint in RUNTIME_PAPER_ALLOWLIST_HINTS):
+            continue
+        match = FORBIDDEN_RUNTIME_PAPER_COMMAND_PATTERN.search(line)
+        if match is None:
+            continue
+        errors.append(
+            f"{path}:{line_no}: forbidden runtime paper command example -> {match.group('cmd')}"
+        )
+
+
 def main() -> int:
     if not DOC_DIR.exists():
         print(f"ERROR: missing directory {DOC_DIR}")
@@ -179,6 +211,13 @@ def main() -> int:
             validate_issue_status_consistency(path, text, errors)
         collect_ids(path, text, defs, refs)
         collect_req_traceability(text, req_to_task, req_to_test)
+
+    for path in RUNTIME_DOC_PATHS:
+        if not path.exists():
+            errors.append(f"missing runtime doc for paper-ban validation: {path}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        validate_forbidden_runtime_paper_commands(path, text, errors)
 
     for idv, where_used in sorted(refs.items()):
         if idv.startswith("DOC-"):

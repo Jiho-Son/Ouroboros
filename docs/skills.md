@@ -30,13 +30,13 @@ ruff format src/ tests/
 
 ### Start Trading Agent (Development)
 ```bash
-python -m src.main --mode=paper
+python -m src.main --mode=live
 ```
-Runs the agent in paper-trading mode (no real orders).
+Runtime paper mode is banned (#426). Use `live` only in controlled environments.
 
 ### Start Trading Agent with Dashboard
 ```bash
-python -m src.main --mode=paper --dashboard
+python -m src.main --mode=live --dashboard
 ```
 Runs the agent with FastAPI dashboard on `127.0.0.1:8080` (configurable via `DASHBOARD_HOST`/`DASHBOARD_PORT`).
 

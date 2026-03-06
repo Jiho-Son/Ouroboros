@@ -617,7 +617,7 @@ KIS_ACCOUNT_NO=XXXXXXXX-XX
 GEMINI_API_KEY=your_gemini_key
 
 # Optional — Trading Mode
-MODE=paper                    # paper | live
+MODE=live                     # runtime paper execution banned (#426)
 TRADE_MODE=daily              # daily | realtime
 DAILY_SESSIONS=4              # Sessions per day (daily mode only)
 SESSION_INTERVAL_HOURS=6      # Hours between sessions (daily mode only)

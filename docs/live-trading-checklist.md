@@ -113,11 +113,10 @@ python -m src.main --mode=live --dashboard
 실전 전환 후 문제 발생 시:
 
 ```bash
-# 1. 즉시 .env에서 MODE=paper로 복원
-# 2. 재시작
-python -m src.main --mode=paper
+# 1. 즉시 런타임을 중지하고 live 재기동을 금지
+# 2. DB에서 최근 거래 확인
+# Runtime paper mode is banned (#426)
 
-# 3. DB에서 최근 거래 확인
 sqlite3 data/trade_logs.db "SELECT * FROM trades ORDER BY id DESC LIMIT 20;"
 ```
 

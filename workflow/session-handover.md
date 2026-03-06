@@ -153,3 +153,11 @@
 - next_ticket: #412, #413, #414
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: #413 pipefail fix (find_live_pids), #412 startup crash 로깅 강화, #414 PR 거버넌스 preflight 추가
+
+### 2026-03-06 | session=codex-issue438-open-issue-triage
+- branch: feature/issue-438-open-issue-triage
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #318, #325, #426, #428, #429, #435, #436, #438
+- next_ticket: #438
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: 구조적 버그/정책 이슈는 테스트 증거로 close 가능, 런타임 민감 이슈는 실동작 증거 없으면 코멘트만 남기고 open 유지

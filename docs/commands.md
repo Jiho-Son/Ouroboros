@@ -214,10 +214,11 @@ ruff check src/ tests/
 mypy src/ --strict
 
 # Run the trading agent
-python -m src.main --mode=paper
+# Runtime paper mode is banned (#426)
+python -m src.main --mode=live
 
 # Run with dashboard enabled
-python -m src.main --mode=paper --dashboard
+python -m src.main --mode=live --dashboard
 
 # Runtime verification monitor (coverage + forbidden invariants)
 bash scripts/runtime_verify_monitor.sh
@@ -244,10 +245,10 @@ The FastAPI dashboard provides read-only monitoring of the trading system.
 
 ```bash
 # Via CLI flag
-python -m src.main --mode=paper --dashboard
+python -m src.main --mode=live --dashboard
 
 # Via environment variable
-DASHBOARD_ENABLED=true python -m src.main --mode=paper
+DASHBOARD_ENABLED=true python -m src.main --mode=live
 ```
 
 Dashboard runs as a daemon thread on `DASHBOARD_HOST:DASHBOARD_PORT` (default: `127.0.0.1:8080`).
