@@ -451,10 +451,20 @@ async def _compute_overseas_atr_value(
             label=f"overseas_daily_prices:{exchange_code}:{stock_code}",
         )
     except ConnectionError as exc:
-        logger.warning("Overseas ATR source unavailable for %s/%s: %s", exchange_code, stock_code, exc)
+        logger.warning(
+            "Overseas ATR source unavailable for %s/%s: %s",
+            exchange_code,
+            stock_code,
+            exc,
+        )
         return 0.0
     except Exception as exc:
-        logger.warning("Unexpected overseas ATR fetch failure for %s/%s: %s", exchange_code, stock_code, exc)
+        logger.warning(
+            "Unexpected overseas ATR fetch failure for %s/%s: %s",
+            exchange_code,
+            stock_code,
+            exc,
+        )
         return 0.0
 
     if not isinstance(daily_prices, list):

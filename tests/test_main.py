@@ -1,8 +1,8 @@
 """Tests for main trading loop integration."""
 
 import asyncio
-from contextlib import ExitStack
 import math
+from contextlib import ExitStack
 from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -8304,7 +8304,8 @@ class TestMidSessionRefresh:
 
 
 @pytest.mark.asyncio
-async def test_run_restores_pre_refresh_playbook_when_mid_session_refresh_generation_fails() -> None:
+async def test_run_restores_pre_refresh_playbook_when_mid_session_refresh_generation_fails(
+) -> None:
     from src.analysis.smart_scanner import ScanCandidate
 
     class _FakeEvent:
