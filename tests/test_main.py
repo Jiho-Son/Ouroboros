@@ -150,6 +150,59 @@ class TestExtractAvgPriceFromBalance:
         result = _extract_avg_price_from_balance(balance, "AAPL", is_domestic=False)
         assert result == 170.5
 
+    def test_returns_zero_when_field_empty_string(self) -> None:
+        """Returns 0.0 when pchs_avg_pric is an empty string."""
+        balance = {"output1": [{"pdno": "005930", "pchs_avg_pric": ""}]}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 0.0
+
+    def test_returns_zero_when_stock_not_found(self) -> None:
+        """Returns 0.0 when the requested stock_code is not in output1."""
+        balance = {"output1": [{"pdno": "000660", "pchs_avg_pric": "100000.0"}]}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 0.0
+
+    def test_returns_zero_when_output1_empty(self) -> None:
+        """Returns 0.0 when output1 is an empty list."""
+        balance = {"output1": []}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 0.0
+
+    def test_returns_zero_when_output1_key_absent(self) -> None:
+        """Returns 0.0 when output1 key is missing from balance_data."""
+        balance: dict = {}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 0.0
+
+    def test_handles_output1_as_dict(self) -> None:
+        """Handles the edge case where output1 is a dict instead of a list."""
+        balance = {"output1": {"pdno": "005930", "pchs_avg_pric": "55000.0"}}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 55000.0
+
+    def test_case_insensitive_code_matching(self) -> None:
+        """Stock code comparison is case-insensitive."""
+        balance = {"output1": [{"ovrs_pdno": "aapl", "pchs_avg_pric": "170.0"}]}
+        result = _extract_avg_price_from_balance(balance, "AAPL", is_domestic=False)
+        assert result == 170.0
+
+    def test_returns_zero_for_non_numeric_string(self) -> None:
+        """Returns 0.0 when pchs_avg_pric contains a non-numeric value."""
+        balance = {"output1": [{"pdno": "005930", "pchs_avg_pric": "N/A"}]}
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 0.0
+
+    def test_returns_correct_stock_among_multiple(self) -> None:
+        """Returns only the avg price of the requested stock when output1 has multiple holdings."""
+        balance = {
+            "output1": [
+                {"pdno": "000660", "pchs_avg_pric": "150000.0"},
+                {"pdno": "005930", "pchs_avg_pric": "68000.0"},
+            ]
+        }
+        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
+        assert result == 68000.0
+
 
 class TestRealtimeSessionStateHelpers:
     """Tests for realtime loop session-transition/rescan helper logic."""
@@ -802,61 +855,6 @@ def test_apply_staged_exit_handles_non_finite_playbook_take_profit() -> None:
     assert math.isfinite(captured["arm_pct"])
     assert captured["be_arm_pct"] == pytest.approx(1.2)
     assert captured["arm_pct"] == pytest.approx(3.0)
-
-    def test_returns_zero_when_field_empty_string(self) -> None:
-        """Returns 0.0 when pchs_avg_pric is an empty string."""
-        balance = {"output1": [{"pdno": "005930", "pchs_avg_pric": ""}]}
-        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
-        assert result == 0.0
-
-    def test_returns_zero_when_stock_not_found(self) -> None:
-        """Returns 0.0 when the requested stock_code is not in output1."""
-        balance = {"output1": [{"pdno": "000660", "pchs_avg_pric": "100000.0"}]}
-        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
-        assert result == 0.0
-
-    def test_returns_zero_when_output1_empty(self) -> None:
-        """Returns 0.0 when output1 is an empty list."""
-        balance = {"output1": []}
-        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
-        assert result == 0.0
-
-    def test_returns_zero_when_output1_key_absent(self) -> None:
-        """Returns 0.0 when output1 key is missing from balance_data."""
-        balance: dict = {}
-        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
-        assert result == 0.0
-
-    def test_handles_output1_as_dict(self) -> None:
-        """Handles the edge case where output1 is a dict instead of a list."""
-        balance = {"output1": {"pdno": "005930", "pchs_avg_pric": "55000.0"}}
-        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
-        assert result == 55000.0
-
-    def test_case_insensitive_code_matching(self) -> None:
-        """Stock code comparison is case-insensitive."""
-        balance = {"output1": [{"ovrs_pdno": "aapl", "pchs_avg_pric": "170.0"}]}
-        result = _extract_avg_price_from_balance(balance, "AAPL", is_domestic=False)
-        assert result == 170.0
-
-    def test_returns_zero_for_non_numeric_string(self) -> None:
-        """Returns 0.0 when pchs_avg_pric contains a non-numeric value."""
-        balance = {"output1": [{"pdno": "005930", "pchs_avg_pric": "N/A"}]}
-        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
-        assert result == 0.0
-
-    def test_returns_correct_stock_among_multiple(self) -> None:
-        """Returns only the avg price of the requested stock when output1 has multiple holdings."""
-        balance = {
-            "output1": [
-                {"pdno": "000660", "pchs_avg_pric": "150000.0"},
-                {"pdno": "005930", "pchs_avg_pric": "68000.0"},
-            ]
-        }
-        result = _extract_avg_price_from_balance(balance, "005930", is_domestic=True)
-        assert result == 68000.0
-
-
 class TestExtractHeldQtyFromBalance:
     """Tests for _extract_held_qty_from_balance()."""
 
