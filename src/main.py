@@ -16,6 +16,7 @@ import threading
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from src.analysis.smart_scanner import ScanCandidate, SmartVolatilityScanner
 from src.analysis.volatility import VolatilityAnalyzer
@@ -2979,6 +2980,7 @@ async def run_daily_session(
                         stock_count=playbook.stock_count,
                         scenario_count=playbook.scenario_count,
                         token_count=playbook.token_count,
+                        slot="open",
                     )
                 except Exception as exc:
                     logger.warning("Playbook notification failed: %s", exc)
@@ -3774,6 +3776,43 @@ def _should_rescan_market(
     return session_changed or (now_timestamp - last_scan >= rescan_interval)
 
 
+_MID_SESSION_REFRESH_SESSIONS: dict[str, str] = {
+    "US_NASDAQ": "US_REG",
+    "US_NYSE": "US_REG",
+    "US_AMEX": "US_REG",
+    "KR": "KRX_REG",
+}
+
+_MID_SESSION_REFRESH_TZ: dict[str, ZoneInfo] = {
+    "US_NASDAQ": ZoneInfo("America/New_York"),
+    "US_NYSE": ZoneInfo("America/New_York"),
+    "US_AMEX": ZoneInfo("America/New_York"),
+    "KR": ZoneInfo("Asia/Seoul"),
+}
+
+
+def _should_mid_session_refresh(
+    *,
+    market_code: str,
+    session_id: str,
+    now: datetime,
+    mid_refreshed: set[str],
+) -> bool:
+    """Return True when a mid-session playbook refresh should fire.
+
+    Triggers once per day at 12:00 (local market time) during the regular session.
+    Considers all stored slots; 'mid' takes priority over all others.
+    """
+    expected_session = _MID_SESSION_REFRESH_SESSIONS.get(market_code)
+    if expected_session is None or session_id != expected_session:
+        return False
+    if market_code in mid_refreshed:
+        return False
+    market_tz = _MID_SESSION_REFRESH_TZ.get(market_code, UTC)
+    local_now = now.astimezone(market_tz)
+    return local_now.hour == 12 and local_now.minute == 0
+
+
 def _should_reuse_stored_playbook(*, market_code: str, session_id: str) -> bool:
     """Return whether DB-stored playbook can be reused for realtime loop bootstrap.
 
@@ -3972,6 +4011,8 @@ async def run(settings: Settings) -> None:
 
     # Track playbooks per market (in-memory cache)
     playbooks: dict[str, DayPlaybook] = {}
+    mid_refreshed: set[str] = set()  # 당일 mid-session refresh가 완료된 마켓
+    _pre_refresh_playbooks: dict[str, DayPlaybook | None] = {}  # rollback용 백업 (issue #436)
 
     # Initialize Telegram notifications
     telegram = TelegramClient(
@@ -4467,10 +4508,21 @@ async def run(settings: Settings) -> None:
             # Realtime trading mode: original per-stock loop
             logger.info("Realtime trading mode: 60s interval per stock")
 
+            _mid_last_date: str = ""
+
             while not shutdown.is_set():
                 # Wait for trading to be unpaused
                 await pause_trading.wait()
                 _run_context_scheduler(context_scheduler, now=datetime.now(UTC))
+
+                # Reset mid_refreshed on a new calendar date so each trading day
+                # gets a fresh mid-session refresh opportunity.
+                _today = datetime.now(UTC).date().isoformat()
+                if _today != _mid_last_date:
+                    _mid_last_date = _today
+                    mid_refreshed.clear()
+                    _pre_refresh_playbooks.clear()
+                    logger.debug("New trading day %s — mid_refreshed reset", _today)
 
                 # Get currently open markets
                 open_markets = get_open_markets(
@@ -4569,6 +4621,23 @@ async def run(settings: Settings) -> None:
                             logger.warning("Market open notification failed: %s", exc)
                         _market_states[market.code] = session_info.session_id
 
+                    # Mid-session playbook refresh (12:00 현지 시각)
+                    now_utc = datetime.now(UTC)
+                    if _should_mid_session_refresh(
+                        market_code=market.code,
+                        session_id=session_info.session_id,
+                        now=now_utc,
+                        mid_refreshed=mid_refreshed,
+                    ):
+                        logger.info(
+                            "Mid-session refresh triggered for %s (session=%s)",
+                            market.code,
+                            session_info.session_id,
+                        )
+                        # Back up playbook before evicting; restored on failure (issue #436)
+                        _pre_refresh_playbooks[market.code] = playbooks.pop(market.code, None)
+                        mid_refreshed.add(market.code)
+
                     # Check and handle domestic pending (unfilled) limit orders.
                     if market.is_domestic:
                         try:
@@ -4651,10 +4720,22 @@ async def run(settings: Settings) -> None:
                                         session_id=session_info.session_id,
                                     )
                                     stored_pb = (
-                                        playbook_store.load(market_today, market.code)
+                                        playbook_store.load_latest(market_today, market.code)
                                         if reuse_stored_pb
                                         else None
                                     )
+                                    # If a mid-session playbook exists in the DB, mark this
+                                    # market as already refreshed to avoid re-triggering the
+                                    # 12:00 mid-session refresh on restart.
+                                    if reuse_stored_pb and playbook_store.load(
+                                        market_today, market.code, slot="mid"
+                                    ) is not None:
+                                        mid_refreshed.add(market.code)
+                                        logger.debug(
+                                            "Resumed with mid-session playbook for %s"
+                                            " — suppressing refresh trigger",
+                                            market.code,
+                                        )
                                     if stored_pb is not None:
                                         playbooks[market.code] = stored_pb
                                         logger.info(
@@ -4678,14 +4759,22 @@ async def run(settings: Settings) -> None:
                                                 candidates=candidates,
                                                 today=market_today,
                                             )
-                                            playbook_store.save(pb)
+                                            save_slot = (
+                                                "mid"
+                                                if market.code in mid_refreshed
+                                                else "open"
+                                            )
+                                            playbook_store.save(pb, slot=save_slot)
                                             playbooks[market.code] = pb
+                                            # Generation succeeded — discard pre-refresh backup
+                                            _pre_refresh_playbooks.pop(market.code, None)
                                             try:
                                                 await telegram.notify_playbook_generated(
                                                     market=market.code,
                                                     stock_count=pb.stock_count,
                                                     scenario_count=pb.scenario_count,
                                                     token_count=pb.token_count,
+                                                    slot=save_slot,
                                                 )
                                             except Exception as exc:
                                                 logger.warning(
@@ -4704,11 +4793,23 @@ async def run(settings: Settings) -> None:
                                                 )
                                             except Exception:
                                                 pass
-                                            playbooks[market.code] = (
-                                                PreMarketPlanner._empty_playbook(
-                                                    market_today, market.code
-                                                )
+                                            # Restore pre-refresh playbook if available (issue #436)
+                                            fallback = _pre_refresh_playbooks.pop(
+                                                market.code, None
                                             )
+                                            if fallback is not None:
+                                                playbooks[market.code] = fallback
+                                                logger.warning(
+                                                    "Mid-session refresh failed for %s;"
+                                                    " retaining pre-refresh open playbook",
+                                                    market.code,
+                                                )
+                                            else:
+                                                playbooks[market.code] = (
+                                                    PreMarketPlanner._empty_playbook(
+                                                        market_today, market.code
+                                                    )
+                                                )
                             else:
                                 logger.info(
                                     "Smart Scanner: No candidates for %s — no trades", market.name

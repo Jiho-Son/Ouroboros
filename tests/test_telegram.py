@@ -178,6 +178,53 @@ class TestNotificationSending:
             assert "Tokens: 980" in payload["text"]
 
     @pytest.mark.asyncio
+    async def test_playbook_generated_mid_slot_label(self) -> None:
+        """notify_playbook_generated with slot='mid' uses mid-session label."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await client.notify_playbook_generated(
+                market="US",
+                stock_count=3,
+                scenario_count=9,
+                token_count=500,
+                slot="mid",
+            )
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Playbook Refreshed (mid-session)" in payload["text"]
+            assert "Playbook Generated" not in payload["text"]
+            assert "Market: US" in payload["text"]
+
+    @pytest.mark.asyncio
+    async def test_playbook_generated_open_slot_label(self) -> None:
+        """notify_playbook_generated with slot='open' (default) uses standard label."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await client.notify_playbook_generated(
+                market="US",
+                stock_count=3,
+                scenario_count=9,
+                token_count=500,
+                slot="open",
+            )
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Playbook Generated" in payload["text"]
+            assert "mid-session" not in payload["text"]
+
+    @pytest.mark.asyncio
     async def test_scenario_matched_format(self) -> None:
         """Scenario matched notification has expected fields."""
         client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)

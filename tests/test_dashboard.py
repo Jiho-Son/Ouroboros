@@ -450,3 +450,74 @@ def test_status_mode_default_paper(tmp_path: Path) -> None:
     get_status = _endpoint(app, "/api/status")
     body = get_status()
     assert body["mode"] == "paper"
+
+
+def _app_with_open_and_mid_playbook(tmp_path: Path) -> Any:
+    """open + mid 두 슬롯이 있는 DB로 앱을 생성한다."""
+    db_path = tmp_path / "slot_test.db"
+    conn = init_db(str(db_path))
+    conn.execute(
+        """
+        INSERT INTO playbooks (
+            date, market, slot, status, playbook_json, generated_at,
+            token_count, scenario_count, match_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "2026-02-08",
+            "KR",
+            "open",
+            "ready",
+            json.dumps({"market": "KR", "stock_playbooks": []}),
+            "2026-02-08T08:30:00+00:00",
+            100,
+            1,
+            0,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO playbooks (
+            date, market, slot, status, playbook_json, generated_at,
+            token_count, scenario_count, match_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "2026-02-08",
+            "KR",
+            "mid",
+            "ready",
+            json.dumps({"market": "KR", "stock_playbooks": []}),
+            "2026-02-08T12:30:00+00:00",
+            110,
+            2,
+            1,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return create_dashboard_app(str(db_path))
+
+
+def test_get_playbook_returns_slot_field(tmp_path: Path) -> None:
+    """GET /api/playbook/{date} 응답에 slot 필드가 포함돼야 한다."""
+    app = _app(tmp_path)
+    get_playbook = _endpoint(app, "/api/playbook/{date_str}")
+    body = get_playbook("2026-02-14", market="KR")
+    assert "slot" in body
+
+
+def test_get_playbook_slot_param_mid(tmp_path: Path) -> None:
+    """slot=mid 파라미터로 mid 플레이북을 조회할 수 있다."""
+    app = _app_with_open_and_mid_playbook(tmp_path)
+    get_playbook = _endpoint(app, "/api/playbook/{date_str}")
+    body = get_playbook("2026-02-08", market="KR", slot="mid")
+    assert body["slot"] == "mid"
+
+
+def test_get_playbook_default_returns_latest(tmp_path: Path) -> None:
+    """slot 미지정 시 가장 최근(mid) 플레이북을 반환한다."""
+    app = _app_with_open_and_mid_playbook(tmp_path)
+    get_playbook = _endpoint(app, "/api/playbook/{date_str}")
+    body = get_playbook("2026-02-08", market="KR")
+    assert body["slot"] == "mid"

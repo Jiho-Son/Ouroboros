@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def init_db(db_path: str) -> sqlite3.Connection:
@@ -161,13 +164,14 @@ def init_db(db_path: str) -> sqlite3.Connection:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL,
             market TEXT NOT NULL,
+            slot TEXT NOT NULL DEFAULT 'open',
             status TEXT NOT NULL DEFAULT 'pending',
             playbook_json TEXT NOT NULL,
             generated_at TEXT NOT NULL,
             token_count INTEGER DEFAULT 0,
             scenario_count INTEGER DEFAULT 0,
             match_count INTEGER DEFAULT 0,
-            UNIQUE(date, market)
+            UNIQUE(date, market, slot)
         )
         """
     )
@@ -208,6 +212,68 @@ def init_db(db_path: str) -> sqlite3.Connection:
     )
 
     conn.commit()
+
+    # Migration: add slot column if not exists (issue #433)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(playbooks)").fetchall()}
+    if "slot" not in cols:
+        conn.execute("ALTER TABLE playbooks ADD COLUMN slot TEXT NOT NULL DEFAULT 'open'")
+        conn.commit()
+        logger.info("DB migration: added slot column to playbooks table")
+
+    # Migration: rebuild playbooks table with UNIQUE(date, market, slot) if the old
+    # UNIQUE(date, market) constraint is still in place (issue #435).
+    # ALTER TABLE cannot modify constraints in SQLite — full table rebuild required.
+    ddl_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='playbooks'"
+    ).fetchone()
+    if ddl_row is not None:
+        ddl_compact = ddl_row[0].replace(" ", "").replace("\n", "")
+        needs_rebuild = (
+            "UNIQUE(date,market)" in ddl_compact
+            and "UNIQUE(date,market,slot)" not in ddl_compact
+        )
+        if needs_rebuild:
+            conn.execute(
+                """
+                CREATE TABLE playbooks_v2 (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    market TEXT NOT NULL,
+                    slot TEXT NOT NULL DEFAULT 'open',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    playbook_json TEXT NOT NULL,
+                    generated_at TEXT NOT NULL,
+                    token_count INTEGER DEFAULT 0,
+                    scenario_count INTEGER DEFAULT 0,
+                    match_count INTEGER DEFAULT 0,
+                    UNIQUE(date, market, slot)
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO playbooks_v2
+                    (id, date, market, slot, status, playbook_json, generated_at,
+                     token_count, scenario_count, match_count)
+                SELECT id, date, market, slot, status, playbook_json, generated_at,
+                       token_count, scenario_count, match_count
+                FROM playbooks
+                """
+            )
+            conn.execute("DROP TABLE playbooks")
+            conn.execute("ALTER TABLE playbooks_v2 RENAME TO playbooks")
+            # Restore indexes dropped with the old table (issue #435)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playbooks_date ON playbooks(date)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_playbooks_market ON playbooks(market)"
+            )
+            conn.commit()
+            logger.info(
+                "DB migration: rebuilt playbooks table with UNIQUE(date, market, slot)"
+            )
+
     return conn
 
 

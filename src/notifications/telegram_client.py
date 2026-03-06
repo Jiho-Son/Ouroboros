@@ -375,6 +375,7 @@ class TelegramClient:
         stock_count: int,
         scenario_count: int,
         token_count: int,
+        slot: str = "open",
     ) -> None:
         """
         Notify that a daily playbook was generated.
@@ -384,11 +385,15 @@ class TelegramClient:
             stock_count: Number of stocks in the playbook
             scenario_count: Total number of scenarios
             token_count: Gemini token usage for the playbook
+            slot: Playbook slot; "mid" shows a mid-session refresh label
         """
         if not self._filter.playbook:
             return
+        label = (
+            "Playbook Refreshed (mid-session)" if slot == "mid" else "Playbook Generated"
+        )
         message = (
-            f"<b>Playbook Generated</b>\n"
+            f"<b>{label}</b>\n"
             f"Market: {market}\n"
             f"Stocks: {stock_count}\n"
             f"Scenarios: {scenario_count}\n"

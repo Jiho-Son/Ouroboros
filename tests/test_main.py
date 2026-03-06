@@ -5,6 +5,7 @@ import math
 from datetime import UTC, date, datetime
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -48,6 +49,7 @@ from src.main import (
     _run_markets_in_parallel,
     _should_block_overseas_buy_for_fx_buffer,
     _should_force_exit_for_overnight,
+    _should_mid_session_refresh,
     _should_refresh_cached_playbook_on_session_transition,
     _should_rescan_market,
     _should_reuse_stored_playbook,
@@ -8134,3 +8136,56 @@ async def test_refresh_order_state_failure_summary_includes_more_count() -> None
             markets=markets,
         )
     assert "KR/KRX" in str(exc_info.value)
+
+
+class TestMidSessionRefresh:
+    def _make_dt(self, hour: int, minute: int, tz: str) -> datetime:
+        return datetime(2026, 3, 5, hour, minute, 0, tzinfo=ZoneInfo(tz))
+
+    def test_triggers_at_noon_us_reg(self) -> None:
+        """US_REG 12:00 ET에 True."""
+        now = self._make_dt(12, 0, "America/New_York")
+        assert _should_mid_session_refresh(
+            market_code="US_NASDAQ", session_id="US_REG",
+            now=now, mid_refreshed=set()
+        ) is True
+
+    def test_triggers_at_noon_kr_reg(self) -> None:
+        """KRX_REG 12:00 KST에 True."""
+        now = self._make_dt(12, 0, "Asia/Seoul")
+        assert _should_mid_session_refresh(
+            market_code="KR", session_id="KRX_REG",
+            now=now, mid_refreshed=set()
+        ) is True
+
+    def test_does_not_trigger_before_noon(self) -> None:
+        """11:59에는 False."""
+        now = self._make_dt(11, 59, "America/New_York")
+        assert _should_mid_session_refresh(
+            market_code="US_NYSE", session_id="US_REG",
+            now=now, mid_refreshed=set()
+        ) is False
+
+    def test_does_not_trigger_after_noon(self) -> None:
+        """12:01에는 False."""
+        now = self._make_dt(12, 1, "America/New_York")
+        assert _should_mid_session_refresh(
+            market_code="US_AMEX", session_id="US_REG",
+            now=now, mid_refreshed=set()
+        ) is False
+
+    def test_does_not_trigger_wrong_session(self) -> None:
+        """US_PRE 세션에는 False."""
+        now = self._make_dt(12, 0, "America/New_York")
+        assert _should_mid_session_refresh(
+            market_code="US_NASDAQ", session_id="US_PRE",
+            now=now, mid_refreshed=set()
+        ) is False
+
+    def test_does_not_trigger_if_already_refreshed(self) -> None:
+        """이미 오늘 갱신된 마켓은 False."""
+        now = self._make_dt(12, 0, "America/New_York")
+        assert _should_mid_session_refresh(
+            market_code="US_NASDAQ", session_id="US_REG",
+            now=now, mid_refreshed={"US_NASDAQ"}
+        ) is False
