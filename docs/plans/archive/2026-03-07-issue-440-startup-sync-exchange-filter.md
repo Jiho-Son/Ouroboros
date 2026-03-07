@@ -57,6 +57,6 @@ Expected: all pass
 **Step 2: Commit**
 
 ```bash
-git add src/main.py tests/test_main.py docs/plans/2026-03-07-issue-440-startup-sync-exchange-filter-design.md docs/plans/2026-03-07-issue-440-startup-sync-exchange-filter.md
+git add src/main.py tests/test_main.py docs/plans/archive/2026-03-07-issue-440-startup-sync-exchange-filter-design.md docs/plans/archive/2026-03-07-issue-440-startup-sync-exchange-filter.md
 git commit -m "fix: filter startup sync holdings by exchange"
 ```
