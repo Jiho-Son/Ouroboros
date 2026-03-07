@@ -27,6 +27,7 @@ from src.main import (
     _SESSION_RISK_OVERRIDES_BY_MARKET,
     _SESSION_RISK_PROFILES_MAP,
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL,
+    _acquire_live_runtime_lock,
     KILL_SWITCH,
     _apply_dashboard_flag,
     _apply_staged_exit_override_for_hold,
@@ -44,6 +45,7 @@ from src.main import (
     _refresh_cached_playbook_on_session_transition,
     _resolve_market_setting,
     _resolve_sell_qty_for_pnl,
+    _release_live_runtime_lock,
     _retry_connection,
     _run_context_scheduler,
     _run_evolution_loop,
@@ -150,6 +152,21 @@ async def test_run_rejects_duplicate_live_instance_before_runtime_init() -> None
         pytest.raises(RuntimeError, match="already active"),
     ):
         await main_module.run(settings)
+
+
+def test_live_runtime_lock_can_be_reacquired_after_release(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    settings = _make_settings(MODE="live")
+
+    first_lock = _acquire_live_runtime_lock(settings)
+    try:
+        with pytest.raises(RuntimeError, match="already active"):
+            _acquire_live_runtime_lock(settings)
+    finally:
+        _release_live_runtime_lock(first_lock)
+
+    second_lock = _acquire_live_runtime_lock(settings)
+    _release_live_runtime_lock(second_lock)
 
 
 def _make_buy_match(stock_code: str = "005930") -> ScenarioMatch:
