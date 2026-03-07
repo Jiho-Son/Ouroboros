@@ -13,7 +13,7 @@
 ## 사전 조건
 
 - 현재 브랜치: `feature/issue-412-413-414-runtime-and-governance`
-- 디자인 문서: `docs/plans/2026-03-05-86-peak-probability-model-design.md`
+- 디자인 문서: `docs/plans/archive/2026-03-05-86-peak-probability-model-design.md`
 - 테스트 실행: `pytest tests/ -v --cov=src`
 - 커버리지 최소 기준: 80%
 

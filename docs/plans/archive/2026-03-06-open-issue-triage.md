@@ -14,8 +14,8 @@
 
 **Files:**
 - Modify: `workflow/session-handover.md`
-- Create: `docs/plans/2026-03-06-open-issue-triage-design.md`
-- Create: `docs/plans/2026-03-06-open-issue-triage.md`
+- Create: `docs/plans/archive/2026-03-06-open-issue-triage-design.md`
+- Create: `docs/plans/archive/2026-03-06-open-issue-triage.md`
 
 **Step 1: Record the same-day handover entry**
 
@@ -38,9 +38,9 @@ Write the evidence policy and task sequence to the plan files above.
 - Read: `tests/test_main.py`
 - Read: `tests/test_playbook_store.py`
 - Read: `workflow/session-handover.md`
-- Read: `docs/plans/2026-03-07-issue-426-runtime-paper-ban.md`
-- Read: `docs/plans/2026-03-06-issue-428-nested-test-cleanup.md`
-- Read: `docs/plans/2026-03-07-issue-436-mid-session-refresh-rollback.md`
+- Read: `docs/plans/archive/2026-03-07-issue-426-runtime-paper-ban.md`
+- Read: `docs/plans/archive/2026-03-06-issue-428-nested-test-cleanup.md`
+- Read: `docs/plans/archive/2026-03-07-issue-436-mid-session-refresh-rollback.md`
 
 **Step 1: Inspect close candidates**
 
