@@ -6020,6 +6020,41 @@ class TestSyncPositionsFromBroker:
         assert pos["price"] == 170.0
 
     @pytest.mark.asyncio
+    async def test_startup_sync_filters_overseas_holdings_by_exchange_code(self) -> None:
+        """Startup sync should not record holdings from another overseas exchange."""
+        settings = self._make_settings("US_NASDAQ")
+        db_conn = init_db(":memory:")
+
+        balance = {
+            "output1": [
+                {
+                    "ovrs_pdno": "AAPL",
+                    "ovrs_cblc_qty": "10",
+                    "ovrs_excg_cd": "NASD",
+                    "pchs_avg_pric": "170.0",
+                },
+                {
+                    "ovrs_pdno": "IBM",
+                    "ovrs_cblc_qty": "4",
+                    "ovrs_excg_cd": "NYSE",
+                    "pchs_avg_pric": "240.0",
+                },
+            ],
+            "output2": [{"frcr_evlu_tota": "50000", "frcr_buy_amt_smtl": "40000"}],
+        }
+        broker = MagicMock()
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_balance = AsyncMock(return_value=balance)
+
+        synced = await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
+
+        from src.db import get_open_position
+
+        assert synced == 1
+        assert get_open_position(db_conn, "AAPL", "US_NASDAQ") is not None
+        assert get_open_position(db_conn, "IBM", "US_NASDAQ") is None
+
+    @pytest.mark.asyncio
     async def test_syncs_position_with_zero_price_when_pchs_avg_pric_absent(self) -> None:
         """Fallback to price=0.0 when pchs_avg_pric is absent (issue #249)."""
         settings = self._make_settings("KR")

@@ -645,7 +645,11 @@ async def sync_positions_from_broker(
             )
             continue
 
-        held_codes = _extract_held_codes_from_balance(balance_data, is_domestic=market.is_domestic)
+        held_codes = _extract_held_codes_from_balance(
+            balance_data,
+            is_domestic=market.is_domestic,
+            exchange_code=None if market.is_domestic else market.exchange_code,
+        )
         for stock_code in held_codes:
             if get_open_position(db_conn, stock_code, log_market):
                 continue  # already tracked
