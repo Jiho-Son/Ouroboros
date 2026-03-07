@@ -14,6 +14,7 @@ import json
 import logging
 import sqlite3
 import subprocess
+import sys
 import textwrap
 from collections import Counter
 from datetime import UTC, datetime
@@ -269,7 +270,7 @@ class EvolutionOptimizer:
         """Run pytest on the generated strategy. Returns True if all tests pass."""
         logger.info("Validating strategy: %s", strategy_path)
         result = subprocess.run(
-            ["python", "-m", "pytest", "tests/", "-v", "--tb=short"],
+            [sys.executable, "-m", "pytest", "tests/", "-v", "--tb=short"],
             capture_output=True,
             text=True,
             timeout=120,

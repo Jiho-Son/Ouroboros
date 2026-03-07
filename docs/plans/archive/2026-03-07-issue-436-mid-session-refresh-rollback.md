@@ -45,6 +45,6 @@ Expected: PASS.
 **Step 5: Commit**
 
 ```bash
-git add docs/plans/2026-03-07-issue-436-mid-session-refresh-rollback-design.md docs/plans/2026-03-07-issue-436-mid-session-refresh-rollback.md tests/test_main.py src/main.py
+git add docs/plans/archive/2026-03-07-issue-436-mid-session-refresh-rollback-design.md docs/plans/archive/2026-03-07-issue-436-mid-session-refresh-rollback.md tests/test_main.py src/main.py
 git commit -m "test: cover mid-session refresh rollback"
 ```
