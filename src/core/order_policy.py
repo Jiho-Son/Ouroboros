@@ -7,7 +7,7 @@ Default policy:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, tzinfo
 from zoneinfo import ZoneInfo
 
 from src.markets.schedule import MarketInfo
@@ -33,7 +33,15 @@ class SessionInfo:
 def classify_session_id(market: MarketInfo, now: datetime | None = None) -> str:
     """Classify current session by KST schedule used in v3 docs."""
     now = now or datetime.now(UTC)
-    local_now = now.astimezone(market.timezone)
+    market_timezone = market.timezone
+    if not isinstance(market_timezone, tzinfo):
+        if market.code == "KR":
+            market_timezone = ZoneInfo("Asia/Seoul")
+        elif market.code.startswith("US"):
+            market_timezone = ZoneInfo("America/New_York")
+        else:
+            market_timezone = UTC
+    local_now = now.astimezone(market_timezone)
     # v3 session tables are explicitly defined in KST perspective.
     kst_time = now.astimezone(ZoneInfo("Asia/Seoul")).timetz().replace(tzinfo=None)
 
