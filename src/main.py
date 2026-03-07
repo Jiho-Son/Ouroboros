@@ -87,6 +87,7 @@ _SESSION_RISK_PROFILES_RAW = "{}"
 _SESSION_RISK_PROFILES_MAP: dict[str, dict[str, Any]] = {}
 _SESSION_RISK_LAST_BY_MARKET: dict[str, str] = {}
 _SESSION_RISK_OVERRIDES_BY_MARKET: dict[str, dict[str, Any]] = {}
+_STAGED_EXIT_EVIDENCE_KEY = "_staged_exit_evidence"
 
 
 def _ensure_runtime_mode_allowed(mode: str) -> None:
@@ -1004,6 +1005,62 @@ def _clear_runtime_exit_cache_for_symbol(*, market_code: str, stock_code: str) -
         _RUNTIME_EXIT_PEAKS.pop(key, None)
 
 
+def _record_staged_exit_evidence(
+    *,
+    market_data: dict[str, Any],
+    atr_value: float,
+    pred_down_prob: float,
+    stop_loss_threshold: float,
+    be_arm_pct: float,
+    arm_pct: float,
+    peak_price: float,
+    current_state: PositionState,
+    exit_eval: Any,
+) -> None:
+    """Persist staged-exit inputs/results on market_data for later decision logging."""
+    market_data[_STAGED_EXIT_EVIDENCE_KEY] = {
+        "atr_value": atr_value,
+        "pred_down_prob": pred_down_prob,
+        "stop_loss_threshold": stop_loss_threshold,
+        "be_arm_pct": be_arm_pct,
+        "arm_pct": arm_pct,
+        "peak_price": peak_price,
+        "current_state": current_state.value,
+        "next_state": exit_eval.state.value,
+        "reason": exit_eval.reason,
+        "should_exit": bool(exit_eval.should_exit),
+    }
+
+
+def _merge_staged_exit_evidence_into_log(
+    *,
+    market_data: dict[str, Any],
+    context_snapshot: dict[str, Any],
+    input_data: dict[str, Any],
+) -> None:
+    """Add staged-exit runtime evidence to decision log payloads when available."""
+    raw_evidence = market_data.get(_STAGED_EXIT_EVIDENCE_KEY)
+    if not isinstance(raw_evidence, dict):
+        return
+
+    input_data.update(
+        {
+            "atr_value": raw_evidence.get("atr_value", 0.0),
+            "pred_down_prob": raw_evidence.get("pred_down_prob", 0.0),
+            "stop_loss_threshold": raw_evidence.get("stop_loss_threshold", 0.0),
+            "be_arm_pct": raw_evidence.get("be_arm_pct", 0.0),
+            "arm_pct": raw_evidence.get("arm_pct", 0.0),
+        }
+    )
+    context_snapshot["staged_exit"] = {
+        "peak_price": raw_evidence.get("peak_price", 0.0),
+        "current_state": raw_evidence.get("current_state", PositionState.HOLDING.value),
+        "next_state": raw_evidence.get("next_state", PositionState.HOLDING.value),
+        "reason": raw_evidence.get("reason", "none"),
+        "should_exit": bool(raw_evidence.get("should_exit", False)),
+    }
+
+
 def _apply_staged_exit_override_for_hold(
     *,
     decision: TradeDecision,
@@ -1103,6 +1160,17 @@ def _apply_staged_exit_override_for_hold(
             pred_down_prob=safe_float(market_data.get("pred_down_prob"), 0.0),
             liquidity_weak=safe_float(market_data.get("volume_ratio"), 1.0) < 1.0,
         ),
+    )
+    _record_staged_exit_evidence(
+        market_data=market_data,
+        atr_value=atr_value,
+        pred_down_prob=safe_float(market_data.get("pred_down_prob"), 0.0),
+        stop_loss_threshold=stop_loss_threshold,
+        be_arm_pct=be_arm_pct,
+        arm_pct=arm_pct,
+        peak_price=peak_price,
+        current_state=current_state,
+        exit_eval=exit_eval,
     )
     _RUNTIME_EXIT_STATES[runtime_key] = exit_eval.state
     _RUNTIME_EXIT_PEAKS[runtime_key] = peak_price
@@ -2084,6 +2152,11 @@ async def trading_cycle(
         "total_cash": total_cash,
         "pnl_pct": pnl_pct,
     }
+    _merge_staged_exit_evidence_into_log(
+        market_data=market_data,
+        context_snapshot=context_snapshot,
+        input_data=input_data,
+    )
 
     decision_id = decision_logger.log_decision(
         stock_code=stock_code,
@@ -3441,6 +3514,11 @@ async def run_daily_session(
                 "total_cash": total_cash,
                 "pnl_pct": pnl_pct,
             }
+            _merge_staged_exit_evidence_into_log(
+                market_data=stock_data,
+                context_snapshot=context_snapshot,
+                input_data=input_data,
+            )
 
             runtime_session_id = get_session_info(market).session_id
             decision_id = decision_logger.log_decision(

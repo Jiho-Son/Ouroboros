@@ -1,6 +1,7 @@
 """Tests for main trading loop integration."""
 
 import asyncio
+import json
 import math
 from contextlib import ExitStack
 from datetime import UTC, date, datetime
@@ -3394,6 +3395,127 @@ async def test_hold_not_overridden_when_between_stop_loss_and_take_profit() -> N
     )
 
     broker.send_order.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_staged_exit_decision_logs_runtime_evidence() -> None:
+    """Decision logs should persist staged-exit feature values and thresholds."""
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    buy_decision_id = decision_logger.log_decision(
+        stock_code="005930",
+        market="KR",
+        exchange_code="KRX",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        context_snapshot={},
+        input_data={},
+    )
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        quantity=1,
+        price=100.0,
+        market="KR",
+        exchange_code="KRX",
+        decision_id=buy_decision_id,
+    )
+
+    broker = MagicMock()
+    broker.get_current_price = AsyncMock(return_value=(101.0, 1.0, 0.0))
+    broker.get_balance = AsyncMock(
+        return_value={
+            "output1": [{"pdno": "005930", "ord_psbl_qty": "1"}],
+            "output2": [
+                {
+                    "tot_evlu_amt": "100000",
+                    "dnca_tot_amt": "10000",
+                    "pchs_amt_smtl_amt": "90000",
+                }
+            ],
+        }
+    )
+    broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+    scenario = StockScenario(
+        condition=StockCondition(rsi_below=30),
+        action=ScenarioAction.BUY,
+        confidence=88,
+        stop_loss_pct=-2.0,
+        take_profit_pct=3.0,
+        rationale="within range policy",
+    )
+    playbook = DayPlaybook(
+        date=date(2026, 2, 8),
+        market="KR",
+        stock_playbooks=[
+            {"stock_code": "005930", "stock_name": "Samsung", "scenarios": [scenario]}
+        ],
+    )
+    engine = MagicMock(spec=ScenarioEngine)
+    engine.evaluate = MagicMock(return_value=_make_hold_match())
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    with patch(
+        "src.main._inject_staged_exit_features",
+        new=AsyncMock(
+            side_effect=lambda **kwargs: kwargs["market_data"].update(
+                {"atr_value": 3.5, "pred_down_prob": 0.72}
+            )
+        ),
+    ):
+        await trading_cycle(
+            broker=broker,
+            overseas_broker=MagicMock(),
+            scenario_engine=engine,
+            playbook=playbook,
+            risk=MagicMock(),
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(
+                get_latest_timeframe=MagicMock(return_value=None),
+                set_context=MagicMock(),
+            ),
+            criticality_assessor=MagicMock(
+                assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                get_timeout=MagicMock(return_value=5.0),
+            ),
+            telegram=telegram,
+            market=market,
+            stock_code="005930",
+            scan_candidates={},
+        )
+
+    row = db_conn.execute(
+        "SELECT context_snapshot, input_data FROM decision_logs ORDER BY timestamp DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    context_snapshot = json.loads(row[0])
+    input_data = json.loads(row[1])
+
+    assert input_data["atr_value"] == pytest.approx(3.5)
+    assert input_data["pred_down_prob"] == pytest.approx(0.72)
+    assert input_data["stop_loss_threshold"] == pytest.approx(-2.0)
+    assert input_data["be_arm_pct"] == pytest.approx(1.2)
+    assert input_data["arm_pct"] == pytest.approx(3.0)
+    assert context_snapshot["staged_exit"]["reason"] == "hold"
+    assert context_snapshot["staged_exit"]["should_exit"] is False
 
 
 @pytest.mark.asyncio
