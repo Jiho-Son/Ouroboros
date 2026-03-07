@@ -118,3 +118,33 @@ def test_validate_issue_status_consistency_allows_pending_only() -> None:
     module.validate_issue_status_consistency(path, text, errors)
 
     assert errors == []
+
+
+def test_validate_forbidden_runtime_paper_commands_reports_runtime_examples() -> None:
+    module = _load_module()
+    errors: list[str] = []
+    path = Path("README.md").resolve()
+    text = "\n".join(
+        [
+            "```bash",
+            "python -m src.main --mode=paper",
+            "DASHBOARD_ENABLED=true python -m src.main --mode=paper",
+            "```",
+        ]
+    )
+
+    module.validate_forbidden_runtime_paper_commands(path, text, errors)
+
+    assert len(errors) == 2
+    assert "--mode=paper" in errors[0]
+
+
+def test_validate_forbidden_runtime_paper_commands_allows_ban_notice() -> None:
+    module = _load_module()
+    errors: list[str] = []
+    path = Path("README.md").resolve()
+    text = "Runtime paper mode is banned. Do not run `python -m src.main --mode=paper`."
+
+    module.validate_forbidden_runtime_paper_commands(path, text, errors)
+
+    assert errors == []

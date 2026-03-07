@@ -8,13 +8,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import fcntl
 import json
 import logging
 import math
+import os
 import signal
 import threading
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -90,6 +93,37 @@ def _ensure_runtime_mode_allowed(mode: str) -> None:
     """Reject runtime execution modes that are banned by policy."""
     if mode == "paper":
         raise ValueError("paper mode runtime execution is banned")
+
+
+def _acquire_live_runtime_lock(settings: Settings) -> Any:
+    """Prevent duplicate live runtimes from starting on the same host."""
+    if settings.MODE != "live":
+        return None
+
+    lock_path = Path("data/overnight/live_runtime.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = open(lock_path, "a+", encoding="utf-8")
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        lock_file.close()
+        raise RuntimeError("another live runtime is already active") from exc
+
+    lock_file.seek(0)
+    lock_file.truncate()
+    lock_file.write(str(os.getpid()))
+    lock_file.flush()
+    return lock_file
+
+
+def _release_live_runtime_lock(lock_file: Any) -> None:
+    """Release the live runtime singleton lock."""
+    if lock_file is None:
+        return
+    try:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    finally:
+        lock_file.close()
 
 
 def safe_float(value: str | float | None, default: float = 0.0) -> float:
@@ -611,7 +645,11 @@ async def sync_positions_from_broker(
             )
             continue
 
-        held_codes = _extract_held_codes_from_balance(balance_data, is_domestic=market.is_domestic)
+        held_codes = _extract_held_codes_from_balance(
+            balance_data,
+            is_domestic=market.is_domestic,
+            exchange_code=None if market.is_domestic else market.exchange_code,
+        )
         for stock_code in held_codes:
             if get_open_position(db_conn, stock_code, log_market):
                 continue  # already tracked
@@ -672,6 +710,7 @@ def _extract_held_codes_from_balance(
     balance_data: dict[str, Any],
     *,
     is_domestic: bool,
+    exchange_code: str | None = None,
 ) -> list[str]:
     """Return stock codes with a positive orderable quantity from a balance response.
 
@@ -685,6 +724,7 @@ def _extract_held_codes_from_balance(
         return []
 
     codes: list[str] = []
+    expected_exchange = exchange_code.strip().upper() if exchange_code else None
     for holding in output1:
         if not isinstance(holding, dict):
             continue
@@ -692,6 +732,10 @@ def _extract_held_codes_from_balance(
         code = str(holding.get(code_key, "")).strip().upper()
         if not code:
             continue
+        if not is_domestic and expected_exchange:
+            holding_exchange = str(holding.get("ovrs_excg_cd", "")).strip().upper()
+            if holding_exchange and holding_exchange != expected_exchange:
+                continue
         if is_domestic:
             qty = int(holding.get("ord_psbl_qty") or holding.get("hldg_qty") or 0)
         else:
@@ -1112,16 +1156,13 @@ async def build_overseas_symbol_universe(
     # 3) Add current overseas holdings from broker balance if available.
     try:
         balance_data = await overseas_broker.get_overseas_balance(market.exchange_code)
-        output1 = balance_data.get("output1", [])
-        if isinstance(output1, dict):
-            output1 = [output1]
-        if isinstance(output1, list):
-            for row in output1:
-                if not isinstance(row, dict):
-                    continue
-                symbol = _extract_symbol_from_holding(row)
-                if symbol:
-                    symbols.append(symbol)
+        symbols.extend(
+            _extract_held_codes_from_balance(
+                balance_data,
+                is_domestic=False,
+                exchange_code=market.exchange_code,
+            )
+        )
     except Exception as exc:
         logger.warning("Failed to build overseas holdings universe for %s: %s", market.code, exc)
 
@@ -4045,6 +4086,10 @@ def _apply_dashboard_flag(settings: Settings, dashboard_flag: bool) -> Settings:
 async def run(settings: Settings) -> None:
     """Main async loop — iterate over open markets on a timer."""
     _ensure_runtime_mode_allowed(settings.MODE)
+    runtime_lock = _acquire_live_runtime_lock(settings)
+    current_task = asyncio.current_task()
+    if current_task is not None:
+        current_task.add_done_callback(lambda _: _release_live_runtime_lock(runtime_lock))
     global BLACKOUT_ORDER_MANAGER
     BLACKOUT_ORDER_MANAGER = BlackoutOrderManager(
         enabled=settings.ORDER_BLACKOUT_ENABLED,
@@ -4905,7 +4950,9 @@ async def run(settings: Settings) -> None:
                                 market.exchange_code
                             )
                         held_codes = _extract_held_codes_from_balance(
-                            held_balance, is_domestic=market.is_domestic
+                            held_balance,
+                            is_domestic=market.is_domestic,
+                            exchange_code=None if market.is_domestic else market.exchange_code,
                         )
                     except Exception as exc:
                         logger.warning(

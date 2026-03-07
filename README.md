@@ -78,14 +78,14 @@ pip install ".[dev]"
 pytest -v --cov=src --cov-report=term-missing
 ```
 
-### 4. 실행 (모의투자)
+### 4. 실행
 
 ```bash
-# 기본 실행
-python -m src.main --mode=paper
+# 런타임 paper mode 실행은 금지됨 (#426)
+python -m src.main --mode=live
 
 # 대시보드 활성화
-python -m src.main --mode=paper --dashboard
+python -m src.main --mode=live --dashboard
 ```
 
 ### 5. Docker 실행

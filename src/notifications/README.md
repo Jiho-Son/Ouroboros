@@ -38,7 +38,7 @@ TELEGRAM_ENABLED=true
 Start a conversation with your bot on Telegram first (send `/start`), then run:
 
 ```bash
-python -m src.main --mode=paper
+python -m src.main --mode=live
 ```
 
 You should receive a startup notification.
@@ -123,7 +123,7 @@ Normal shutdown
 3. **Check logs**
    ```bash
    # Look for Telegram-related errors
-   python -m src.main --mode=paper 2>&1 | grep -i telegram
+   python -m src.main --mode=live 2>&1 | grep -i telegram
    ```
 
 4. **Verify bot token**

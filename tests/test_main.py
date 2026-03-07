@@ -28,6 +28,7 @@ from src.main import (
     _SESSION_RISK_PROFILES_MAP,
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL,
     KILL_SWITCH,
+    _acquire_live_runtime_lock,
     _apply_dashboard_flag,
     _apply_staged_exit_override_for_hold,
     _compute_kr_atr_value,
@@ -42,6 +43,7 @@ from src.main import (
     _inject_staged_exit_features,
     _maybe_queue_order_intent,
     _refresh_cached_playbook_on_session_transition,
+    _release_live_runtime_lock,
     _resolve_market_setting,
     _resolve_sell_qty_for_pnl,
     _retry_connection,
@@ -135,6 +137,36 @@ async def test_run_rejects_paper_mode_before_runtime_init() -> None:
         pytest.raises(ValueError, match="paper"),
     ):
         await main_module.run(settings)
+
+
+@pytest.mark.asyncio
+async def test_run_rejects_duplicate_live_instance_before_runtime_init() -> None:
+    settings = _make_settings(MODE="live")
+
+    with (
+        patch(
+            "src.main._acquire_live_runtime_lock",
+            side_effect=RuntimeError("another live runtime is already active"),
+        ),
+        patch("src.main.KISBroker", side_effect=AssertionError("runtime initialized")),
+        pytest.raises(RuntimeError, match="already active"),
+    ):
+        await main_module.run(settings)
+
+
+def test_live_runtime_lock_can_be_reacquired_after_release(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    settings = _make_settings(MODE="live")
+
+    first_lock = _acquire_live_runtime_lock(settings)
+    try:
+        with pytest.raises(RuntimeError, match="already active"):
+            _acquire_live_runtime_lock(settings)
+    finally:
+        _release_live_runtime_lock(first_lock)
+
+    second_lock = _acquire_live_runtime_lock(settings)
+    _release_live_runtime_lock(second_lock)
 
 
 def _make_buy_match(stock_code: str = "005930") -> ScenarioMatch:
@@ -1090,6 +1122,23 @@ class TestExtractHeldCodesFromBalance:
         balance = {"output1": [{"ovrs_pdno": "TSLA", "ovrs_cblc_qty": "3"}]}
         result = _extract_held_codes_from_balance(balance, is_domestic=False)
         assert "TSLA" in result
+
+    def test_overseas_filters_holdings_by_exchange_code_when_present(self) -> None:
+        balance = {
+            "output1": [
+                {"ovrs_pdno": "KORE", "ord_psbl_qty": "5", "ovrs_excg_cd": "NASD"},
+                {"ovrs_pdno": "KORE", "ord_psbl_qty": "5", "ovrs_excg_cd": "NYSE"},
+                {"ovrs_pdno": "AAPL", "ord_psbl_qty": "2", "ovrs_excg_cd": "NASD"},
+            ]
+        }
+
+        result = _extract_held_codes_from_balance(
+            balance,
+            is_domestic=False,
+            exchange_code="NASD",
+        )
+
+        assert result == ["KORE", "AAPL"]
 
 
 class TestDetermineOrderQuantity:
@@ -5969,6 +6018,41 @@ class TestSyncPositionsFromBroker:
         pos = get_open_position(db_conn, "AAPL", "US_NASDAQ")
         assert pos is not None
         assert pos["price"] == 170.0
+
+    @pytest.mark.asyncio
+    async def test_startup_sync_filters_overseas_holdings_by_exchange_code(self) -> None:
+        """Startup sync should not record holdings from another overseas exchange."""
+        settings = self._make_settings("US_NASDAQ")
+        db_conn = init_db(":memory:")
+
+        balance = {
+            "output1": [
+                {
+                    "ovrs_pdno": "AAPL",
+                    "ovrs_cblc_qty": "10",
+                    "ovrs_excg_cd": "NASD",
+                    "pchs_avg_pric": "170.0",
+                },
+                {
+                    "ovrs_pdno": "IBM",
+                    "ovrs_cblc_qty": "4",
+                    "ovrs_excg_cd": "NYSE",
+                    "pchs_avg_pric": "240.0",
+                },
+            ],
+            "output2": [{"frcr_evlu_tota": "50000", "frcr_buy_amt_smtl": "40000"}],
+        }
+        broker = MagicMock()
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_balance = AsyncMock(return_value=balance)
+
+        synced = await sync_positions_from_broker(broker, overseas_broker, db_conn, settings)
+
+        from src.db import get_open_position
+
+        assert synced == 1
+        assert get_open_position(db_conn, "AAPL", "US_NASDAQ") is not None
+        assert get_open_position(db_conn, "IBM", "US_NASDAQ") is None
 
     @pytest.mark.asyncio
     async def test_syncs_position_with_zero_price_when_pchs_avg_pric_absent(self) -> None:

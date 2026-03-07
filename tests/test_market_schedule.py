@@ -176,6 +176,28 @@ class TestGetOpenMarkets:
         )
         assert extended == []
 
+    def test_get_open_markets_excludes_kr_weekend_extended_session(self) -> None:
+        """KR extended lookup must not treat Saturday NXT_PRE hours as tradable."""
+        # 2026-03-06 23:00 UTC = 2026-03-07 08:00 KST (Saturday)
+        test_time = datetime(2026, 3, 6, 23, 0, tzinfo=ZoneInfo("UTC"))
+        extended = get_open_markets(
+            enabled_markets=["KR"],
+            now=test_time,
+            include_extended_sessions=True,
+        )
+        assert extended == []
+
+    def test_get_open_markets_excludes_us_weekend_extended_session(self) -> None:
+        """US extended lookup must not treat weekend as active."""
+        # 2026-03-07 15:30 UTC = 2026-03-08 00:30 KST, still Saturday in New York.
+        test_time = datetime(2026, 3, 7, 15, 30, tzinfo=ZoneInfo("UTC"))
+        extended = get_open_markets(
+            enabled_markets=["US_NASDAQ"],
+            now=test_time,
+            include_extended_sessions=True,
+        )
+        assert extended == []
+
 
 class TestGetNextMarketOpen:
     """Test get_next_market_open function."""
