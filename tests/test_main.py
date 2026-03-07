@@ -8669,6 +8669,9 @@ async def test_run_restores_pre_refresh_playbook_when_mid_session_refresh_genera
         )
         stack.enter_context(patch("src.main.get_open_markets", return_value=[market]))
         stack.enter_context(
+            patch("src.main._acquire_live_runtime_lock", return_value=None)
+        )
+        stack.enter_context(
             patch("src.main.get_session_info", return_value=MagicMock(session_id="US_REG"))
         )
         stack.enter_context(
