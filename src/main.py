@@ -351,31 +351,20 @@ async def build_overseas_symbol_universe(
     return ordered_unique
 
 
-async def trading_cycle(
+async def _collect_trading_cycle_market_snapshot(
     broker: KISBroker,
     overseas_broker: OverseasBroker,
-    scenario_engine: ScenarioEngine,
-    playbook: DayPlaybook,
-    risk: RiskManager,
     db_conn: Any,
-    decision_logger: DecisionLogger,
     context_store: ContextStore,
     criticality_assessor: CriticalityAssessor,
-    telegram: TelegramClient,
     market: MarketInfo,
     stock_code: str,
     scan_candidates: dict[str, dict[str, ScanCandidate]],
+    runtime_session_id: str,
     settings: Settings | None = None,
-    buy_cooldown: dict[str, float] | None = None,
-) -> None:
-    """Execute one trading cycle for a single stock."""
-    cycle_start_time = asyncio.get_event_loop().time()
-    _session_risk_overrides(market=market, settings=settings)
-    runtime_session_id = get_session_info(market).session_id
-
-    # 1. Fetch market data
+) -> dict[str, Any]:
     balance_info: dict[str, Any] = {}
-    price_output: dict[str, Any] = {}  # Populated for overseas markets; used for fallback metrics
+    price_output: dict[str, Any] = {}
     if market.is_domestic:
         quote_market_div_code = _resolve_domestic_quote_market_div_code(runtime_session_id)
         current_price, price_change_pct, foreigner_net = await broker.get_current_price(
@@ -391,12 +380,10 @@ async def trading_cycle(
         )
         purchase_total = safe_float(output2[0].get("pchs_amt_smtl_amt", "0")) if output2 else 0
     else:
-        # Overseas market
         price_data = await overseas_broker.get_overseas_price(market.exchange_code, stock_code)
         balance_data = await overseas_broker.get_overseas_balance(market.exchange_code)
 
         output2 = balance_data.get("output2", [{}])
-        # Handle both list and dict response formats
         if isinstance(output2, list) and output2:
             balance_info = output2[0]
         elif isinstance(output2, dict):
@@ -405,7 +392,6 @@ async def trading_cycle(
         total_eval = safe_float(balance_info.get("frcr_evlu_tota", "0") or "0")
         purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
 
-        # Resolve current price first (needed for buying power API)
         price_output = price_data.get("output", {})
         current_price = safe_float(price_output.get("last", "0"))
         if current_price <= 0:
@@ -418,12 +404,9 @@ async def trading_cycle(
                     cand_lookup.price,
                 )
                 current_price = cand_lookup.price
-        foreigner_net = 0.0  # Not available for overseas
+        foreigner_net = 0.0
         price_change_pct = safe_float(price_output.get("rate", "0"))
 
-        # Fetch available foreign currency cash via inquire-psamount (TTTS3007R/VTTS3007R).
-        # TTTS3012R output2 does not include a cash/deposit field — frcr_dncl_amt_2 does not exist.
-        # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 매수가능금액조회' 시트
         total_cash = 0.0
         if current_price > 0:
             try:
@@ -441,8 +424,6 @@ async def trading_cycle(
                     exc,
                 )
 
-        # Paper mode fallback: VTS overseas balance API often fails for many accounts.
-        # Only activate in paper mode — live mode must use real balance from KIS.
         if (
             total_cash <= 0
             and settings
@@ -456,9 +437,7 @@ async def trading_cycle(
             )
             total_cash = settings.PAPER_OVERSEAS_CASH
 
-    # Calculate daily P&L %
     pnl_pct = ((total_eval - purchase_total) / purchase_total * 100) if purchase_total > 0 else 0.0
-
     market_data: dict[str, Any] = {
         "stock_code": stock_code,
         "market_name": market.name,
@@ -472,16 +451,12 @@ async def trading_cycle(
     if session_high_price > 0:
         market_data["session_high_price"] = session_high_price
 
-    # Enrich market_data with scanner metrics for scenario engine
     market_candidates = scan_candidates.get(market.code, {})
     candidate = market_candidates.get(stock_code)
     if candidate:
         market_data["rsi"] = candidate.rsi
         market_data["volume_ratio"] = candidate.volume_ratio
     else:
-        # Holding stocks not in scanner: derive metrics from price API data already fetched.
-        # For overseas stocks, price_output contains high/low/rate from get_overseas_price.
-        # For domestic stocks, only price_change_pct is available from get_current_price.
         market_data["rsi"] = max(0.0, min(100.0, 50.0 + price_change_pct * 2.0))
         if price_output and current_price > 0:
             pr_high = safe_float(
@@ -503,7 +478,6 @@ async def trading_cycle(
         else:
             market_data["volume_ratio"] = 1.0
 
-    # Enrich market_data with holding info for SELL/HOLD scenario conditions
     open_pos = get_open_position(db_conn, stock_code, market.code)
     if open_pos and current_price > 0:
         entry_price = safe_float(open_pos.get("price"), 0.0)
@@ -517,7 +491,6 @@ async def trading_cycle(
             except (ValueError, TypeError):
                 pass
 
-    # 1.3. Record L7 real-time context (market-scoped keys)
     timeframe = datetime.now(UTC).isoformat()
     context_store.set_context(
         ContextLayer.L7_REALTIME,
@@ -549,7 +522,6 @@ async def trading_cycle(
             {"volume_ratio": candidate.volume_ratio},
         )
 
-    # Write pnl_pct to system_metrics (dashboard-only table, separate from AI context tree)
     db_conn.execute(
         "INSERT OR REPLACE INTO system_metrics (key, value, updated_at) VALUES (?, ?, ?)",
         (
@@ -560,19 +532,15 @@ async def trading_cycle(
     )
     db_conn.commit()
 
-    # Build portfolio data for global rule evaluation
     portfolio_data = {
         "portfolio_pnl_pct": pnl_pct,
         "total_cash": total_cash,
         "total_eval": total_eval,
     }
-
-    # 1.5. Get volatility metrics from context store (L7_REALTIME)
     latest_timeframe = context_store.get_latest_timeframe(ContextLayer.L7_REALTIME)
-    volatility_score = 50.0  # Default normal volatility
+    volatility_score = 50.0
     volume_surge = 1.0
     price_change_1m = 0.0
-
     if latest_timeframe:
         volatility_data = context_store.get_context(
             ContextLayer.L7_REALTIME,
@@ -584,7 +552,6 @@ async def trading_cycle(
             volume_surge = volatility_data.get("volume_surge", 1.0)
             price_change_1m = volatility_data.get("price_change_1m", 0.0)
 
-    # 1.6. Assess criticality based on market conditions
     criticality = criticality_assessor.assess_market_conditions(
         pnl_pct=pnl_pct,
         volatility_score=volatility_score,
@@ -592,7 +559,6 @@ async def trading_cycle(
         price_change_1m=price_change_1m,
         is_market_open=True,
     )
-
     logger.info(
         "Criticality for %s (%s): %s (pnl=%.2f%%, volatility=%.1f, volume_surge=%.1fx)",
         stock_code,
@@ -603,7 +569,50 @@ async def trading_cycle(
         volume_surge,
     )
 
-    # 2. Evaluate scenario (local, no API call)
+    return {
+        "balance_data": balance_data,
+        "balance_info": balance_info,
+        "price_output": price_output,
+        "current_price": current_price,
+        "price_change_pct": price_change_pct,
+        "foreigner_net": foreigner_net,
+        "total_eval": total_eval,
+        "total_cash": total_cash,
+        "purchase_total": purchase_total,
+        "pnl_pct": pnl_pct,
+        "market_data": market_data,
+        "portfolio_data": portfolio_data,
+        "market_candidates": market_candidates,
+        "candidate": candidate,
+        "criticality": criticality,
+    }
+
+
+async def _evaluate_trading_cycle_decision(
+    broker: KISBroker,
+    overseas_broker: OverseasBroker,
+    scenario_engine: ScenarioEngine,
+    playbook: DayPlaybook,
+    db_conn: Any,
+    decision_logger: DecisionLogger,
+    telegram: TelegramClient,
+    market: MarketInfo,
+    stock_code: str,
+    runtime_session_id: str,
+    snapshot: dict[str, Any],
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    market_data = snapshot["market_data"]
+    portfolio_data = snapshot["portfolio_data"]
+    current_price = snapshot["current_price"]
+    total_eval = snapshot["total_eval"]
+    total_cash = snapshot["total_cash"]
+    purchase_total = snapshot["purchase_total"]
+    pnl_pct = snapshot["pnl_pct"]
+    foreigner_net = snapshot["foreigner_net"]
+    price_change_pct = snapshot["price_change_pct"]
+    balance_data = snapshot["balance_data"]
+
     match = scenario_engine.evaluate(playbook, stock_code, market_data, portfolio_data)
     decision = TradeDecision(
         action=match.action.value,
@@ -612,7 +621,6 @@ async def trading_cycle(
     )
     stock_playbook = playbook.get_stock_playbook(stock_code)
 
-    # 2.1. Apply market_outlook-based BUY confidence threshold
     if decision.action == "BUY":
         base_threshold = int(
             _resolve_market_setting(
@@ -647,7 +655,6 @@ async def trading_cycle(
                 ),
             )
 
-    # BUY 결정 전 기존 포지션 체크 (중복 매수 방지)
     if decision.action == "BUY":
         existing_position = _resolve_buy_suppression_position(
             db_conn=db_conn,
@@ -765,7 +772,6 @@ async def trading_cycle(
         decision.confidence,
     )
 
-    # 2.1. Notify scenario match
     if match.matched_scenario is not None:
         try:
             condition_parts = [f"{k}={v}" for k, v in match.match_details.items()]
@@ -778,7 +784,6 @@ async def trading_cycle(
         except Exception as exc:
             logger.warning("Scenario matched notification failed: %s", exc)
 
-    # 2.5. Log decision with context snapshot
     context_snapshot = {
         "L1": {
             "current_price": current_price,
@@ -805,7 +810,6 @@ async def trading_cycle(
         context_snapshot=context_snapshot,
         input_data=input_data,
     )
-
     decision_id = decision_logger.log_decision(
         stock_code=stock_code,
         market=market.code,
@@ -817,334 +821,372 @@ async def trading_cycle(
         context_snapshot=context_snapshot,
         input_data=input_data,
     )
+    return {
+        "decision": decision,
+        "match": match,
+        "decision_id": decision_id,
+    }
 
-    # 3. Execute if actionable
-    quantity = 0
-    trade_price = current_price
-    trade_pnl = 0.0
-    buy_trade: dict[str, Any] | None = None
-    buy_price = 0.0
-    sell_qty = 0
-    if decision.action in ("BUY", "SELL"):
-        if KILL_SWITCH.new_orders_blocked and decision.action == "BUY":
-            logger.critical(
-                "KillSwitch block active: skip %s order for %s (%s)",
-                decision.action,
-                stock_code,
-                market.name,
-            )
-            return
 
-        broker_held_qty = (
-            _extract_held_qty_from_balance(balance_data, stock_code, is_domestic=market.is_domestic)
-            if decision.action == "SELL"
-            else 0
+async def _execute_trading_cycle_action(
+    broker: KISBroker,
+    overseas_broker: OverseasBroker,
+    risk: RiskManager,
+    db_conn: Any,
+    decision_logger: DecisionLogger,
+    telegram: TelegramClient,
+    market: MarketInfo,
+    stock_code: str,
+    runtime_session_id: str,
+    snapshot: dict[str, Any],
+    decision_data: dict[str, Any],
+    settings: Settings | None = None,
+    buy_cooldown: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    decision = decision_data["decision"]
+    match = decision_data["match"]
+    current_price = snapshot["current_price"]
+    total_cash = snapshot["total_cash"]
+    pnl_pct = snapshot["pnl_pct"]
+    candidate = snapshot["candidate"]
+    balance_data = snapshot["balance_data"]
+
+    execution_result: dict[str, Any] = {
+        "should_return": False,
+        "order_succeeded": True,
+        "quantity": 0,
+        "trade_price": current_price,
+        "trade_pnl": 0.0,
+        "buy_trade": None,
+        "buy_price": 0.0,
+        "sell_qty": 0,
+    }
+    if decision.action not in ("BUY", "SELL"):
+        return execution_result
+
+    if KILL_SWITCH.new_orders_blocked and decision.action == "BUY":
+        logger.critical(
+            "KillSwitch block active: skip %s order for %s (%s)",
+            decision.action,
+            stock_code,
+            market.name,
         )
-        matched_scenario = match.matched_scenario
-        quantity = _determine_order_quantity(
-            action=decision.action,
-            current_price=current_price,
-            total_cash=total_cash,
-            candidate=candidate,
-            settings=settings,
-            broker_held_qty=broker_held_qty,
-            playbook_allocation_pct=matched_scenario.allocation_pct if matched_scenario else None,
-            scenario_confidence=match.confidence,
+        execution_result["should_return"] = True
+        return execution_result
+
+    broker_held_qty = (
+        _extract_held_qty_from_balance(balance_data, stock_code, is_domestic=market.is_domestic)
+        if decision.action == "SELL"
+        else 0
+    )
+    matched_scenario = match.matched_scenario
+    quantity = _determine_order_quantity(
+        action=decision.action,
+        current_price=current_price,
+        total_cash=total_cash,
+        candidate=candidate,
+        settings=settings,
+        broker_held_qty=broker_held_qty,
+        playbook_allocation_pct=matched_scenario.allocation_pct if matched_scenario else None,
+        scenario_confidence=match.confidence,
+    )
+    execution_result["quantity"] = quantity
+    if quantity <= 0:
+        logger.info(
+            "Skip %s %s (%s): no affordable quantity (cash=%.2f, price=%.2f)",
+            decision.action,
+            stock_code,
+            market.name,
+            total_cash,
+            current_price,
         )
-        if quantity <= 0:
+        execution_result["should_return"] = True
+        return execution_result
+
+    order_amount = current_price * quantity
+    fx_blocked, remaining_cash, required_buffer = _should_block_overseas_buy_for_fx_buffer(
+        market=market,
+        action=decision.action,
+        total_cash=total_cash,
+        order_amount=order_amount,
+        settings=settings,
+    )
+    if fx_blocked:
+        logger.warning(
+            (
+                "Skip BUY %s (%s): FX buffer guard "
+                "(remaining=%.2f, required=%.2f, cash=%.2f, order=%.2f)"
+            ),
+            stock_code,
+            market.name,
+            remaining_cash,
+            required_buffer,
+            total_cash,
+            order_amount,
+        )
+        execution_result["should_return"] = True
+        return execution_result
+
+    if decision.action == "BUY" and buy_cooldown is not None:
+        cooldown_key = f"{market.code}:{stock_code}"
+        cooldown_until = buy_cooldown.get(cooldown_key, 0.0)
+        now = asyncio.get_event_loop().time()
+        if now < cooldown_until:
+            remaining = int(cooldown_until - now)
             logger.info(
-                "Skip %s %s (%s): no affordable quantity (cash=%.2f, price=%.2f)",
+                "Skip BUY %s (%s): insufficient-balance cooldown active (%ds remaining)",
+                stock_code,
+                market.name,
+                remaining,
+            )
+            execution_result["should_return"] = True
+            return execution_result
+
+    try:
+        if decision.action == "SELL":
+            risk.check_circuit_breaker(pnl_pct)
+        else:
+            risk.validate_order(
+                current_pnl_pct=pnl_pct,
+                order_amount=order_amount,
+                total_cash=total_cash,
+            )
+    except FatFingerRejected as exc:
+        try:
+            await telegram.notify_fat_finger(
+                stock_code=stock_code,
+                order_amount=exc.order_amount,
+                total_cash=exc.total_cash,
+                max_pct=exc.max_pct,
+            )
+        except Exception as notify_exc:
+            logger.warning("Fat finger notification failed: %s", notify_exc)
+        raise
+    except CircuitBreakerTripped as exc:
+        ks_report = await _trigger_emergency_kill_switch(
+            reason=f"circuit_breaker:{market.code}:{stock_code}:{exc.pnl_pct:.2f}",
+            broker=broker,
+            overseas_broker=overseas_broker,
+            telegram=telegram,
+            settings=settings,
+            current_market=market,
+            stock_code=stock_code,
+            pnl_pct=exc.pnl_pct,
+            threshold=exc.threshold,
+        )
+        if ks_report.errors:
+            logger.critical(
+                "KillSwitch step errors for %s/%s: %s",
+                market.code,
+                stock_code,
+                "; ".join(ks_report.errors),
+            )
+        raise
+
+    order_succeeded = True
+    if market.is_domestic:
+        if decision.action == "BUY":
+            order_price = kr_round_down(current_price * 1.002)
+        else:
+            order_price = kr_round_down(current_price * 0.998)
+        try:
+            validate_order_policy(
+                market=market,
+                order_type=decision.action,
+                price=float(order_price),
+            )
+        except OrderPolicyRejected as exc:
+            logger.warning(
+                "Order policy rejected %s %s (%s): %s [session=%s]",
                 decision.action,
                 stock_code,
                 market.name,
-                total_cash,
-                current_price,
+                exc,
+                exc.session_id,
             )
-            return
-        order_amount = current_price * quantity
-        fx_blocked, remaining_cash, required_buffer = _should_block_overseas_buy_for_fx_buffer(
+            execution_result["should_return"] = True
+            return execution_result
+        if _maybe_queue_order_intent(
             market=market,
-            action=decision.action,
-            total_cash=total_cash,
-            order_amount=order_amount,
-            settings=settings,
+            session_id=runtime_session_id,
+            stock_code=stock_code,
+            order_type=decision.action,
+            quantity=quantity,
+            price=float(order_price),
+            source="trading_cycle",
+        ):
+            execution_result["should_return"] = True
+            return execution_result
+        result = await broker.send_order(
+            stock_code=stock_code,
+            order_type=decision.action,
+            quantity=quantity,
+            price=order_price,
+            session_id=runtime_session_id,
         )
-        if fx_blocked:
+        if result.get("rt_cd", "0") != "0":
+            order_succeeded = False
+            msg1 = result.get("msg1") or ""
             logger.warning(
-                (
-                    "Skip BUY %s (%s): FX buffer guard "
-                    "(remaining=%.2f, required=%.2f, cash=%.2f, order=%.2f)"
-                ),
+                "KR order not accepted for %s: rt_cd=%s msg=%s",
+                stock_code,
+                result.get("rt_cd"),
+                msg1,
+            )
+    else:
+        _price_decimals = 2 if current_price >= 1.0 else 4
+        if decision.action == "BUY":
+            overseas_price = round(current_price * 1.002, _price_decimals)
+        else:
+            overseas_price = round(current_price * 0.998, _price_decimals)
+        try:
+            validate_order_policy(
+                market=market,
+                order_type=decision.action,
+                price=float(overseas_price),
+            )
+        except OrderPolicyRejected as exc:
+            logger.warning(
+                "Order policy rejected %s %s (%s): %s [session=%s]",
+                decision.action,
                 stock_code,
                 market.name,
-                remaining_cash,
-                required_buffer,
-                total_cash,
-                order_amount,
+                exc,
+                exc.session_id,
             )
-            return
-
-        # 4. Check BUY cooldown (set when a prior BUY failed due to insufficient balance)
-        if decision.action == "BUY" and buy_cooldown is not None:
-            cooldown_key = f"{market.code}:{stock_code}"
-            cooldown_until = buy_cooldown.get(cooldown_key, 0.0)
-            now = asyncio.get_event_loop().time()
-            if now < cooldown_until:
-                remaining = int(cooldown_until - now)
-                logger.info(
-                    "Skip BUY %s (%s): insufficient-balance cooldown active (%ds remaining)",
-                    stock_code,
-                    market.name,
-                    remaining,
-                )
-                return
-
-        # 5a. Risk check BEFORE order
-        # SELL orders do not consume cash (they receive it), so fat-finger check
-        # is skipped for SELLs — only circuit breaker applies.
-        try:
-            if decision.action == "SELL":
-                risk.check_circuit_breaker(pnl_pct)
-            else:
-                risk.validate_order(
-                    current_pnl_pct=pnl_pct,
-                    order_amount=order_amount,
-                    total_cash=total_cash,
-                )
-        except FatFingerRejected as exc:
-            try:
-                await telegram.notify_fat_finger(
-                    stock_code=stock_code,
-                    order_amount=exc.order_amount,
-                    total_cash=exc.total_cash,
-                    max_pct=exc.max_pct,
-                )
-            except Exception as notify_exc:
-                logger.warning("Fat finger notification failed: %s", notify_exc)
-            raise  # Re-raise to prevent trade
-        except CircuitBreakerTripped as exc:
-            ks_report = await _trigger_emergency_kill_switch(
-                reason=f"circuit_breaker:{market.code}:{stock_code}:{exc.pnl_pct:.2f}",
-                broker=broker,
-                overseas_broker=overseas_broker,
-                telegram=telegram,
-                settings=settings,
-                current_market=market,
-                stock_code=stock_code,
-                pnl_pct=exc.pnl_pct,
-                threshold=exc.threshold,
-            )
-            if ks_report.errors:
-                logger.critical(
-                    "KillSwitch step errors for %s/%s: %s",
-                    market.code,
-                    stock_code,
-                    "; ".join(ks_report.errors),
-                )
-            raise
-
-        # 5. Send order
-        order_succeeded = True
-        if market.is_domestic:
-            # Use limit orders (지정가) for domestic stocks to avoid market order
-            # quantity calculation issues. KRX tick rounding applied via kr_round_down.
-            # BUY: +0.2% — ensures fill even when ask is slightly above last price.
-            # SELL: -0.2% — ensures fill even when bid is slightly below last price.
-            if decision.action == "BUY":
-                order_price = kr_round_down(current_price * 1.002)
-            else:
-                order_price = kr_round_down(current_price * 0.998)
-            try:
-                validate_order_policy(
-                    market=market,
-                    order_type=decision.action,
-                    price=float(order_price),
-                )
-            except OrderPolicyRejected as exc:
-                logger.warning(
-                    "Order policy rejected %s %s (%s): %s [session=%s]",
-                    decision.action,
-                    stock_code,
-                    market.name,
-                    exc,
-                    exc.session_id,
-                )
-                return
-            if _maybe_queue_order_intent(
-                market=market,
-                session_id=runtime_session_id,
-                stock_code=stock_code,
-                order_type=decision.action,
-                quantity=quantity,
-                price=float(order_price),
-                source="trading_cycle",
-            ):
-                return
-            result = await broker.send_order(
-                stock_code=stock_code,
-                order_type=decision.action,
-                quantity=quantity,
-                price=order_price,
-                session_id=runtime_session_id,
-            )
-            if result.get("rt_cd", "0") != "0":
-                order_succeeded = False
-                msg1 = result.get("msg1") or ""
-                logger.warning(
-                    "KR order not accepted for %s: rt_cd=%s msg=%s",
-                    stock_code,
-                    result.get("rt_cd"),
-                    msg1,
-                )
-        else:
-            # For overseas orders, always use limit orders (지정가):
-            # - KIS market orders (ORD_DVSN=01) calculate quantity based on upper limit
-            #   price (상한가 기준), resulting in only 60-80% of intended cash being used.
-            # - BUY: +0.2% above last price — tight enough to minimise overpayment while
-            #   achieving >90% fill rate on large-cap US stocks.
-            # - SELL: -0.2% below last price — ensures fill even when price dips slightly
-            #   (placing at exact last price risks no-fill if the bid is just below).
-            overseas_price: float
-            # KIS requires at most 2 decimal places for prices >= $1 (≥1달러 소수점 2자리 제한).
-            # Penny stocks (< $1) keep 4 decimal places to preserve price precision.
-            _price_decimals = 2 if current_price >= 1.0 else 4
-            if decision.action == "BUY":
-                overseas_price = round(current_price * 1.002, _price_decimals)
-            else:
-                overseas_price = round(current_price * 0.998, _price_decimals)
-            try:
-                validate_order_policy(
-                    market=market,
-                    order_type=decision.action,
-                    price=float(overseas_price),
-                )
-            except OrderPolicyRejected as exc:
-                logger.warning(
-                    "Order policy rejected %s %s (%s): %s [session=%s]",
-                    decision.action,
-                    stock_code,
-                    market.name,
-                    exc,
-                    exc.session_id,
-                )
-                return
-            if _maybe_queue_order_intent(
-                market=market,
-                session_id=runtime_session_id,
-                stock_code=stock_code,
-                order_type=decision.action,
-                quantity=quantity,
-                price=float(overseas_price),
-                source="trading_cycle",
-            ):
-                return
-            result = await overseas_broker.send_overseas_order(
-                exchange_code=market.exchange_code,
-                stock_code=stock_code,
-                order_type=decision.action,
-                quantity=quantity,
-                price=overseas_price,  # limit order
-            )
-            # Check if KIS rejected the order (rt_cd != "0")
-            if result.get("rt_cd", "") != "0":
-                order_succeeded = False
-                msg1 = result.get("msg1") or ""
-                logger.warning(
-                    "Overseas order not accepted for %s: rt_cd=%s msg=%s",
-                    stock_code,
-                    result.get("rt_cd"),
-                    msg1,
-                )
-                # Set BUY cooldown when the rejection is due to insufficient balance
-                if decision.action == "BUY" and buy_cooldown is not None and "주문가능금액" in msg1:
-                    cooldown_key = f"{market.code}:{stock_code}"
-                    buy_cooldown[cooldown_key] = (
-                        asyncio.get_event_loop().time() + _BUY_COOLDOWN_SECONDS
-                    )
-                    logger.info(
-                        "BUY cooldown set for %s: %.0fs (insufficient balance)",
-                        stock_code,
-                        _BUY_COOLDOWN_SECONDS,
-                    )
-                # Close ghost position when broker has no matching balance.
-                # This prevents infinite SELL retry cycles for positions that
-                # exist in the DB (from startup sync) but are no longer
-                # sellable at the broker (expired warrants, delisted stocks, etc.)
-                if decision.action == "SELL" and "잔고내역이 없습니다" in msg1:
-                    logger.warning(
-                        "Ghost position detected for %s (%s): broker reports no balance."
-                        " Closing DB position to prevent infinite retry.",
-                        stock_code,
-                        market.exchange_code,
-                    )
-                    log_trade(
-                        conn=db_conn,
-                        stock_code=stock_code,
-                        action="SELL",
-                        confidence=0,
-                        rationale=(
-                            "[ghost-close] Broker reported no balance; position closed without fill"
-                        ),
-                        quantity=0,
-                        price=0.0,
-                        pnl=0.0,
-                        market=market.code,
-                        exchange_code=market.exchange_code,
-                        session_id=runtime_session_id,
-                        mode=settings.MODE if settings else "paper",
-                    )
-        logger.info("Order result: %s", result.get("msg1", "OK"))
-
-        # 5.5. Notify trade execution (only on success)
-        if order_succeeded:
-            try:
-                await telegram.notify_trade_execution(
-                    stock_code=stock_code,
-                    market=market.name,
-                    action=decision.action,
-                    quantity=quantity,
-                    price=current_price,
-                    confidence=decision.confidence,
-                )
-            except Exception as exc:
-                logger.warning("Telegram notification failed: %s", exc)
-
-        if decision.action == "SELL" and order_succeeded:
-            buy_trade = get_latest_buy_trade(
-                db_conn,
+            execution_result["should_return"] = True
+            return execution_result
+        if _maybe_queue_order_intent(
+            market=market,
+            session_id=runtime_session_id,
+            stock_code=stock_code,
+            order_type=decision.action,
+            quantity=quantity,
+            price=float(overseas_price),
+            source="trading_cycle",
+        ):
+            execution_result["should_return"] = True
+            return execution_result
+        result = await overseas_broker.send_overseas_order(
+            exchange_code=market.exchange_code,
+            stock_code=stock_code,
+            order_type=decision.action,
+            quantity=quantity,
+            price=overseas_price,
+        )
+        if result.get("rt_cd", "") != "0":
+            order_succeeded = False
+            msg1 = result.get("msg1") or ""
+            logger.warning(
+                "Overseas order not accepted for %s: rt_cd=%s msg=%s",
                 stock_code,
-                market.code,
-                exchange_code=market.exchange_code,
+                result.get("rt_cd"),
+                msg1,
             )
-            if buy_trade and buy_trade.get("price") is not None:
-                buy_price = float(buy_trade["price"])
-                buy_qty = int(buy_trade.get("quantity") or 0)
-                sell_qty = _resolve_sell_qty_for_pnl(sell_qty=quantity, buy_qty=buy_qty)
-                trade_pnl = (trade_price - buy_price) * sell_qty
-                decision_logger.update_outcome(
-                    decision_id=buy_trade["decision_id"],
-                    pnl=trade_pnl,
-                    accuracy=1 if trade_pnl > 0 else 0,
+            if decision.action == "BUY" and buy_cooldown is not None and "주문가능금액" in msg1:
+                cooldown_key = f"{market.code}:{stock_code}"
+                buy_cooldown[cooldown_key] = asyncio.get_event_loop().time() + _BUY_COOLDOWN_SECONDS
+                logger.info(
+                    "BUY cooldown set for %s: %.0fs (insufficient balance)",
+                    stock_code,
+                    _BUY_COOLDOWN_SECONDS,
                 )
-                if trade_pnl < 0:
-                    cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
-                    cooldown_minutes = _stoploss_cooldown_minutes(settings, market=market)
-                    _STOPLOSS_REENTRY_COOLDOWN_UNTIL[cooldown_key] = (
-                        datetime.now(UTC).timestamp() + cooldown_minutes * 60
-                    )
-                    logger.info(
-                        "Stop-loss cooldown set for %s (%s): %d minutes",
-                        stock_code,
-                        market.name,
-                        cooldown_minutes,
-                    )
+            if decision.action == "SELL" and "잔고내역이 없습니다" in msg1:
+                logger.warning(
+                    "Ghost position detected for %s (%s): broker reports no balance."
+                    " Closing DB position to prevent infinite retry.",
+                    stock_code,
+                    market.exchange_code,
+                )
+                log_trade(
+                    conn=db_conn,
+                    stock_code=stock_code,
+                    action="SELL",
+                    confidence=0,
+                    rationale=(
+                        "[ghost-close] Broker reported no balance; position closed without fill"
+                    ),
+                    quantity=0,
+                    price=0.0,
+                    pnl=0.0,
+                    market=market.code,
+                    exchange_code=market.exchange_code,
+                    session_id=runtime_session_id,
+                    mode=settings.MODE if settings else "paper",
+                )
+    logger.info("Order result: %s", result.get("msg1", "OK"))
 
-    # 6. Log trade with selection context (skip if order was rejected)
-    if decision.action in ("BUY", "SELL") and not order_succeeded:
+    execution_result["order_succeeded"] = order_succeeded
+    if order_succeeded:
+        try:
+            await telegram.notify_trade_execution(
+                stock_code=stock_code,
+                market=market.name,
+                action=decision.action,
+                quantity=quantity,
+                price=current_price,
+                confidence=decision.confidence,
+            )
+        except Exception as exc:
+            logger.warning("Telegram notification failed: %s", exc)
+
+    if decision.action == "SELL" and order_succeeded:
+        buy_trade = get_latest_buy_trade(
+            db_conn,
+            stock_code,
+            market.code,
+            exchange_code=market.exchange_code,
+        )
+        execution_result["buy_trade"] = buy_trade
+        if buy_trade and buy_trade.get("price") is not None:
+            buy_price = float(buy_trade["price"])
+            buy_qty = int(buy_trade.get("quantity") or 0)
+            sell_qty = _resolve_sell_qty_for_pnl(sell_qty=quantity, buy_qty=buy_qty)
+            trade_pnl = (current_price - buy_price) * sell_qty
+            decision_logger.update_outcome(
+                decision_id=buy_trade["decision_id"],
+                pnl=trade_pnl,
+                accuracy=1 if trade_pnl > 0 else 0,
+            )
+            execution_result["buy_price"] = buy_price
+            execution_result["sell_qty"] = sell_qty
+            execution_result["trade_pnl"] = trade_pnl
+            if trade_pnl < 0:
+                cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
+                cooldown_minutes = _stoploss_cooldown_minutes(settings, market=market)
+                _STOPLOSS_REENTRY_COOLDOWN_UNTIL[cooldown_key] = (
+                    datetime.now(UTC).timestamp() + cooldown_minutes * 60
+                )
+                logger.info(
+                    "Stop-loss cooldown set for %s (%s): %d minutes",
+                    stock_code,
+                    market.name,
+                    cooldown_minutes,
+                )
+    return execution_result
+
+
+def _log_trading_cycle_trade(
+    db_conn: Any,
+    market: MarketInfo,
+    stock_code: str,
+    runtime_session_id: str,
+    snapshot: dict[str, Any],
+    decision_data: dict[str, Any],
+    execution_result: dict[str, Any],
+    settings: Settings | None = None,
+) -> None:
+    decision = decision_data["decision"]
+    decision_id = decision_data["decision_id"]
+    if decision.action in ("BUY", "SELL") and not execution_result["order_succeeded"]:
         return
+
+    market_candidates = snapshot["market_candidates"]
+    balance_info = snapshot["balance_info"]
+    price_output = snapshot["price_output"]
+    candidate = market_candidates.get(stock_code)
     selection_context = None
-    if stock_code in market_candidates:
-        candidate = market_candidates[stock_code]
+    if candidate:
         selection_context = {
             "rsi": candidate.rsi,
             "volume_ratio": candidate.volume_ratio,
@@ -1160,14 +1202,14 @@ async def trading_cycle(
 
     strategy_pnl: float | None = None
     fx_pnl: float | None = None
-    if decision.action == "SELL" and order_succeeded:
-        buy_fx_rate = _extract_buy_fx_rate(buy_trade)
+    if decision.action == "SELL" and execution_result["order_succeeded"]:
+        buy_fx_rate = _extract_buy_fx_rate(execution_result["buy_trade"])
         strategy_pnl, fx_pnl = _split_trade_pnl_components(
             market=market,
-            trade_pnl=trade_pnl,
-            buy_price=buy_price,
-            sell_price=trade_price,
-            quantity=sell_qty or quantity,
+            trade_pnl=execution_result["trade_pnl"],
+            buy_price=execution_result["buy_price"],
+            sell_price=execution_result["trade_price"],
+            quantity=execution_result["sell_qty"] or execution_result["quantity"],
             buy_fx_rate=buy_fx_rate,
             sell_fx_rate=sell_fx_rate,
         )
@@ -1178,9 +1220,9 @@ async def trading_cycle(
         action=decision.action,
         confidence=decision.confidence,
         rationale=decision.rationale,
-        quantity=quantity,
-        price=trade_price,
-        pnl=trade_pnl,
+        quantity=execution_result["quantity"],
+        price=execution_result["trade_price"],
+        pnl=execution_result["trade_pnl"],
         strategy_pnl=strategy_pnl,
         fx_pnl=fx_pnl,
         market=market.code,
@@ -1191,16 +1233,93 @@ async def trading_cycle(
         mode=settings.MODE if settings else "paper",
     )
 
-    # 7. Latency monitoring
+
+async def trading_cycle(
+    broker: KISBroker,
+    overseas_broker: OverseasBroker,
+    scenario_engine: ScenarioEngine,
+    playbook: DayPlaybook,
+    risk: RiskManager,
+    db_conn: Any,
+    decision_logger: DecisionLogger,
+    context_store: ContextStore,
+    criticality_assessor: CriticalityAssessor,
+    telegram: TelegramClient,
+    market: MarketInfo,
+    stock_code: str,
+    scan_candidates: dict[str, dict[str, ScanCandidate]],
+    settings: Settings | None = None,
+    buy_cooldown: dict[str, float] | None = None,
+) -> None:
+    """Execute one trading cycle for a single stock."""
+    cycle_start_time = asyncio.get_event_loop().time()
+    _session_risk_overrides(market=market, settings=settings)
+    runtime_session_id = get_session_info(market).session_id
+
+    snapshot = await _collect_trading_cycle_market_snapshot(
+        broker=broker,
+        overseas_broker=overseas_broker,
+        db_conn=db_conn,
+        context_store=context_store,
+        criticality_assessor=criticality_assessor,
+        market=market,
+        stock_code=stock_code,
+        scan_candidates=scan_candidates,
+        runtime_session_id=runtime_session_id,
+        settings=settings,
+    )
+    decision_data = await _evaluate_trading_cycle_decision(
+        broker=broker,
+        overseas_broker=overseas_broker,
+        scenario_engine=scenario_engine,
+        playbook=playbook,
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        telegram=telegram,
+        market=market,
+        stock_code=stock_code,
+        runtime_session_id=runtime_session_id,
+        snapshot=snapshot,
+        settings=settings,
+    )
+    execution_result = await _execute_trading_cycle_action(
+        broker=broker,
+        overseas_broker=overseas_broker,
+        risk=risk,
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        telegram=telegram,
+        market=market,
+        stock_code=stock_code,
+        runtime_session_id=runtime_session_id,
+        snapshot=snapshot,
+        decision_data=decision_data,
+        settings=settings,
+        buy_cooldown=buy_cooldown,
+    )
+    if execution_result["should_return"]:
+        return
+
+    _log_trading_cycle_trade(
+        db_conn=db_conn,
+        market=market,
+        stock_code=stock_code,
+        runtime_session_id=runtime_session_id,
+        snapshot=snapshot,
+        decision_data=decision_data,
+        execution_result=execution_result,
+        settings=settings,
+    )
+
     cycle_end_time = asyncio.get_event_loop().time()
     cycle_latency = cycle_end_time - cycle_start_time
-    timeout = criticality_assessor.get_timeout(criticality)
+    timeout = criticality_assessor.get_timeout(snapshot["criticality"])
 
     if timeout and cycle_latency > timeout:
         logger.warning(
             "Trading cycle exceeded timeout for %s (criticality=%s, latency=%.2fs, timeout=%.2fs)",
             stock_code,
-            criticality.value,
+            snapshot["criticality"].value,
             cycle_latency,
             timeout,
         )
@@ -1208,7 +1327,7 @@ async def trading_cycle(
         logger.debug(
             "Trading cycle completed within timeout for %s (criticality=%s, latency=%.2fs)",
             stock_code,
-            criticality.value,
+            snapshot["criticality"].value,
             cycle_latency,
         )
 

@@ -1,6 +1,7 @@
 """Tests for main trading loop integration."""
 
 import asyncio
+import inspect
 import json
 import math
 from contextlib import ExitStack
@@ -8731,3 +8732,13 @@ async def test_run_restores_pre_refresh_playbook_when_mid_session_refresh_genera
     assert mock_trading_cycle.await_args_list[1].args[3] is original_playbook
     pre_market_planner.generate_playbook.assert_awaited_once()
     telegram.notify_playbook_failed.assert_awaited_once()
+
+
+def test_trading_cycle_is_composed_from_stage_helpers() -> None:
+    """Issue #447 regression: trading_cycle should delegate to focused stage helpers."""
+    source = inspect.getsource(main_module.trading_cycle)
+
+    assert "await _collect_trading_cycle_market_snapshot(" in source
+    assert "await _evaluate_trading_cycle_decision(" in source
+    assert "await _execute_trading_cycle_action(" in source
+    assert "_log_trading_cycle_trade(" in source
