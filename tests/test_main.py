@@ -778,7 +778,7 @@ def test_apply_staged_exit_uses_independent_arm_threshold_settings() -> None:
 
         return _Out()
 
-    with patch("src.main.evaluate_exit", side_effect=_fake_eval):
+    with patch("src.strategy.exit_manager.evaluate_exit", side_effect=_fake_eval):
         out = _apply_staged_exit_override_for_hold(
             decision=decision,
             market=market,
@@ -824,8 +824,8 @@ def test_apply_staged_exit_kr_does_not_loosen_beyond_playbook_stop() -> None:
         return _Out()
 
     with (
-        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-7.0),
-        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+        patch("src.strategy.exit_manager._compute_kr_dynamic_stop_loss_pct", return_value=-7.0),
+        patch("src.strategy.exit_manager.evaluate_exit", side_effect=_fake_eval),
     ):
         out = _apply_staged_exit_override_for_hold(
             decision=decision,
@@ -871,8 +871,8 @@ def test_apply_staged_exit_kr_keeps_dynamic_when_it_is_tighter_than_playbook() -
         return _Out()
 
     with (
-        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-2.5),
-        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+        patch("src.strategy.exit_manager._compute_kr_dynamic_stop_loss_pct", return_value=-2.5),
+        patch("src.strategy.exit_manager.evaluate_exit", side_effect=_fake_eval),
     ):
         _apply_staged_exit_override_for_hold(
             decision=decision,
@@ -917,8 +917,8 @@ def test_apply_staged_exit_kr_handles_non_finite_playbook_stop_loss() -> None:
         return _Out()
 
     with (
-        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-7.0),
-        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+        patch("src.strategy.exit_manager._compute_kr_dynamic_stop_loss_pct", return_value=-7.0),
+        patch("src.strategy.exit_manager.evaluate_exit", side_effect=_fake_eval),
     ):
         _apply_staged_exit_override_for_hold(
             decision=decision,
@@ -957,8 +957,8 @@ def test_apply_staged_exit_kr_without_playbook_uses_dynamic_stop() -> None:
         return _Out()
 
     with (
-        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-5.5),
-        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+        patch("src.strategy.exit_manager._compute_kr_dynamic_stop_loss_pct", return_value=-5.5),
+        patch("src.strategy.exit_manager.evaluate_exit", side_effect=_fake_eval),
     ):
         _apply_staged_exit_override_for_hold(
             decision=decision,
@@ -1004,8 +1004,8 @@ def test_apply_staged_exit_handles_non_finite_playbook_take_profit() -> None:
         return _Out()
 
     with (
-        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-3.0),
-        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+        patch("src.strategy.exit_manager._compute_kr_dynamic_stop_loss_pct", return_value=-3.0),
+        patch("src.strategy.exit_manager.evaluate_exit", side_effect=_fake_eval),
     ):
         _apply_staged_exit_override_for_hold(
             decision=decision,
