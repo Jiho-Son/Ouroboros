@@ -12,62 +12,78 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import src.main as main_module
+from src.analysis.atr_helpers import (
+    _compute_kr_atr_value,
+    _estimate_pred_down_prob_from_rsi,
+    _split_trade_pnl_components,
+)
+from src.broker.balance_utils import (
+    _extract_avg_price_from_balance,
+    _extract_held_codes_from_balance,
+    _extract_held_qty_from_balance,
+)
+from src.broker.pending_orders import (
+    handle_domestic_pending_orders,
+    handle_overseas_pending_orders,
+)
 from src.config import Settings
 from src.context.layer import ContextLayer
 from src.context.scheduler import ScheduleResult
 from src.core.blackout_manager import BlackoutOrderManager
+from src.core.blackout_runtime import (
+    _maybe_queue_order_intent,
+    process_blackout_recovery_orders,
+)
+from src.core.kill_switch_runtime import (
+    KILL_SWITCH,
+    _trigger_emergency_kill_switch,
+)
+from src.core.order_helpers import (
+    _determine_order_quantity,
+    _resolve_sell_qty_for_pnl,
+    _should_block_overseas_buy_for_fx_buffer,
+    _should_force_exit_for_overnight,
+)
 from src.core.order_policy import OrderPolicyRejected, get_session_info
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
-from src.db import init_db, log_trade
-from src.evolution.scorecard import DailyScorecard
-from src.logging.decision_logger import DecisionLogger
-from src.main import (
-    _RUNTIME_EXIT_PEAKS,
-    _RUNTIME_EXIT_STATES,
+from src.core.session_risk import (
     _SESSION_RISK_LAST_BY_MARKET,
     _SESSION_RISK_OVERRIDES_BY_MARKET,
     _SESSION_RISK_PROFILES_MAP,
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL,
-    KILL_SWITCH,
+    _compute_kr_dynamic_stop_loss_pct,
+    _resolve_market_setting,
+    _stoploss_cooldown_minutes,
+)
+from src.db import init_db, log_trade
+from src.evolution.scorecard import DailyScorecard
+from src.logging.decision_logger import DecisionLogger
+from src.main import (
     _acquire_live_runtime_lock,
     _apply_dashboard_flag,
-    _apply_staged_exit_override_for_hold,
-    _compute_kr_atr_value,
-    _compute_kr_dynamic_stop_loss_pct,
-    _determine_order_quantity,
-    _estimate_pred_down_prob_from_rsi,
-    _extract_avg_price_from_balance,
-    _extract_held_codes_from_balance,
-    _extract_held_qty_from_balance,
     _handle_market_close,
     _has_market_session_transition,
-    _inject_staged_exit_features,
-    _maybe_queue_order_intent,
     _refresh_cached_playbook_on_session_transition,
     _release_live_runtime_lock,
-    _resolve_market_setting,
-    _resolve_sell_qty_for_pnl,
     _retry_connection,
     _run_context_scheduler,
     _run_evolution_loop,
     _run_markets_in_parallel,
-    _should_block_overseas_buy_for_fx_buffer,
-    _should_force_exit_for_overnight,
     _should_mid_session_refresh,
     _should_refresh_cached_playbook_on_session_transition,
     _should_rescan_market,
     _should_reuse_stored_playbook,
-    _split_trade_pnl_components,
     _start_dashboard_server,
-    _stoploss_cooldown_minutes,
-    _trigger_emergency_kill_switch,
-    handle_domestic_pending_orders,
-    handle_overseas_pending_orders,
-    process_blackout_recovery_orders,
     run_daily_session,
     safe_float,
     sync_positions_from_broker,
     trading_cycle,
+)
+from src.strategy.exit_manager import (
+    _RUNTIME_EXIT_PEAKS,
+    _RUNTIME_EXIT_STATES,
+    _apply_staged_exit_override_for_hold,
+    _inject_staged_exit_features,
 )
 from src.strategy.models import (
     DayPlaybook,
@@ -529,7 +545,10 @@ def test_resolve_market_setting_uses_session_profile_override() -> None:
     market = MagicMock()
     market.code = "US_NASDAQ"
 
-    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_PRE")):
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="US_PRE"),
+    ):
         value = _resolve_market_setting(
             market=market,
             settings=settings,
@@ -552,7 +571,10 @@ def test_stoploss_cooldown_minutes_uses_session_override() -> None:
     market = MagicMock()
     market.code = "KR"
 
-    with patch("src.main.get_session_info", return_value=MagicMock(session_id="NXT_AFTER")):
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="NXT_AFTER"),
+    ):
         value = _stoploss_cooldown_minutes(settings, market=market)
 
     assert value == 45
@@ -571,7 +593,10 @@ def test_resolve_market_setting_ignores_profile_when_reload_disabled() -> None:
     market = MagicMock()
     market.code = "US_NASDAQ"
 
-    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_PRE")):
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="US_PRE"),
+    ):
         value = _resolve_market_setting(
             market=market,
             settings=settings,
@@ -594,7 +619,10 @@ def test_resolve_market_setting_falls_back_on_invalid_profile_json() -> None:
     market = MagicMock()
     market.code = "US_NASDAQ"
 
-    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_PRE")):
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="US_PRE"),
+    ):
         value = _resolve_market_setting(
             market=market,
             settings=settings,
@@ -617,7 +645,10 @@ def test_resolve_market_setting_coerces_bool_string_override() -> None:
     market = MagicMock()
     market.code = "US_NASDAQ"
 
-    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_AFTER")):
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="US_AFTER"),
+    ):
         value = _resolve_market_setting(
             market=market,
             settings=settings,
@@ -778,7 +809,7 @@ def test_apply_staged_exit_uses_independent_arm_threshold_settings() -> None:
 
         return _Out()
 
-    with patch("src.main.evaluate_exit", side_effect=_fake_eval):
+    with patch("src.strategy.exit_manager.evaluate_exit", side_effect=_fake_eval):
         out = _apply_staged_exit_override_for_hold(
             decision=decision,
             market=market,
@@ -824,8 +855,8 @@ def test_apply_staged_exit_kr_does_not_loosen_beyond_playbook_stop() -> None:
         return _Out()
 
     with (
-        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-7.0),
-        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+        patch("src.strategy.exit_manager._compute_kr_dynamic_stop_loss_pct", return_value=-7.0),
+        patch("src.strategy.exit_manager.evaluate_exit", side_effect=_fake_eval),
     ):
         out = _apply_staged_exit_override_for_hold(
             decision=decision,
@@ -871,8 +902,8 @@ def test_apply_staged_exit_kr_keeps_dynamic_when_it_is_tighter_than_playbook() -
         return _Out()
 
     with (
-        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-2.5),
-        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+        patch("src.strategy.exit_manager._compute_kr_dynamic_stop_loss_pct", return_value=-2.5),
+        patch("src.strategy.exit_manager.evaluate_exit", side_effect=_fake_eval),
     ):
         _apply_staged_exit_override_for_hold(
             decision=decision,
@@ -917,8 +948,8 @@ def test_apply_staged_exit_kr_handles_non_finite_playbook_stop_loss() -> None:
         return _Out()
 
     with (
-        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-7.0),
-        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+        patch("src.strategy.exit_manager._compute_kr_dynamic_stop_loss_pct", return_value=-7.0),
+        patch("src.strategy.exit_manager.evaluate_exit", side_effect=_fake_eval),
     ):
         _apply_staged_exit_override_for_hold(
             decision=decision,
@@ -957,8 +988,8 @@ def test_apply_staged_exit_kr_without_playbook_uses_dynamic_stop() -> None:
         return _Out()
 
     with (
-        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-5.5),
-        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+        patch("src.strategy.exit_manager._compute_kr_dynamic_stop_loss_pct", return_value=-5.5),
+        patch("src.strategy.exit_manager.evaluate_exit", side_effect=_fake_eval),
     ):
         _apply_staged_exit_override_for_hold(
             decision=decision,
@@ -1004,8 +1035,8 @@ def test_apply_staged_exit_handles_non_finite_playbook_take_profit() -> None:
         return _Out()
 
     with (
-        patch("src.main._compute_kr_dynamic_stop_loss_pct", return_value=-3.0),
-        patch("src.main.evaluate_exit", side_effect=_fake_eval),
+        patch("src.strategy.exit_manager._compute_kr_dynamic_stop_loss_pct", return_value=-3.0),
+        patch("src.strategy.exit_manager.evaluate_exit", side_effect=_fake_eval),
     ):
         _apply_staged_exit_override_for_hold(
             decision=decision,
@@ -7725,6 +7756,7 @@ async def test_session_boundary_reloads_us_min_price_override_in_trading_cycle()
     with (
         patch("src.main.get_open_position", return_value=None),
         patch("src.main.get_session_info", side_effect=_session_info),
+        patch("src.core.session_risk.get_session_info", side_effect=_session_info),
     ):
         await trading_cycle(
             broker=broker,
@@ -7833,6 +7865,7 @@ async def test_session_boundary_falls_back_when_profile_reload_fails() -> None:
     with (
         patch("src.main.get_open_position", return_value=None),
         patch("src.main.get_session_info", side_effect=_session_info),
+        patch("src.core.session_risk.get_session_info", side_effect=_session_info),
     ):
         await trading_cycle(
             broker=broker,
@@ -7888,7 +7921,10 @@ async def test_session_boundary_falls_back_when_profile_reload_fails() -> None:
 
 def test_overnight_policy_prioritizes_killswitch_over_exception() -> None:
     market = MagicMock()
-    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_AFTER")):
+    with patch(
+        "src.core.order_helpers.get_session_info",
+        return_value=MagicMock(session_id="US_AFTER"),
+    ):
         settings = MagicMock()
         settings.OVERNIGHT_EXCEPTION_ENABLED = True
         try:
@@ -8012,7 +8048,7 @@ async def test_blackout_queues_order_and_skips_submission() -> None:
     blackout_manager.pending_count = 1
     blackout_manager.overflow_drop_count = 0
 
-    with patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager):
+    with patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", blackout_manager):
         await trading_cycle(
             broker=broker,
             overseas_broker=MagicMock(),
@@ -8048,7 +8084,7 @@ def test_blackout_queue_overflow_keeps_latest_intent() -> None:
     market.code = "KR"
     market.exchange_code = "KRX"
 
-    with patch("src.main.BLACKOUT_ORDER_MANAGER", manager):
+    with patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", manager):
         assert _maybe_queue_order_intent(
             market=market,
             session_id="KRX_REG",
@@ -8105,10 +8141,10 @@ async def test_process_blackout_recovery_executes_valid_intents() -> None:
     blackout_manager.pop_recovery_batch.return_value = [intent]
 
     with (
-        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
-        patch("src.main.MARKETS", {"KR": market}),
-        patch("src.main.get_open_position", return_value=None),
-        patch("src.main.validate_order_policy"),
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.core.blackout_runtime.MARKETS", {"KR": market}),
+        patch("src.core.blackout_runtime.get_open_position", return_value=None),
+        patch("src.core.blackout_runtime.validate_order_policy"),
         patch("src.main.get_session_info", return_value=MagicMock(session_id="KRX_REG")),
     ):
         await process_blackout_recovery_orders(
@@ -8161,11 +8197,11 @@ async def test_process_blackout_recovery_drops_policy_rejected_intent() -> None:
     blackout_manager.pop_recovery_batch.return_value = [intent]
 
     with (
-        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
-        patch("src.main.MARKETS", {"KR": market}),
-        patch("src.main.get_open_position", return_value=None),
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.core.blackout_runtime.MARKETS", {"KR": market}),
+        patch("src.core.blackout_runtime.get_open_position", return_value=None),
         patch(
-            "src.main.validate_order_policy",
+            "src.core.blackout_runtime.validate_order_policy",
             side_effect=OrderPolicyRejected(
                 "blocked",
                 session_id="NXT_AFTER",
@@ -8211,10 +8247,10 @@ async def test_process_blackout_recovery_drops_intent_on_excessive_price_drift()
     blackout_manager.pop_recovery_batch.return_value = [intent]
 
     with (
-        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
-        patch("src.main.MARKETS", {"KR": market}),
-        patch("src.main.get_open_position", return_value=None),
-        patch("src.main.validate_order_policy") as validate_policy,
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.core.blackout_runtime.MARKETS", {"KR": market}),
+        patch("src.core.blackout_runtime.get_open_position", return_value=None),
+        patch("src.core.blackout_runtime.validate_order_policy") as validate_policy,
     ):
         await process_blackout_recovery_orders(
             broker=broker,
@@ -8262,10 +8298,10 @@ async def test_process_blackout_recovery_drops_overseas_intent_on_excessive_pric
     blackout_manager.pop_recovery_batch.return_value = [intent]
 
     with (
-        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
-        patch("src.main.MARKETS", {"US_NASDAQ": market}),
-        patch("src.main.get_open_position", return_value=None),
-        patch("src.main.validate_order_policy") as validate_policy,
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.core.blackout_runtime.MARKETS", {"US_NASDAQ": market}),
+        patch("src.core.blackout_runtime.get_open_position", return_value=None),
+        patch("src.core.blackout_runtime.validate_order_policy") as validate_policy,
     ):
         await process_blackout_recovery_orders(
             broker=broker,
@@ -8312,10 +8348,10 @@ async def test_process_blackout_recovery_requeues_intent_when_price_lookup_fails
     blackout_manager.pop_recovery_batch.return_value = [intent]
 
     with (
-        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
-        patch("src.main.MARKETS", {"KR": market}),
-        patch("src.main.get_open_position", return_value=None),
-        patch("src.main.validate_order_policy") as validate_policy,
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.core.blackout_runtime.MARKETS", {"KR": market}),
+        patch("src.core.blackout_runtime.get_open_position", return_value=None),
+        patch("src.core.blackout_runtime.validate_order_policy") as validate_policy,
     ):
         await process_blackout_recovery_orders(
             broker=broker,
@@ -8364,7 +8400,7 @@ async def test_trigger_emergency_kill_switch_executes_operational_steps() -> Non
 
     with (
         patch("src.main.MARKETS", {"KR": market}),
-        patch("src.main.BLACKOUT_ORDER_MANAGER.clear", return_value=2),
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER.clear", return_value=2),
     ):
         report = await _trigger_emergency_kill_switch(
             reason="test",
@@ -8434,7 +8470,7 @@ async def test_trigger_emergency_kill_switch_records_cancel_failure() -> None:
 
     with (
         patch("src.main.MARKETS", {"KR": market}),
-        patch("src.main.BLACKOUT_ORDER_MANAGER.clear", return_value=0),
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER.clear", return_value=0),
     ):
         report = await _trigger_emergency_kill_switch(
             reason="test-fail",
@@ -8467,7 +8503,8 @@ async def test_refresh_order_state_failure_summary_includes_more_count() -> None
         markets.append(market)
 
     with pytest.raises(RuntimeError, match=r"\(\+1 more\)$") as exc_info:
-        await main_module._refresh_order_state_for_kill_switch(
+        from src.core.kill_switch_runtime import _refresh_order_state_for_kill_switch
+        await _refresh_order_state_for_kill_switch(
             broker=broker,
             overseas_broker=overseas_broker,
             markets=markets,
