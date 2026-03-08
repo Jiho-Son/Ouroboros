@@ -529,7 +529,7 @@ def test_resolve_market_setting_uses_session_profile_override() -> None:
     market = MagicMock()
     market.code = "US_NASDAQ"
 
-    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_PRE")):
+    with patch("src.core.session_risk.get_session_info", return_value=MagicMock(session_id="US_PRE")):
         value = _resolve_market_setting(
             market=market,
             settings=settings,
@@ -552,7 +552,7 @@ def test_stoploss_cooldown_minutes_uses_session_override() -> None:
     market = MagicMock()
     market.code = "KR"
 
-    with patch("src.main.get_session_info", return_value=MagicMock(session_id="NXT_AFTER")):
+    with patch("src.core.session_risk.get_session_info", return_value=MagicMock(session_id="NXT_AFTER")):
         value = _stoploss_cooldown_minutes(settings, market=market)
 
     assert value == 45
@@ -571,7 +571,7 @@ def test_resolve_market_setting_ignores_profile_when_reload_disabled() -> None:
     market = MagicMock()
     market.code = "US_NASDAQ"
 
-    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_PRE")):
+    with patch("src.core.session_risk.get_session_info", return_value=MagicMock(session_id="US_PRE")):
         value = _resolve_market_setting(
             market=market,
             settings=settings,
@@ -594,7 +594,7 @@ def test_resolve_market_setting_falls_back_on_invalid_profile_json() -> None:
     market = MagicMock()
     market.code = "US_NASDAQ"
 
-    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_PRE")):
+    with patch("src.core.session_risk.get_session_info", return_value=MagicMock(session_id="US_PRE")):
         value = _resolve_market_setting(
             market=market,
             settings=settings,
@@ -617,7 +617,7 @@ def test_resolve_market_setting_coerces_bool_string_override() -> None:
     market = MagicMock()
     market.code = "US_NASDAQ"
 
-    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_AFTER")):
+    with patch("src.core.session_risk.get_session_info", return_value=MagicMock(session_id="US_AFTER")):
         value = _resolve_market_setting(
             market=market,
             settings=settings,
@@ -7725,6 +7725,7 @@ async def test_session_boundary_reloads_us_min_price_override_in_trading_cycle()
     with (
         patch("src.main.get_open_position", return_value=None),
         patch("src.main.get_session_info", side_effect=_session_info),
+        patch("src.core.session_risk.get_session_info", side_effect=_session_info),
     ):
         await trading_cycle(
             broker=broker,
@@ -7833,6 +7834,7 @@ async def test_session_boundary_falls_back_when_profile_reload_fails() -> None:
     with (
         patch("src.main.get_open_position", return_value=None),
         patch("src.main.get_session_info", side_effect=_session_info),
+        patch("src.core.session_risk.get_session_info", side_effect=_session_info),
     ):
         await trading_cycle(
             broker=broker,

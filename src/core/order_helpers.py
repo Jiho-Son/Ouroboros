@@ -146,7 +146,7 @@ def _should_block_overseas_buy_for_fx_buffer(
         return False, total_cash - order_amount, 0.0
     remaining = total_cash - order_amount
     # Lazy import to avoid circular dependency (will move to session_risk in Task 3)
-    from src.main import _resolve_market_setting
+    from src.core.session_risk import _resolve_market_setting
 
     required = float(
         _resolve_market_setting(
@@ -175,7 +175,7 @@ def _should_force_exit_for_overnight(
     if settings is None:
         return False
     # Lazy import to avoid circular dependency (will move to session_risk in Task 3)
-    from src.main import _resolve_market_setting
+    from src.core.session_risk import _resolve_market_setting
 
     overnight_enabled = _resolve_market_setting(
         market=market,
