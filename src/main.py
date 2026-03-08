@@ -22,9 +22,6 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from src.analysis.atr_helpers import (
-    _compute_kr_atr_value,
-    _compute_overseas_atr_value,
-    _estimate_pred_down_prob_from_rsi,
     _split_trade_pnl_components,
 )
 from src.analysis.smart_scanner import ScanCandidate, SmartVolatilityScanner
@@ -38,7 +35,6 @@ from src.broker.balance_utils import (
     _extract_fx_rate_from_sources,
     _extract_held_codes_from_balance,
     _extract_held_qty_from_balance,
-    _extract_symbol_from_holding,
 )
 from src.broker.overseas import OverseasBroker
 from src.broker.pending_orders import (
@@ -80,25 +76,17 @@ from src.core.order_policy import (
     validate_order_policy,
 )
 from src.core.session_risk import (
-    _SESSION_RISK_LAST_BY_MARKET,
-    _SESSION_RISK_OVERRIDES_BY_MARKET,
-    _SESSION_RISK_PROFILES_MAP,
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL,
-    _compute_kr_dynamic_stop_loss_pct,
-    _coerce_setting_value,
     _resolve_market_setting,
     _session_risk_overrides,
     _stoploss_cooldown_key,
     _stoploss_cooldown_minutes,
 )
 from src.strategy.exit_manager import (
-    _RUNTIME_EXIT_PEAKS,
-    _RUNTIME_EXIT_STATES,
     _apply_staged_exit_override_for_hold,
     _clear_runtime_exit_cache_for_symbol,
     _inject_staged_exit_features,
     _merge_staged_exit_evidence_into_log,
-    _record_staged_exit_evidence,
 )
 from src.core.priority_queue import PriorityTaskQueue
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
