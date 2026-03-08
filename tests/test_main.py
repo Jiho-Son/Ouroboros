@@ -7888,7 +7888,7 @@ async def test_session_boundary_falls_back_when_profile_reload_fails() -> None:
 
 def test_overnight_policy_prioritizes_killswitch_over_exception() -> None:
     market = MagicMock()
-    with patch("src.main.get_session_info", return_value=MagicMock(session_id="US_AFTER")):
+    with patch("src.core.order_helpers.get_session_info", return_value=MagicMock(session_id="US_AFTER")):
         settings = MagicMock()
         settings.OVERNIGHT_EXCEPTION_ENABLED = True
         try:
