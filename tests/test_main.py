@@ -63,6 +63,7 @@ from src.main import (
     _apply_dashboard_flag,
     _handle_market_close,
     _has_market_session_transition,
+    _load_daily_session_market_candidates,
     _refresh_cached_playbook_on_session_transition,
     _release_live_runtime_lock,
     _retry_connection,
@@ -110,6 +111,49 @@ def _make_settings(**overrides: Any) -> Settings:
     }
     base.update(overrides)
     return Settings(**base)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("is_domestic", "expected_fallback", "expected_builder_calls"),
+    [
+        (True, None, 0),
+        (False, ["AAPL"], 1),
+    ],
+)
+async def test_daily_session_market_candidates_uses_expected_scanner_inputs(
+    is_domestic: bool,
+    expected_fallback: list[str] | None,
+    expected_builder_calls: int,
+) -> None:
+    market = MagicMock()
+    market.code = "KR" if is_domestic else "US_NASDAQ"
+    market.name = "Korea" if is_domestic else "Nasdaq"
+    market.exchange_code = "KRX" if is_domestic else "NASD"
+    market.is_domestic = is_domestic
+    market.timezone = ZoneInfo("Asia/Seoul" if is_domestic else "America/New_York")
+
+    smart_scanner = MagicMock()
+    smart_scanner.scan = AsyncMock(return_value=["candidate"])
+    overseas_broker = MagicMock()
+
+    with patch(
+        "src.main.build_overseas_symbol_universe",
+        new=AsyncMock(return_value=["AAPL"]),
+    ) as mock_build_universe:
+        candidates = await _load_daily_session_market_candidates(
+            db_conn=MagicMock(),
+            market=market,
+            overseas_broker=overseas_broker,
+            smart_scanner=smart_scanner,
+        )
+
+    assert candidates == ["candidate"]
+    assert mock_build_universe.await_count == expected_builder_calls
+    smart_scanner.scan.assert_awaited_once_with(
+        market=market,
+        fallback_stocks=expected_fallback,
+    )
 
 
 def test_main_rejects_paper_mode() -> None:

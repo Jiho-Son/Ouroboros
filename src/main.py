@@ -15,7 +15,7 @@ import os
 import signal
 import threading
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -1213,6 +1213,936 @@ async def trading_cycle(
         )
 
 
+async def _load_daily_session_market_candidates(
+    *,
+    db_conn: Any,
+    market: MarketInfo,
+    overseas_broker: OverseasBroker,
+    smart_scanner: SmartVolatilityScanner | None,
+) -> list[ScanCandidate]:
+    """Load scanner candidates for one market in the daily session path."""
+    fallback_stocks: list[str] | None = None
+    if not market.is_domestic:
+        fallback_stocks = await build_overseas_symbol_universe(
+            db_conn=db_conn,
+            overseas_broker=overseas_broker,
+            market=market,
+            active_stocks={},
+        )
+        if not fallback_stocks:
+            logger.debug(
+                "No dynamic overseas symbol universe for %s;"
+                " scanner will use overseas ranking API",
+                market.code,
+            )
+
+    if not smart_scanner:
+        return []
+
+    try:
+        return await smart_scanner.scan(
+            market=market,
+            fallback_stocks=fallback_stocks,
+        )
+    except Exception as exc:
+        logger.error("Smart Scanner failed for %s: %s", market.name, exc)
+        return []
+
+
+async def _prepare_daily_session_market(
+    *,
+    broker: KISBroker,
+    db_conn: Any,
+    market: MarketInfo,
+    overseas_broker: OverseasBroker,
+    settings: Settings,
+    telegram: TelegramClient,
+    sell_resubmit_counts: dict[str, int],
+    daily_buy_cooldown: dict[str, float],
+) -> tuple[str, str, date]:
+    """Run market-level preparation before daily decisions."""
+    _session_risk_overrides(market=market, settings=settings)
+    runtime_session_id = get_session_info(market).session_id
+    domestic_quote_market_div_code = _resolve_domestic_quote_market_div_code(runtime_session_id)
+    await process_blackout_recovery_orders(
+        broker=broker,
+        overseas_broker=overseas_broker,
+        db_conn=db_conn,
+        settings=settings,
+    )
+    market_today = datetime.now(market.timezone).date()
+
+    if market.is_domestic:
+        try:
+            await handle_domestic_pending_orders(
+                broker,
+                telegram,
+                settings,
+                sell_resubmit_counts,
+                daily_buy_cooldown,
+                quote_market_div_code=domestic_quote_market_div_code,
+            )
+        except Exception as exc:
+            logger.warning("Domestic pending order check failed: %s", exc)
+    else:
+        try:
+            await handle_overseas_pending_orders(
+                overseas_broker,
+                telegram,
+                settings,
+                sell_resubmit_counts,
+                daily_buy_cooldown,
+            )
+        except Exception as exc:
+            logger.warning("Pending order check failed: %s", exc)
+
+    return runtime_session_id, domestic_quote_market_div_code, market_today
+
+
+async def _load_or_generate_daily_playbook(
+    *,
+    candidates_list: list[ScanCandidate],
+    market: MarketInfo,
+    market_today: date,
+    playbook_store: PlaybookStore,
+    pre_market_planner: PreMarketPlanner,
+    telegram: TelegramClient,
+) -> DayPlaybook:
+    """Load the market playbook or generate it for the current trading day."""
+    playbook = playbook_store.load(market_today, market.code)
+    if playbook is not None:
+        return playbook
+
+    try:
+        playbook = await pre_market_planner.generate_playbook(
+            market=market.code,
+            candidates=candidates_list,
+            today=market_today,
+        )
+        playbook_store.save(playbook)
+        try:
+            await telegram.notify_playbook_generated(
+                market=market.code,
+                stock_count=playbook.stock_count,
+                scenario_count=playbook.scenario_count,
+                token_count=playbook.token_count,
+                slot="open",
+            )
+        except Exception as exc:
+            logger.warning("Playbook notification failed: %s", exc)
+        logger.info(
+            "Generated playbook for %s: %d stocks, %d scenarios",
+            market.code,
+            playbook.stock_count,
+            playbook.scenario_count,
+        )
+        return playbook
+    except Exception as exc:
+        logger.error("Playbook generation failed for %s: %s", market.code, exc)
+        try:
+            await telegram.notify_playbook_failed(
+                market=market.code,
+                reason=str(exc)[:200],
+            )
+        except Exception as notify_exc:
+            logger.warning("Playbook failed notification error: %s", notify_exc)
+        return PreMarketPlanner._empty_playbook(market_today, market.code)
+
+
+async def _collect_daily_session_market_data(
+    *,
+    broker: KISBroker,
+    market: MarketInfo,
+    overseas_broker: OverseasBroker,
+    candidates_list: list[ScanCandidate],
+    domestic_quote_market_div_code: str,
+) -> list[dict[str, Any]]:
+    """Collect per-stock market snapshots for one daily session market."""
+    stocks_data: list[dict[str, Any]] = []
+    candidate_map = {candidate.stock_code: candidate for candidate in candidates_list}
+
+    for stock_code in [candidate.stock_code for candidate in candidates_list]:
+        try:
+            if market.is_domestic:
+                current_price, price_change_pct, foreigner_net = await _retry_connection(
+                    broker.get_current_price,
+                    stock_code,
+                    market_div_code=domestic_quote_market_div_code,
+                    label=stock_code,
+                )
+            else:
+                price_data = await _retry_connection(
+                    overseas_broker.get_overseas_price,
+                    market.exchange_code,
+                    stock_code,
+                    label=f"{stock_code}@{market.exchange_code}",
+                )
+                current_price = safe_float(price_data.get("output", {}).get("last", "0"))
+                if current_price <= 0:
+                    cand_lookup = candidate_map.get(stock_code)
+                    if cand_lookup and cand_lookup.price > 0:
+                        logger.debug(
+                            "Price API returned 0 for %s; using scanner candidate price %.4f",
+                            stock_code,
+                            cand_lookup.price,
+                        )
+                        current_price = cand_lookup.price
+                foreigner_net = 0.0
+                price_change_pct = safe_float(price_data.get("output", {}).get("rate", "0"))
+                if current_price <= 0:
+                    cand_lookup = candidate_map.get(stock_code)
+                    if cand_lookup and cand_lookup.price > 0:
+                        current_price = cand_lookup.price
+                        logger.debug(
+                            "Price API returned 0 for %s; using scanner price %.4f",
+                            stock_code,
+                            current_price,
+                        )
+
+            stock_data: dict[str, Any] = {
+                "stock_code": stock_code,
+                "market_name": market.name,
+                "current_price": current_price,
+                "foreigner_net": foreigner_net,
+                "price_change_pct": price_change_pct,
+            }
+            if not market.is_domestic:
+                session_high_price = safe_float(
+                    price_data.get("output", {}).get("high")
+                    or price_data.get("output", {}).get("ovrs_hgpr")
+                    or price_data.get("output", {}).get("stck_hgpr")
+                )
+                if session_high_price > 0:
+                    stock_data["session_high_price"] = session_high_price
+            cand = candidate_map.get(stock_code)
+            if cand:
+                stock_data["rsi"] = cand.rsi
+                stock_data["volume_ratio"] = cand.volume_ratio
+            stocks_data.append(stock_data)
+        except Exception as exc:
+            logger.error("Failed to fetch data for %s: %s", stock_code, exc)
+            continue
+
+    return stocks_data
+
+
+async def _get_daily_session_balance_snapshot(
+    *,
+    market: MarketInfo,
+    broker: KISBroker,
+    overseas_broker: OverseasBroker,
+    settings: Settings,
+    stocks_data: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any], float, float, float]:
+    """Load balance and buying-power data for one market."""
+    if market.is_domestic:
+        balance_data = await _retry_connection(broker.get_balance, label=f"balance:{market.code}")
+        output2 = balance_data.get("output2", [{}])
+        total_eval = safe_float(output2[0].get("tot_evlu_amt", "0")) if output2 else 0
+        total_cash = safe_float(output2[0].get("dnca_tot_amt", "0")) if output2 else 0
+        purchase_total = safe_float(output2[0].get("pchs_amt_smtl_amt", "0")) if output2 else 0
+        return balance_data, {}, total_eval, total_cash, purchase_total
+
+    balance_data = await _retry_connection(
+        overseas_broker.get_overseas_balance,
+        market.exchange_code,
+        label=f"overseas_balance:{market.exchange_code}",
+    )
+    output2 = balance_data.get("output2", [{}])
+    if isinstance(output2, list) and output2:
+        balance_info = output2[0]
+    elif isinstance(output2, dict):
+        balance_info = output2
+    else:
+        balance_info = {}
+
+    total_eval = safe_float(balance_info.get("frcr_evlu_tota", "0") or "0")
+    purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
+    total_cash = 0.0
+    ref_stock = next((stock for stock in stocks_data if stock.get("current_price", 0) > 0), None)
+    if ref_stock:
+        try:
+            ps_data = await overseas_broker.get_overseas_buying_power(
+                market.exchange_code,
+                ref_stock["stock_code"],
+                ref_stock["current_price"],
+            )
+            total_cash = safe_float(ps_data.get("output", {}).get("ovrs_ord_psbl_amt", "0") or "0")
+        except ConnectionError as exc:
+            logger.warning(
+                "Could not fetch overseas buying power for %s: %s",
+                market.exchange_code,
+                exc,
+            )
+
+    if total_cash <= 0 and settings.MODE == "paper" and settings.PAPER_OVERSEAS_CASH > 0:
+        total_cash = settings.PAPER_OVERSEAS_CASH
+
+    return balance_data, balance_info, total_eval, total_cash, purchase_total
+
+
+async def _process_daily_session_stock(
+    *,
+    broker: KISBroker,
+    overseas_broker: OverseasBroker,
+    scenario_engine: ScenarioEngine,
+    playbook: DayPlaybook,
+    risk: RiskManager,
+    db_conn: Any,
+    decision_logger: DecisionLogger,
+    telegram: TelegramClient,
+    settings: Settings,
+    market: MarketInfo,
+    stock_data: dict[str, Any],
+    candidate_map: dict[str, ScanCandidate],
+    portfolio_data: dict[str, float],
+    balance_data: dict[str, Any],
+    balance_info: dict[str, Any],
+    purchase_total: float,
+    pnl_pct: float,
+    total_eval: float,
+    total_cash: float,
+    runtime_session_id: str,
+    daily_buy_cooldown: dict[str, float],
+) -> None:
+    """Evaluate, log, and optionally execute one daily-session stock decision."""
+    stock_code = stock_data["stock_code"]
+    stock_playbook = playbook.get_stock_playbook(stock_code)
+    match = scenario_engine.evaluate(
+        playbook,
+        stock_code,
+        stock_data,
+        portfolio_data,
+    )
+    decision = TradeDecision(
+        action=match.action.value,
+        confidence=match.confidence,
+        rationale=match.rationale,
+    )
+
+    logger.info(
+        "Decision for %s (%s): %s (confidence=%d)",
+        stock_code,
+        market.name,
+        decision.action,
+        decision.confidence,
+    )
+
+    if decision.action == "BUY":
+        daily_existing = _resolve_buy_suppression_position(
+            db_conn=db_conn,
+            balance_data=balance_data,
+            stock_code=stock_code,
+            market=market,
+        )
+        if daily_existing:
+            decision = TradeDecision(
+                action="HOLD",
+                confidence=decision.confidence,
+                rationale=(
+                    f"Already holding {stock_code} "
+                    f"(entry={daily_existing['price']:.4f}, "
+                    f"qty={daily_existing['quantity']})"
+                ),
+            )
+            logger.info(
+                "BUY suppressed for %s (%s): already holding open position",
+                stock_code,
+                market.name,
+            )
+        elif market.code.startswith("US"):
+            min_price = float(
+                _resolve_market_setting(
+                    market=market,
+                    settings=settings,
+                    key="US_MIN_PRICE",
+                    default=5.0,
+                )
+            )
+            if stock_data["current_price"] <= min_price:
+                decision = TradeDecision(
+                    action="HOLD",
+                    confidence=decision.confidence,
+                    rationale=(
+                        f"US minimum price filter blocked BUY "
+                        f"(price={stock_data['current_price']:.4f} <= {min_price:.4f})"
+                    ),
+                )
+                logger.info(
+                    "BUY suppressed for %s (%s): US min price filter %.4f <= %.4f",
+                    stock_code,
+                    market.name,
+                    stock_data["current_price"],
+                    min_price,
+                )
+        if decision.action == "BUY":
+            cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
+            now_epoch = datetime.now(UTC).timestamp()
+            cooldown_until = _STOPLOSS_REENTRY_COOLDOWN_UNTIL.get(cooldown_key, 0.0)
+            if now_epoch < cooldown_until:
+                remaining = int(cooldown_until - now_epoch)
+                decision = TradeDecision(
+                    action="HOLD",
+                    confidence=decision.confidence,
+                    rationale=f"Stop-loss reentry cooldown active ({remaining}s remaining)",
+                )
+                logger.info(
+                    "BUY suppressed for %s (%s): stop-loss cooldown active (%ds remaining)",
+                    stock_code,
+                    market.name,
+                    remaining,
+                )
+
+    if decision.action == "HOLD":
+        daily_open = get_open_position(db_conn, stock_code, market.code)
+        if not daily_open:
+            _clear_runtime_exit_cache_for_symbol(
+                market_code=market.code,
+                stock_code=stock_code,
+            )
+        await _inject_staged_exit_features(
+            market=market,
+            stock_code=stock_code,
+            open_position=daily_open,
+            market_data=stock_data,
+            broker=broker,
+            overseas_broker=overseas_broker,
+        )
+        decision = _apply_staged_exit_override_for_hold(
+            decision=decision,
+            market=market,
+            stock_code=stock_code,
+            open_position=daily_open,
+            market_data=stock_data,
+            stock_playbook=stock_playbook,
+            settings=settings,
+        )
+        if (
+            daily_open
+            and decision.action == "HOLD"
+            and _should_force_exit_for_overnight(
+                market=market,
+                settings=settings,
+            )
+        ):
+            decision = TradeDecision(
+                action="SELL",
+                confidence=max(decision.confidence, 85),
+                rationale=(
+                    "Forced exit by overnight policy"
+                    " (session close window / kill switch priority)"
+                ),
+            )
+            logger.info(
+                "Daily overnight policy override for %s (%s): HOLD -> SELL",
+                stock_code,
+                market.name,
+            )
+
+    context_snapshot = {
+        "L1": {
+            "current_price": stock_data["current_price"],
+            "foreigner_net": stock_data["foreigner_net"],
+        },
+        "L2": {
+            "total_eval": total_eval,
+            "total_cash": total_cash,
+            "purchase_total": purchase_total,
+            "pnl_pct": pnl_pct,
+        },
+        "scenario_match": match.match_details,
+    }
+    input_data = {
+        "current_price": stock_data["current_price"],
+        "foreigner_net": stock_data["foreigner_net"],
+        "total_eval": total_eval,
+        "total_cash": total_cash,
+        "pnl_pct": pnl_pct,
+    }
+    _merge_staged_exit_evidence_into_log(
+        market_data=stock_data,
+        context_snapshot=context_snapshot,
+        input_data=input_data,
+    )
+
+    decision_id = decision_logger.log_decision(
+        stock_code=stock_code,
+        market=market.code,
+        exchange_code=market.exchange_code,
+        session_id=runtime_session_id,
+        action=decision.action,
+        confidence=decision.confidence,
+        rationale=decision.rationale,
+        context_snapshot=context_snapshot,
+        input_data=input_data,
+    )
+
+    quantity = 0
+    trade_price = stock_data["current_price"]
+    trade_pnl = 0.0
+    buy_trade: dict[str, Any] | None = None
+    buy_price = 0.0
+    sell_qty = 0
+    order_succeeded = True
+    if decision.action in ("BUY", "SELL"):
+        if KILL_SWITCH.new_orders_blocked and decision.action == "BUY":
+            logger.critical(
+                "KillSwitch block active: skip %s order for %s (%s)",
+                decision.action,
+                stock_code,
+                market.name,
+            )
+            return
+
+        daily_broker_held_qty = (
+            _extract_held_qty_from_balance(
+                balance_data, stock_code, is_domestic=market.is_domestic
+            )
+            if decision.action == "SELL"
+            else 0
+        )
+        quantity = _determine_order_quantity(
+            action=decision.action,
+            current_price=stock_data["current_price"],
+            total_cash=total_cash,
+            candidate=candidate_map.get(stock_code),
+            settings=settings,
+            broker_held_qty=daily_broker_held_qty,
+        )
+        if quantity <= 0:
+            logger.info(
+                "Skip %s %s (%s): no affordable quantity (cash=%.2f, price=%.2f)",
+                decision.action,
+                stock_code,
+                market.name,
+                total_cash,
+                stock_data["current_price"],
+            )
+            return
+        order_amount = stock_data["current_price"] * quantity
+        fx_blocked, remaining_cash, required_buffer = _should_block_overseas_buy_for_fx_buffer(
+            market=market,
+            action=decision.action,
+            total_cash=total_cash,
+            order_amount=order_amount,
+            settings=settings,
+        )
+        if fx_blocked:
+            logger.warning(
+                (
+                    "Skip BUY %s (%s): FX buffer guard "
+                    "(remaining=%.2f, required=%.2f, cash=%.2f, order=%.2f)"
+                ),
+                stock_code,
+                market.name,
+                remaining_cash,
+                required_buffer,
+                total_cash,
+                order_amount,
+            )
+            return
+
+        if decision.action == "BUY":
+            daily_cooldown_key = f"{market.code}:{stock_code}"
+            daily_cooldown_until = daily_buy_cooldown.get(daily_cooldown_key, 0.0)
+            now = asyncio.get_event_loop().time()
+            if now < daily_cooldown_until:
+                remaining = int(daily_cooldown_until - now)
+                logger.info(
+                    (
+                        "Skip BUY %s (%s): insufficient-balance cooldown active "
+                        "(%ds remaining)"
+                    ),
+                    stock_code,
+                    market.name,
+                    remaining,
+                )
+                return
+
+        try:
+            if decision.action == "SELL":
+                risk.check_circuit_breaker(pnl_pct)
+            else:
+                risk.validate_order(
+                    current_pnl_pct=pnl_pct,
+                    order_amount=order_amount,
+                    total_cash=total_cash,
+                )
+        except FatFingerRejected as exc:
+            try:
+                await telegram.notify_fat_finger(
+                    stock_code=stock_code,
+                    order_amount=exc.order_amount,
+                    total_cash=exc.total_cash,
+                    max_pct=exc.max_pct,
+                )
+            except Exception as notify_exc:
+                logger.warning("Fat finger notification failed: %s", notify_exc)
+            return
+        except CircuitBreakerTripped as exc:
+            ks_report = await _trigger_emergency_kill_switch(
+                reason=f"daily_circuit_breaker:{market.code}:{stock_code}:{exc.pnl_pct:.2f}",
+                broker=broker,
+                overseas_broker=overseas_broker,
+                telegram=telegram,
+                settings=settings,
+                current_market=market,
+                stock_code=stock_code,
+                pnl_pct=exc.pnl_pct,
+                threshold=exc.threshold,
+            )
+            logger.critical("Circuit breaker tripped — stopping session")
+            if ks_report.errors:
+                logger.critical(
+                    "Daily KillSwitch step errors for %s/%s: %s",
+                    market.code,
+                    stock_code,
+                    "; ".join(ks_report.errors),
+                )
+            raise
+
+        try:
+            if market.is_domestic:
+                if decision.action == "BUY":
+                    order_price = kr_round_down(stock_data["current_price"] * 1.002)
+                else:
+                    order_price = kr_round_down(stock_data["current_price"] * 0.998)
+                try:
+                    validate_order_policy(
+                        market=market,
+                        order_type=decision.action,
+                        price=float(order_price),
+                    )
+                except OrderPolicyRejected as exc:
+                    logger.warning(
+                        "Order policy rejected %s %s (%s): %s [session=%s]",
+                        decision.action,
+                        stock_code,
+                        market.name,
+                        exc,
+                        exc.session_id,
+                    )
+                    return
+                if _maybe_queue_order_intent(
+                    market=market,
+                    session_id=runtime_session_id,
+                    stock_code=stock_code,
+                    order_type=decision.action,
+                    quantity=quantity,
+                    price=float(order_price),
+                    source="run_daily_session",
+                ):
+                    return
+                result = await broker.send_order(
+                    stock_code=stock_code,
+                    order_type=decision.action,
+                    quantity=quantity,
+                    price=order_price,
+                    session_id=runtime_session_id,
+                )
+                if result.get("rt_cd", "0") != "0":
+                    order_succeeded = False
+                    daily_msg1 = result.get("msg1") or ""
+                    logger.warning(
+                        "KR order not accepted for %s: rt_cd=%s msg=%s",
+                        stock_code,
+                        result.get("rt_cd"),
+                        daily_msg1,
+                    )
+            else:
+                if decision.action == "BUY":
+                    order_price = round(stock_data["current_price"] * 1.005, 4)
+                else:
+                    order_price = stock_data["current_price"]
+                try:
+                    validate_order_policy(
+                        market=market,
+                        order_type=decision.action,
+                        price=float(order_price),
+                    )
+                except OrderPolicyRejected as exc:
+                    logger.warning(
+                        "Order policy rejected %s %s (%s): %s [session=%s]",
+                        decision.action,
+                        stock_code,
+                        market.name,
+                        exc,
+                        exc.session_id,
+                    )
+                    return
+                if _maybe_queue_order_intent(
+                    market=market,
+                    session_id=runtime_session_id,
+                    stock_code=stock_code,
+                    order_type=decision.action,
+                    quantity=quantity,
+                    price=float(order_price),
+                    source="run_daily_session",
+                ):
+                    return
+                result = await overseas_broker.send_overseas_order(
+                    exchange_code=market.exchange_code,
+                    stock_code=stock_code,
+                    order_type=decision.action,
+                    quantity=quantity,
+                    price=order_price,
+                )
+                if result.get("rt_cd", "") != "0":
+                    order_succeeded = False
+                    daily_msg1 = result.get("msg1") or ""
+                    logger.warning(
+                        "Overseas order not accepted for %s: rt_cd=%s msg=%s",
+                        stock_code,
+                        result.get("rt_cd"),
+                        daily_msg1,
+                    )
+                    if decision.action == "BUY" and "주문가능금액" in daily_msg1:
+                        daily_cooldown_key = f"{market.code}:{stock_code}"
+                        daily_buy_cooldown[daily_cooldown_key] = (
+                            asyncio.get_event_loop().time() + _BUY_COOLDOWN_SECONDS
+                        )
+                        logger.info(
+                            "BUY cooldown set for %s: %.0fs (insufficient balance)",
+                            stock_code,
+                            _BUY_COOLDOWN_SECONDS,
+                        )
+            logger.info("Order result: %s", result.get("msg1", "OK"))
+
+            if order_succeeded:
+                try:
+                    await telegram.notify_trade_execution(
+                        stock_code=stock_code,
+                        market=market.name,
+                        action=decision.action,
+                        quantity=quantity,
+                        price=stock_data["current_price"],
+                        confidence=decision.confidence,
+                    )
+                except Exception as exc:
+                    logger.warning("Telegram notification failed: %s", exc)
+        except Exception as exc:
+            logger.error("Order execution failed for %s: %s", stock_code, exc)
+            return
+
+        if decision.action == "SELL" and order_succeeded:
+            buy_trade = get_latest_buy_trade(
+                db_conn,
+                stock_code,
+                market.code,
+                exchange_code=market.exchange_code,
+            )
+            if buy_trade and buy_trade.get("price") is not None:
+                buy_price = float(buy_trade["price"])
+                buy_qty = int(buy_trade.get("quantity") or 0)
+                sell_qty = _resolve_sell_qty_for_pnl(
+                    sell_qty=quantity,
+                    buy_qty=buy_qty,
+                )
+                trade_pnl = (trade_price - buy_price) * sell_qty
+                decision_logger.update_outcome(
+                    decision_id=buy_trade["decision_id"],
+                    pnl=trade_pnl,
+                    accuracy=1 if trade_pnl > 0 else 0,
+                )
+                if trade_pnl < 0:
+                    cooldown_key = _stoploss_cooldown_key(
+                        market=market, stock_code=stock_code
+                    )
+                    cooldown_minutes = _stoploss_cooldown_minutes(
+                        settings,
+                        market=market,
+                    )
+                    _STOPLOSS_REENTRY_COOLDOWN_UNTIL[cooldown_key] = (
+                        datetime.now(UTC).timestamp() + cooldown_minutes * 60
+                    )
+                    logger.info(
+                        "Stop-loss cooldown set for %s (%s): %d minutes",
+                        stock_code,
+                        market.name,
+                        cooldown_minutes,
+                    )
+
+    if decision.action in ("BUY", "SELL") and not order_succeeded:
+        return
+
+    strategy_pnl: float | None = None
+    fx_pnl: float | None = None
+    selection_context: dict[str, Any] | None = None
+    if decision.action == "SELL" and order_succeeded:
+        buy_fx_rate = _extract_buy_fx_rate(buy_trade)
+        sell_fx_rate = _extract_fx_rate_from_sources(balance_info, stock_data)
+        strategy_pnl, fx_pnl = _split_trade_pnl_components(
+            market=market,
+            trade_pnl=trade_pnl,
+            buy_price=buy_price,
+            sell_price=trade_price,
+            quantity=sell_qty or quantity,
+            buy_fx_rate=buy_fx_rate,
+            sell_fx_rate=sell_fx_rate,
+        )
+        if sell_fx_rate is not None and not market.is_domestic:
+            selection_context = {"fx_rate": sell_fx_rate}
+    elif not market.is_domestic:
+        snapshot_fx_rate = _extract_fx_rate_from_sources(balance_info, stock_data)
+        if snapshot_fx_rate is not None:
+            selection_context = {"fx_rate": snapshot_fx_rate}
+
+    log_trade(
+        conn=db_conn,
+        stock_code=stock_code,
+        action=decision.action,
+        confidence=decision.confidence,
+        rationale=decision.rationale,
+        quantity=quantity,
+        price=trade_price,
+        pnl=trade_pnl,
+        strategy_pnl=strategy_pnl,
+        fx_pnl=fx_pnl,
+        market=market.code,
+        exchange_code=market.exchange_code,
+        session_id=runtime_session_id,
+        selection_context=selection_context,
+        decision_id=decision_id,
+        mode=settings.MODE,
+    )
+
+
+async def _run_daily_session_market(
+    *,
+    broker: KISBroker,
+    overseas_broker: OverseasBroker,
+    scenario_engine: ScenarioEngine,
+    playbook_store: PlaybookStore,
+    pre_market_planner: PreMarketPlanner,
+    risk: RiskManager,
+    db_conn: Any,
+    decision_logger: DecisionLogger,
+    telegram: TelegramClient,
+    settings: Settings,
+    market: MarketInfo,
+    smart_scanner: SmartVolatilityScanner | None,
+    daily_start_eval: float,
+    daily_buy_cooldown: dict[str, float],
+    sell_resubmit_counts: dict[str, int],
+) -> float:
+    """Execute one open market within the daily session path."""
+    runtime_session_id, domestic_quote_market_div_code, market_today = (
+        await _prepare_daily_session_market(
+            broker=broker,
+            db_conn=db_conn,
+            market=market,
+            overseas_broker=overseas_broker,
+            settings=settings,
+            telegram=telegram,
+            sell_resubmit_counts=sell_resubmit_counts,
+            daily_buy_cooldown=daily_buy_cooldown,
+        )
+    )
+
+    candidates_list = await _load_daily_session_market_candidates(
+        db_conn=db_conn,
+        market=market,
+        overseas_broker=overseas_broker,
+        smart_scanner=smart_scanner,
+    )
+    if not candidates_list:
+        logger.info("No scanner candidates for market %s — skipping", market.code)
+        return daily_start_eval
+
+    watchlist = [candidate.stock_code for candidate in candidates_list]
+    candidate_map = {candidate.stock_code: candidate for candidate in candidates_list}
+    logger.info("Processing market: %s (%d stocks)", market.name, len(watchlist))
+
+    playbook = await _load_or_generate_daily_playbook(
+        candidates_list=candidates_list,
+        market=market,
+        market_today=market_today,
+        playbook_store=playbook_store,
+        pre_market_planner=pre_market_planner,
+        telegram=telegram,
+    )
+
+    stocks_data = await _collect_daily_session_market_data(
+        broker=broker,
+        market=market,
+        overseas_broker=overseas_broker,
+        candidates_list=candidates_list,
+        domestic_quote_market_div_code=domestic_quote_market_div_code,
+    )
+    if not stocks_data:
+        logger.warning("No valid stock data for market %s", market.code)
+        return daily_start_eval
+
+    try:
+        balance_data, balance_info, total_eval, total_cash, purchase_total = (
+            await _get_daily_session_balance_snapshot(
+                market=market,
+                broker=broker,
+                overseas_broker=overseas_broker,
+                settings=settings,
+                stocks_data=stocks_data,
+            )
+        )
+    except ConnectionError as exc:
+        logger.error(
+            "Balance fetch failed for market %s after all retries — skipping market: %s",
+            market.code,
+            exc,
+        )
+        return daily_start_eval
+
+    if daily_start_eval <= 0 and total_eval > 0:
+        daily_start_eval = total_eval
+        logger.info(
+            "Daily CB baseline set: total_eval=%.2f (first balance of the day)",
+            daily_start_eval,
+        )
+
+    if daily_start_eval > 0:
+        pnl_pct = (total_eval - daily_start_eval) / daily_start_eval * 100
+    else:
+        pnl_pct = (
+            ((total_eval - purchase_total) / purchase_total * 100) if purchase_total > 0 else 0.0
+        )
+    portfolio_data = {
+        "portfolio_pnl_pct": pnl_pct,
+        "total_cash": total_cash,
+        "total_eval": total_eval,
+    }
+
+    logger.info(
+        "Evaluating %d stocks against playbook for %s",
+        len(stocks_data),
+        market.name,
+    )
+    for stock_data in stocks_data:
+        await _process_daily_session_stock(
+            broker=broker,
+            overseas_broker=overseas_broker,
+            scenario_engine=scenario_engine,
+            playbook=playbook,
+            risk=risk,
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            telegram=telegram,
+            settings=settings,
+            market=market,
+            stock_data=stock_data,
+            candidate_map=candidate_map,
+            portfolio_data=portfolio_data,
+            balance_data=balance_data,
+            balance_info=balance_info,
+            purchase_total=purchase_total,
+            pnl_pct=pnl_pct,
+            total_eval=total_eval,
+            total_cash=total_cash,
+            runtime_session_id=runtime_session_id,
+            daily_buy_cooldown=daily_buy_cooldown,
+        )
+
+    return daily_start_eval
+
+
 async def run_daily_session(
     broker: KISBroker,
     overseas_broker: OverseasBroker,
@@ -1245,824 +2175,33 @@ async def run_daily_session(
         The daily_start_eval value that should be forwarded to the next
         session of the same trading day.
     """
-    # Get currently open markets
     open_markets = get_open_markets(settings.enabled_market_list)
-
     if not open_markets:
         logger.info("No markets open for this session")
         return daily_start_eval
 
     logger.info("Starting daily trading session for %d markets", len(open_markets))
-
-    # BUY cooldown: prevents retrying stocks rejected for insufficient balance
-    daily_buy_cooldown: dict[str, float] = {}  # "{market_code}:{stock_code}" -> expiry timestamp
-
-    # Tracks resubmission attempts per key (max 1 per session).
-    # SELL: "{exchange_code}:{stock_code}", BUY: "BUY:{exchange_code}:{stock_code}".
+    daily_buy_cooldown: dict[str, float] = {}
     sell_resubmit_counts: dict[str, int] = {}
 
-    # Process each open market
     for market in open_markets:
-        _session_risk_overrides(market=market, settings=settings)
-        runtime_session_id = get_session_info(market).session_id
-        domestic_quote_market_div_code = _resolve_domestic_quote_market_div_code(runtime_session_id)
-        await process_blackout_recovery_orders(
+        daily_start_eval = await _run_daily_session_market(
             broker=broker,
             overseas_broker=overseas_broker,
+            scenario_engine=scenario_engine,
+            playbook_store=playbook_store,
+            pre_market_planner=pre_market_planner,
+            risk=risk,
             db_conn=db_conn,
+            decision_logger=decision_logger,
+            telegram=telegram,
             settings=settings,
+            market=market,
+            smart_scanner=smart_scanner,
+            daily_start_eval=daily_start_eval,
+            daily_buy_cooldown=daily_buy_cooldown,
+            sell_resubmit_counts=sell_resubmit_counts,
         )
-        # Use market-local date for playbook keying
-        market_today = datetime.now(market.timezone).date()
-
-        # Check and handle domestic pending (unfilled) limit orders before new decisions.
-        if market.is_domestic:
-            try:
-                await handle_domestic_pending_orders(
-                    broker,
-                    telegram,
-                    settings,
-                    sell_resubmit_counts,
-                    daily_buy_cooldown,
-                    quote_market_div_code=domestic_quote_market_div_code,
-                )
-            except Exception as exc:
-                logger.warning("Domestic pending order check failed: %s", exc)
-
-        # Check and handle overseas pending (unfilled) limit orders before new decisions.
-        if not market.is_domestic:
-            try:
-                await handle_overseas_pending_orders(
-                    overseas_broker,
-                    telegram,
-                    settings,
-                    sell_resubmit_counts,
-                    daily_buy_cooldown,
-                )
-            except Exception as exc:
-                logger.warning("Pending order check failed: %s", exc)
-
-        # Dynamic stock discovery via scanner (no static watchlists)
-        candidates_list: list[ScanCandidate] = []
-        fallback_stocks: list[str] | None = None
-        if not market.is_domestic:
-            fallback_stocks = await build_overseas_symbol_universe(
-                db_conn=db_conn,
-                overseas_broker=overseas_broker,
-                market=market,
-                active_stocks={},
-            )
-            if not fallback_stocks:
-                logger.debug(
-                    "No dynamic overseas symbol universe for %s;"
-                    " scanner will use overseas ranking API",
-                    market.code,
-                )
-        try:
-            candidates_list = (
-                await smart_scanner.scan(
-                    market=market,
-                    fallback_stocks=fallback_stocks,
-                )
-                if smart_scanner
-                else []
-            )
-        except Exception as exc:
-            logger.error("Smart Scanner failed for %s: %s", market.name, exc)
-
-        if not candidates_list:
-            logger.info("No scanner candidates for market %s — skipping", market.code)
-            continue
-
-        watchlist = [c.stock_code for c in candidates_list]
-        candidate_map = {c.stock_code: c for c in candidates_list}
-        logger.info("Processing market: %s (%d stocks)", market.name, len(watchlist))
-
-        # Generate or load playbook (1 Gemini API call per market per day)
-        playbook = playbook_store.load(market_today, market.code)
-        if playbook is None:
-            try:
-                playbook = await pre_market_planner.generate_playbook(
-                    market=market.code,
-                    candidates=candidates_list,
-                    today=market_today,
-                )
-                playbook_store.save(playbook)
-                try:
-                    await telegram.notify_playbook_generated(
-                        market=market.code,
-                        stock_count=playbook.stock_count,
-                        scenario_count=playbook.scenario_count,
-                        token_count=playbook.token_count,
-                        slot="open",
-                    )
-                except Exception as exc:
-                    logger.warning("Playbook notification failed: %s", exc)
-                logger.info(
-                    "Generated playbook for %s: %d stocks, %d scenarios",
-                    market.code,
-                    playbook.stock_count,
-                    playbook.scenario_count,
-                )
-            except Exception as exc:
-                logger.error("Playbook generation failed for %s: %s", market.code, exc)
-                try:
-                    await telegram.notify_playbook_failed(
-                        market=market.code,
-                        reason=str(exc)[:200],
-                    )
-                except Exception as notify_exc:
-                    logger.warning("Playbook failed notification error: %s", notify_exc)
-                playbook = PreMarketPlanner._empty_playbook(market_today, market.code)
-
-        # Collect market data for all stocks from scanner
-        stocks_data = []
-        for stock_code in watchlist:
-            try:
-                if market.is_domestic:
-                    current_price, price_change_pct, foreigner_net = await _retry_connection(
-                        broker.get_current_price,
-                        stock_code,
-                        market_div_code=domestic_quote_market_div_code,
-                        label=stock_code,
-                    )
-                else:
-                    price_data = await _retry_connection(
-                        overseas_broker.get_overseas_price,
-                        market.exchange_code,
-                        stock_code,
-                        label=f"{stock_code}@{market.exchange_code}",
-                    )
-                    current_price = safe_float(price_data.get("output", {}).get("last", "0"))
-                    # Fallback: if price API returns 0, use scanner candidate price
-                    if current_price <= 0:
-                        cand_lookup = candidate_map.get(stock_code)
-                        if cand_lookup and cand_lookup.price > 0:
-                            logger.debug(
-                                "Price API returned 0 for %s; using scanner candidate price %.4f",
-                                stock_code,
-                                cand_lookup.price,
-                            )
-                            current_price = cand_lookup.price
-                    foreigner_net = 0.0
-                    price_change_pct = safe_float(price_data.get("output", {}).get("rate", "0"))
-                    # Fall back to scanner candidate price if API returns 0.
-                    if current_price <= 0:
-                        cand_lookup = candidate_map.get(stock_code)
-                        if cand_lookup and cand_lookup.price > 0:
-                            current_price = cand_lookup.price
-                            logger.debug(
-                                "Price API returned 0 for %s; using scanner price %.4f",
-                                stock_code,
-                                current_price,
-                            )
-
-                stock_data: dict[str, Any] = {
-                    "stock_code": stock_code,
-                    "market_name": market.name,
-                    "current_price": current_price,
-                    "foreigner_net": foreigner_net,
-                    "price_change_pct": price_change_pct,
-                }
-                if not market.is_domestic:
-                    session_high_price = safe_float(
-                        price_data.get("output", {}).get("high")
-                        or price_data.get("output", {}).get("ovrs_hgpr")
-                        or price_data.get("output", {}).get("stck_hgpr")
-                    )
-                    if session_high_price > 0:
-                        stock_data["session_high_price"] = session_high_price
-                # Enrich with scanner metrics
-                cand = candidate_map.get(stock_code)
-                if cand:
-                    stock_data["rsi"] = cand.rsi
-                    stock_data["volume_ratio"] = cand.volume_ratio
-                stocks_data.append(stock_data)
-            except Exception as exc:
-                logger.error("Failed to fetch data for %s: %s", stock_code, exc)
-                continue
-
-        if not stocks_data:
-            logger.warning("No valid stock data for market %s", market.code)
-            continue
-
-        # Get balance data once for the market (read-only — safe to retry)
-        try:
-            if market.is_domestic:
-                balance_data = await _retry_connection(
-                    broker.get_balance, label=f"balance:{market.code}"
-                )
-            else:
-                balance_data = await _retry_connection(
-                    overseas_broker.get_overseas_balance,
-                    market.exchange_code,
-                    label=f"overseas_balance:{market.exchange_code}",
-                )
-        except ConnectionError as exc:
-            logger.error(
-                "Balance fetch failed for market %s after all retries — skipping market: %s",
-                market.code,
-                exc,
-            )
-            continue
-
-        balance_info: dict[str, Any] = {}
-        if market.is_domestic:
-            output2 = balance_data.get("output2", [{}])
-            total_eval = safe_float(output2[0].get("tot_evlu_amt", "0")) if output2 else 0
-            total_cash = safe_float(output2[0].get("dnca_tot_amt", "0")) if output2 else 0
-            purchase_total = safe_float(output2[0].get("pchs_amt_smtl_amt", "0")) if output2 else 0
-        else:
-            output2 = balance_data.get("output2", [{}])
-            if isinstance(output2, list) and output2:
-                balance_info = output2[0]
-            elif isinstance(output2, dict):
-                balance_info = output2
-            else:
-                balance_info = {}
-
-            total_eval = safe_float(balance_info.get("frcr_evlu_tota", "0") or "0")
-            purchase_total = safe_float(balance_info.get("frcr_buy_amt_smtl", "0") or "0")
-
-            # Fetch available foreign currency cash via inquire-psamount (TTTS3007R/VTTS3007R).
-            # TTTS3012R output2 does not include a cash/deposit field.
-            # frcr_dncl_amt_2 does not exist.
-            # Use the first stock with a valid price as the reference for the buying power query.
-            # Source: 한국투자증권 오픈API 전체문서 (20260221) — '해외주식 매수가능금액조회' 시트
-            total_cash = 0.0
-            ref_stock = next((s for s in stocks_data if s.get("current_price", 0) > 0), None)
-            if ref_stock:
-                try:
-                    ps_data = await overseas_broker.get_overseas_buying_power(
-                        market.exchange_code,
-                        ref_stock["stock_code"],
-                        ref_stock["current_price"],
-                    )
-                    total_cash = safe_float(
-                        ps_data.get("output", {}).get("ovrs_ord_psbl_amt", "0") or "0"
-                    )
-                except ConnectionError as exc:
-                    logger.warning(
-                        "Could not fetch overseas buying power for %s: %s",
-                        market.exchange_code,
-                        exc,
-                    )
-
-            # Paper mode fallback: VTS overseas balance API often fails for many accounts.
-            # Only activate in paper mode — live mode must use real balance from KIS.
-            if total_cash <= 0 and settings.MODE == "paper" and settings.PAPER_OVERSEAS_CASH > 0:
-                total_cash = settings.PAPER_OVERSEAS_CASH
-
-        # Capture the day's opening portfolio value on the first market processed
-        # in this session.  Used to compute intra-day P&L for the CB instead of
-        # the cumulative purchase_total which spans the entire account history.
-        if daily_start_eval <= 0 and total_eval > 0:
-            daily_start_eval = total_eval
-            logger.info(
-                "Daily CB baseline set: total_eval=%.2f (first balance of the day)",
-                daily_start_eval,
-            )
-
-        # Daily P&L: compare current eval vs start-of-day eval.
-        # Falls back to purchase_total if daily_start_eval is unavailable (e.g. paper
-        # mode where balance API returns 0 for all values).
-        if daily_start_eval > 0:
-            pnl_pct = (total_eval - daily_start_eval) / daily_start_eval * 100
-        else:
-            pnl_pct = (
-                ((total_eval - purchase_total) / purchase_total * 100)
-                if purchase_total > 0
-                else 0.0
-            )
-        portfolio_data = {
-            "portfolio_pnl_pct": pnl_pct,
-            "total_cash": total_cash,
-            "total_eval": total_eval,
-        }
-
-        # Evaluate scenarios for each stock (local, no API calls)
-        logger.info(
-            "Evaluating %d stocks against playbook for %s",
-            len(stocks_data),
-            market.name,
-        )
-        for stock_data in stocks_data:
-            stock_code = stock_data["stock_code"]
-            stock_playbook = playbook.get_stock_playbook(stock_code)
-            match = scenario_engine.evaluate(
-                playbook,
-                stock_code,
-                stock_data,
-                portfolio_data,
-            )
-            decision = TradeDecision(
-                action=match.action.value,
-                confidence=match.confidence,
-                rationale=match.rationale,
-            )
-
-            logger.info(
-                "Decision for %s (%s): %s (confidence=%d)",
-                stock_code,
-                market.name,
-                decision.action,
-                decision.confidence,
-            )
-
-            # BUY 중복 방지: 브로커 잔고 기반 (미체결 SELL 리밋 주문 보호)
-            if decision.action == "BUY":
-                daily_existing = _resolve_buy_suppression_position(
-                    db_conn=db_conn,
-                    balance_data=balance_data,
-                    stock_code=stock_code,
-                    market=market,
-                )
-                if daily_existing:
-                    decision = TradeDecision(
-                        action="HOLD",
-                        confidence=decision.confidence,
-                        rationale=(
-                            f"Already holding {stock_code} "
-                            f"(entry={daily_existing['price']:.4f}, "
-                            f"qty={daily_existing['quantity']})"
-                        ),
-                    )
-                    logger.info(
-                        "BUY suppressed for %s (%s): already holding open position",
-                        stock_code,
-                        market.name,
-                    )
-                elif market.code.startswith("US"):
-                    min_price = float(
-                        _resolve_market_setting(
-                            market=market,
-                            settings=settings,
-                            key="US_MIN_PRICE",
-                            default=5.0,
-                        )
-                    )
-                    if stock_data["current_price"] <= min_price:
-                        decision = TradeDecision(
-                            action="HOLD",
-                            confidence=decision.confidence,
-                            rationale=(
-                                f"US minimum price filter blocked BUY "
-                                f"(price={stock_data['current_price']:.4f} <= {min_price:.4f})"
-                            ),
-                        )
-                        logger.info(
-                            "BUY suppressed for %s (%s): US min price filter %.4f <= %.4f",
-                            stock_code,
-                            market.name,
-                            stock_data["current_price"],
-                            min_price,
-                        )
-                if decision.action == "BUY":
-                    cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
-                    now_epoch = datetime.now(UTC).timestamp()
-                    cooldown_until = _STOPLOSS_REENTRY_COOLDOWN_UNTIL.get(cooldown_key, 0.0)
-                    if now_epoch < cooldown_until:
-                        remaining = int(cooldown_until - now_epoch)
-                        decision = TradeDecision(
-                            action="HOLD",
-                            confidence=decision.confidence,
-                            rationale=f"Stop-loss reentry cooldown active ({remaining}s remaining)",
-                        )
-                        logger.info(
-                            "BUY suppressed for %s (%s): stop-loss cooldown active (%ds remaining)",
-                            stock_code,
-                            market.name,
-                            remaining,
-                        )
-            if decision.action == "HOLD":
-                daily_open = get_open_position(db_conn, stock_code, market.code)
-                if not daily_open:
-                    _clear_runtime_exit_cache_for_symbol(
-                        market_code=market.code,
-                        stock_code=stock_code,
-                    )
-                await _inject_staged_exit_features(
-                    market=market,
-                    stock_code=stock_code,
-                    open_position=daily_open,
-                    market_data=stock_data,
-                    broker=broker,
-                    overseas_broker=overseas_broker,
-                )
-                decision = _apply_staged_exit_override_for_hold(
-                    decision=decision,
-                    market=market,
-                    stock_code=stock_code,
-                    open_position=daily_open,
-                    market_data=stock_data,
-                    stock_playbook=stock_playbook,
-                    settings=settings,
-                )
-                if (
-                    daily_open
-                    and decision.action == "HOLD"
-                    and _should_force_exit_for_overnight(
-                        market=market,
-                        settings=settings,
-                    )
-                ):
-                    decision = TradeDecision(
-                        action="SELL",
-                        confidence=max(decision.confidence, 85),
-                        rationale=(
-                            "Forced exit by overnight policy"
-                            " (session close window / kill switch priority)"
-                        ),
-                    )
-                    logger.info(
-                        "Daily overnight policy override for %s (%s): HOLD -> SELL",
-                        stock_code,
-                        market.name,
-                    )
-
-            # Log decision
-            context_snapshot = {
-                "L1": {
-                    "current_price": stock_data["current_price"],
-                    "foreigner_net": stock_data["foreigner_net"],
-                },
-                "L2": {
-                    "total_eval": total_eval,
-                    "total_cash": total_cash,
-                    "purchase_total": purchase_total,
-                    "pnl_pct": pnl_pct,
-                },
-                "scenario_match": match.match_details,
-            }
-            input_data = {
-                "current_price": stock_data["current_price"],
-                "foreigner_net": stock_data["foreigner_net"],
-                "total_eval": total_eval,
-                "total_cash": total_cash,
-                "pnl_pct": pnl_pct,
-            }
-            _merge_staged_exit_evidence_into_log(
-                market_data=stock_data,
-                context_snapshot=context_snapshot,
-                input_data=input_data,
-            )
-
-            runtime_session_id = get_session_info(market).session_id
-            decision_id = decision_logger.log_decision(
-                stock_code=stock_code,
-                market=market.code,
-                exchange_code=market.exchange_code,
-                session_id=runtime_session_id,
-                action=decision.action,
-                confidence=decision.confidence,
-                rationale=decision.rationale,
-                context_snapshot=context_snapshot,
-                input_data=input_data,
-            )
-
-            # Execute if actionable
-            quantity = 0
-            trade_price = stock_data["current_price"]
-            trade_pnl = 0.0
-            buy_trade: dict[str, Any] | None = None
-            buy_price = 0.0
-            sell_qty = 0
-            order_succeeded = True
-            if decision.action in ("BUY", "SELL"):
-                if KILL_SWITCH.new_orders_blocked and decision.action == "BUY":
-                    logger.critical(
-                        "KillSwitch block active: skip %s order for %s (%s)",
-                        decision.action,
-                        stock_code,
-                        market.name,
-                    )
-                    continue
-
-                daily_broker_held_qty = (
-                    _extract_held_qty_from_balance(
-                        balance_data, stock_code, is_domestic=market.is_domestic
-                    )
-                    if decision.action == "SELL"
-                    else 0
-                )
-                quantity = _determine_order_quantity(
-                    action=decision.action,
-                    current_price=stock_data["current_price"],
-                    total_cash=total_cash,
-                    candidate=candidate_map.get(stock_code),
-                    settings=settings,
-                    broker_held_qty=daily_broker_held_qty,
-                )
-                if quantity <= 0:
-                    logger.info(
-                        "Skip %s %s (%s): no affordable quantity (cash=%.2f, price=%.2f)",
-                        decision.action,
-                        stock_code,
-                        market.name,
-                        total_cash,
-                        stock_data["current_price"],
-                    )
-                    continue
-                order_amount = stock_data["current_price"] * quantity
-                fx_blocked, remaining_cash, required_buffer = (
-                    _should_block_overseas_buy_for_fx_buffer(
-                        market=market,
-                        action=decision.action,
-                        total_cash=total_cash,
-                        order_amount=order_amount,
-                        settings=settings,
-                    )
-                )
-                if fx_blocked:
-                    logger.warning(
-                        (
-                            "Skip BUY %s (%s): FX buffer guard "
-                            "(remaining=%.2f, required=%.2f, cash=%.2f, order=%.2f)"
-                        ),
-                        stock_code,
-                        market.name,
-                        remaining_cash,
-                        required_buffer,
-                        total_cash,
-                        order_amount,
-                    )
-                    continue
-
-                # Check BUY cooldown (insufficient balance)
-                if decision.action == "BUY":
-                    daily_cooldown_key = f"{market.code}:{stock_code}"
-                    daily_cooldown_until = daily_buy_cooldown.get(daily_cooldown_key, 0.0)
-                    now = asyncio.get_event_loop().time()
-                    if now < daily_cooldown_until:
-                        remaining = int(daily_cooldown_until - now)
-                        logger.info(
-                            (
-                                "Skip BUY %s (%s): insufficient-balance cooldown active "
-                                "(%ds remaining)"
-                            ),
-                            stock_code,
-                            market.name,
-                            remaining,
-                        )
-                        continue
-
-                # Risk check
-                # SELL orders do not consume cash (they receive it), so fat-finger
-                # check is skipped for SELLs — only circuit breaker applies.
-                try:
-                    if decision.action == "SELL":
-                        risk.check_circuit_breaker(pnl_pct)
-                    else:
-                        risk.validate_order(
-                            current_pnl_pct=pnl_pct,
-                            order_amount=order_amount,
-                            total_cash=total_cash,
-                        )
-                except FatFingerRejected as exc:
-                    try:
-                        await telegram.notify_fat_finger(
-                            stock_code=stock_code,
-                            order_amount=exc.order_amount,
-                            total_cash=exc.total_cash,
-                            max_pct=exc.max_pct,
-                        )
-                    except Exception as notify_exc:
-                        logger.warning("Fat finger notification failed: %s", notify_exc)
-                    continue  # Skip this order
-                except CircuitBreakerTripped as exc:
-                    ks_report = await _trigger_emergency_kill_switch(
-                        reason=f"daily_circuit_breaker:{market.code}:{stock_code}:{exc.pnl_pct:.2f}",
-                        broker=broker,
-                        overseas_broker=overseas_broker,
-                        telegram=telegram,
-                        settings=settings,
-                        current_market=market,
-                        stock_code=stock_code,
-                        pnl_pct=exc.pnl_pct,
-                        threshold=exc.threshold,
-                    )
-                    logger.critical("Circuit breaker tripped — stopping session")
-                    if ks_report.errors:
-                        logger.critical(
-                            "Daily KillSwitch step errors for %s/%s: %s",
-                            market.code,
-                            stock_code,
-                            "; ".join(ks_report.errors),
-                        )
-                    raise
-
-                # Send order
-                order_succeeded = True
-                try:
-                    if market.is_domestic:
-                        # Use limit orders (지정가) for domestic stocks.
-                        # KRX tick rounding applied via kr_round_down.
-                        if decision.action == "BUY":
-                            order_price = kr_round_down(stock_data["current_price"] * 1.002)
-                        else:
-                            order_price = kr_round_down(stock_data["current_price"] * 0.998)
-                        try:
-                            validate_order_policy(
-                                market=market,
-                                order_type=decision.action,
-                                price=float(order_price),
-                            )
-                        except OrderPolicyRejected as exc:
-                            logger.warning(
-                                "Order policy rejected %s %s (%s): %s [session=%s]",
-                                decision.action,
-                                stock_code,
-                                market.name,
-                                exc,
-                                exc.session_id,
-                            )
-                            continue
-                        if _maybe_queue_order_intent(
-                            market=market,
-                            session_id=runtime_session_id,
-                            stock_code=stock_code,
-                            order_type=decision.action,
-                            quantity=quantity,
-                            price=float(order_price),
-                            source="run_daily_session",
-                        ):
-                            continue
-                        result = await broker.send_order(
-                            stock_code=stock_code,
-                            order_type=decision.action,
-                            quantity=quantity,
-                            price=order_price,
-                            session_id=runtime_session_id,
-                        )
-                        if result.get("rt_cd", "0") != "0":
-                            order_succeeded = False
-                            daily_msg1 = result.get("msg1") or ""
-                            logger.warning(
-                                "KR order not accepted for %s: rt_cd=%s msg=%s",
-                                stock_code,
-                                result.get("rt_cd"),
-                                daily_msg1,
-                            )
-                    else:
-                        # KIS VTS only accepts limit orders; use 0.5% premium for BUY
-                        if decision.action == "BUY":
-                            order_price = round(stock_data["current_price"] * 1.005, 4)
-                        else:
-                            order_price = stock_data["current_price"]
-                        try:
-                            validate_order_policy(
-                                market=market,
-                                order_type=decision.action,
-                                price=float(order_price),
-                            )
-                        except OrderPolicyRejected as exc:
-                            logger.warning(
-                                "Order policy rejected %s %s (%s): %s [session=%s]",
-                                decision.action,
-                                stock_code,
-                                market.name,
-                                exc,
-                                exc.session_id,
-                            )
-                            continue
-                        if _maybe_queue_order_intent(
-                            market=market,
-                            session_id=runtime_session_id,
-                            stock_code=stock_code,
-                            order_type=decision.action,
-                            quantity=quantity,
-                            price=float(order_price),
-                            source="run_daily_session",
-                        ):
-                            continue
-                        result = await overseas_broker.send_overseas_order(
-                            exchange_code=market.exchange_code,
-                            stock_code=stock_code,
-                            order_type=decision.action,
-                            quantity=quantity,
-                            price=order_price,  # limit order
-                        )
-                        if result.get("rt_cd", "") != "0":
-                            order_succeeded = False
-                            daily_msg1 = result.get("msg1") or ""
-                            logger.warning(
-                                "Overseas order not accepted for %s: rt_cd=%s msg=%s",
-                                stock_code,
-                                result.get("rt_cd"),
-                                daily_msg1,
-                            )
-                            if decision.action == "BUY" and "주문가능금액" in daily_msg1:
-                                daily_cooldown_key = f"{market.code}:{stock_code}"
-                                daily_buy_cooldown[daily_cooldown_key] = (
-                                    asyncio.get_event_loop().time() + _BUY_COOLDOWN_SECONDS
-                                )
-                                logger.info(
-                                    "BUY cooldown set for %s: %.0fs (insufficient balance)",
-                                    stock_code,
-                                    _BUY_COOLDOWN_SECONDS,
-                                )
-                    logger.info("Order result: %s", result.get("msg1", "OK"))
-
-                    # Notify trade execution (only on success)
-                    if order_succeeded:
-                        try:
-                            await telegram.notify_trade_execution(
-                                stock_code=stock_code,
-                                market=market.name,
-                                action=decision.action,
-                                quantity=quantity,
-                                price=stock_data["current_price"],
-                                confidence=decision.confidence,
-                            )
-                        except Exception as exc:
-                            logger.warning("Telegram notification failed: %s", exc)
-                except Exception as exc:
-                    logger.error("Order execution failed for %s: %s", stock_code, exc)
-                    continue
-
-                if decision.action == "SELL" and order_succeeded:
-                    buy_trade = get_latest_buy_trade(
-                        db_conn,
-                        stock_code,
-                        market.code,
-                        exchange_code=market.exchange_code,
-                    )
-                    if buy_trade and buy_trade.get("price") is not None:
-                        buy_price = float(buy_trade["price"])
-                        buy_qty = int(buy_trade.get("quantity") or 0)
-                        sell_qty = _resolve_sell_qty_for_pnl(
-                            sell_qty=quantity,
-                            buy_qty=buy_qty,
-                        )
-                        trade_pnl = (trade_price - buy_price) * sell_qty
-                        decision_logger.update_outcome(
-                            decision_id=buy_trade["decision_id"],
-                            pnl=trade_pnl,
-                            accuracy=1 if trade_pnl > 0 else 0,
-                        )
-                        if trade_pnl < 0:
-                            cooldown_key = _stoploss_cooldown_key(
-                                market=market, stock_code=stock_code
-                            )
-                            cooldown_minutes = _stoploss_cooldown_minutes(
-                                settings,
-                                market=market,
-                            )
-                            _STOPLOSS_REENTRY_COOLDOWN_UNTIL[cooldown_key] = (
-                                datetime.now(UTC).timestamp() + cooldown_minutes * 60
-                            )
-                            logger.info(
-                                "Stop-loss cooldown set for %s (%s): %d minutes",
-                                stock_code,
-                                market.name,
-                                cooldown_minutes,
-                            )
-
-            # Log trade (skip if order was rejected by API)
-            if decision.action in ("BUY", "SELL") and not order_succeeded:
-                continue
-            strategy_pnl: float | None = None
-            fx_pnl: float | None = None
-            selection_context: dict[str, Any] | None = None
-            if decision.action == "SELL" and order_succeeded:
-                buy_fx_rate = _extract_buy_fx_rate(buy_trade)
-                sell_fx_rate = _extract_fx_rate_from_sources(balance_info, stock_data)
-                strategy_pnl, fx_pnl = _split_trade_pnl_components(
-                    market=market,
-                    trade_pnl=trade_pnl,
-                    buy_price=buy_price,
-                    sell_price=trade_price,
-                    quantity=sell_qty or quantity,
-                    buy_fx_rate=buy_fx_rate,
-                    sell_fx_rate=sell_fx_rate,
-                )
-                if sell_fx_rate is not None and not market.is_domestic:
-                    # Daily path does not carry scanner candidate metrics, so this
-                    # context intentionally stores FX snapshot only.
-                    selection_context = {"fx_rate": sell_fx_rate}
-            elif not market.is_domestic:
-                snapshot_fx_rate = _extract_fx_rate_from_sources(balance_info, stock_data)
-                if snapshot_fx_rate is not None:
-                    # BUY/HOLD in daily path: persist FX snapshot for later SELL split.
-                    selection_context = {"fx_rate": snapshot_fx_rate}
-            log_trade(
-                conn=db_conn,
-                stock_code=stock_code,
-                action=decision.action,
-                confidence=decision.confidence,
-                rationale=decision.rationale,
-                quantity=quantity,
-                price=trade_price,
-                pnl=trade_pnl,
-                strategy_pnl=strategy_pnl,
-                fx_pnl=fx_pnl,
-                market=market.code,
-                exchange_code=market.exchange_code,
-                session_id=runtime_session_id,
-                selection_context=selection_context,
-                decision_id=decision_id,
-                mode=settings.MODE,
-            )
 
     logger.info("Daily trading session completed")
     return daily_start_eval
