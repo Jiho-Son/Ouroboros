@@ -166,8 +166,7 @@ async def _refresh_order_state_for_kill_switch(
 
 
 def _reduce_risk_for_kill_switch() -> None:
-    # Lazy import: BLACKOUT_ORDER_MANAGER will be extracted in Task 7
-    from src.main import BLACKOUT_ORDER_MANAGER
+    from src.core.blackout_runtime import BLACKOUT_ORDER_MANAGER
 
     dropped = BLACKOUT_ORDER_MANAGER.clear()
     logger.critical("KillSwitch: reduced queued order risk by clearing %d queued intents", dropped)

@@ -8014,7 +8014,7 @@ async def test_blackout_queues_order_and_skips_submission() -> None:
     blackout_manager.pending_count = 1
     blackout_manager.overflow_drop_count = 0
 
-    with patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager):
+    with patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", blackout_manager):
         await trading_cycle(
             broker=broker,
             overseas_broker=MagicMock(),
@@ -8050,7 +8050,7 @@ def test_blackout_queue_overflow_keeps_latest_intent() -> None:
     market.code = "KR"
     market.exchange_code = "KRX"
 
-    with patch("src.main.BLACKOUT_ORDER_MANAGER", manager):
+    with patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", manager):
         assert _maybe_queue_order_intent(
             market=market,
             session_id="KRX_REG",
@@ -8107,10 +8107,10 @@ async def test_process_blackout_recovery_executes_valid_intents() -> None:
     blackout_manager.pop_recovery_batch.return_value = [intent]
 
     with (
-        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
-        patch("src.main.MARKETS", {"KR": market}),
-        patch("src.main.get_open_position", return_value=None),
-        patch("src.main.validate_order_policy"),
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.core.blackout_runtime.MARKETS", {"KR": market}),
+        patch("src.core.blackout_runtime.get_open_position", return_value=None),
+        patch("src.core.blackout_runtime.validate_order_policy"),
         patch("src.main.get_session_info", return_value=MagicMock(session_id="KRX_REG")),
     ):
         await process_blackout_recovery_orders(
@@ -8163,11 +8163,11 @@ async def test_process_blackout_recovery_drops_policy_rejected_intent() -> None:
     blackout_manager.pop_recovery_batch.return_value = [intent]
 
     with (
-        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
-        patch("src.main.MARKETS", {"KR": market}),
-        patch("src.main.get_open_position", return_value=None),
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.core.blackout_runtime.MARKETS", {"KR": market}),
+        patch("src.core.blackout_runtime.get_open_position", return_value=None),
         patch(
-            "src.main.validate_order_policy",
+            "src.core.blackout_runtime.validate_order_policy",
             side_effect=OrderPolicyRejected(
                 "blocked",
                 session_id="NXT_AFTER",
@@ -8213,10 +8213,10 @@ async def test_process_blackout_recovery_drops_intent_on_excessive_price_drift()
     blackout_manager.pop_recovery_batch.return_value = [intent]
 
     with (
-        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
-        patch("src.main.MARKETS", {"KR": market}),
-        patch("src.main.get_open_position", return_value=None),
-        patch("src.main.validate_order_policy") as validate_policy,
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.core.blackout_runtime.MARKETS", {"KR": market}),
+        patch("src.core.blackout_runtime.get_open_position", return_value=None),
+        patch("src.core.blackout_runtime.validate_order_policy") as validate_policy,
     ):
         await process_blackout_recovery_orders(
             broker=broker,
@@ -8264,10 +8264,10 @@ async def test_process_blackout_recovery_drops_overseas_intent_on_excessive_pric
     blackout_manager.pop_recovery_batch.return_value = [intent]
 
     with (
-        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
-        patch("src.main.MARKETS", {"US_NASDAQ": market}),
-        patch("src.main.get_open_position", return_value=None),
-        patch("src.main.validate_order_policy") as validate_policy,
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.core.blackout_runtime.MARKETS", {"US_NASDAQ": market}),
+        patch("src.core.blackout_runtime.get_open_position", return_value=None),
+        patch("src.core.blackout_runtime.validate_order_policy") as validate_policy,
     ):
         await process_blackout_recovery_orders(
             broker=broker,
@@ -8314,10 +8314,10 @@ async def test_process_blackout_recovery_requeues_intent_when_price_lookup_fails
     blackout_manager.pop_recovery_batch.return_value = [intent]
 
     with (
-        patch("src.main.BLACKOUT_ORDER_MANAGER", blackout_manager),
-        patch("src.main.MARKETS", {"KR": market}),
-        patch("src.main.get_open_position", return_value=None),
-        patch("src.main.validate_order_policy") as validate_policy,
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER", blackout_manager),
+        patch("src.core.blackout_runtime.MARKETS", {"KR": market}),
+        patch("src.core.blackout_runtime.get_open_position", return_value=None),
+        patch("src.core.blackout_runtime.validate_order_policy") as validate_policy,
     ):
         await process_blackout_recovery_orders(
             broker=broker,
@@ -8366,7 +8366,7 @@ async def test_trigger_emergency_kill_switch_executes_operational_steps() -> Non
 
     with (
         patch("src.main.MARKETS", {"KR": market}),
-        patch("src.main.BLACKOUT_ORDER_MANAGER.clear", return_value=2),
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER.clear", return_value=2),
     ):
         report = await _trigger_emergency_kill_switch(
             reason="test",
@@ -8436,7 +8436,7 @@ async def test_trigger_emergency_kill_switch_records_cancel_failure() -> None:
 
     with (
         patch("src.main.MARKETS", {"KR": market}),
-        patch("src.main.BLACKOUT_ORDER_MANAGER.clear", return_value=0),
+        patch("src.core.blackout_runtime.BLACKOUT_ORDER_MANAGER.clear", return_value=0),
     ):
         report = await _trigger_emergency_kill_switch(
             reason="test-fail",
