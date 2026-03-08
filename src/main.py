@@ -11,7 +11,6 @@ import asyncio
 import fcntl
 import json
 import logging
-import math
 import os
 import signal
 import threading
@@ -28,7 +27,6 @@ from src.analysis.smart_scanner import ScanCandidate, SmartVolatilityScanner
 from src.analysis.volatility import VolatilityAnalyzer
 from src.brain.context_selector import ContextSelector
 from src.brain.gemini_client import GeminiClient, TradeDecision
-from src.broker.kis_api import KISBroker, kr_round_down
 from src.broker.balance_utils import (
     _extract_avg_price_from_balance,
     _extract_buy_fx_rate,
@@ -36,6 +34,7 @@ from src.broker.balance_utils import (
     _extract_held_codes_from_balance,
     _extract_held_qty_from_balance,
 )
+from src.broker.kis_api import KISBroker, kr_round_down
 from src.broker.overseas import OverseasBroker
 from src.broker.pending_orders import (
     handle_domestic_pending_orders,
@@ -51,12 +50,10 @@ from src.core.blackout_manager import (
     parse_blackout_windows_kst,
 )
 from src.core.blackout_runtime import (
-    BLACKOUT_ORDER_MANAGER,
     _maybe_queue_order_intent,
     process_blackout_recovery_orders,
 )
 from src.core.criticality import CriticalityAssessor
-from src.core.kill_switch import KillSwitchOrchestrator
 from src.core.kill_switch_runtime import (
     KILL_SWITCH,
     _trigger_emergency_kill_switch,
@@ -71,10 +68,11 @@ from src.core.order_helpers import (
 )
 from src.core.order_policy import (
     OrderPolicyRejected,
-    classify_session_id,
     get_session_info,
     validate_order_policy,
 )
+from src.core.priority_queue import PriorityTaskQueue
+from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
 from src.core.session_risk import (
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL,
     _resolve_market_setting,
@@ -82,14 +80,6 @@ from src.core.session_risk import (
     _stoploss_cooldown_key,
     _stoploss_cooldown_minutes,
 )
-from src.strategy.exit_manager import (
-    _apply_staged_exit_override_for_hold,
-    _clear_runtime_exit_cache_for_symbol,
-    _inject_staged_exit_features,
-    _merge_staged_exit_evidence_into_log,
-)
-from src.core.priority_queue import PriorityTaskQueue
-from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
 from src.db import (
     get_latest_buy_trade,
     get_open_position,
@@ -107,10 +97,14 @@ from src.notifications.telegram_client import (
     TelegramClient,
     TelegramCommandHandler,
 )
-from src.strategy.exit_rules import ExitRuleConfig, ExitRuleInput, evaluate_exit
+from src.strategy.exit_manager import (
+    _apply_staged_exit_override_for_hold,
+    _clear_runtime_exit_cache_for_symbol,
+    _inject_staged_exit_features,
+    _merge_staged_exit_evidence_into_log,
+)
 from src.strategy.models import DayPlaybook, MarketOutlook
 from src.strategy.playbook_store import PlaybookStore
-from src.strategy.position_state_machine import PositionState
 from src.strategy.pre_market_planner import PreMarketPlanner
 from src.strategy.scenario_engine import ScenarioEngine
 

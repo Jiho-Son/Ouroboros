@@ -9,7 +9,6 @@ from src.broker.kis_api import KISBroker
 from src.broker.overseas import OverseasBroker
 from src.config import Settings
 from src.core.kill_switch import KillSwitchOrchestrator
-from src.core.order_policy import get_session_info
 from src.markets.schedule import MARKETS, MarketInfo
 from src.notifications.telegram_client import TelegramClient
 

@@ -161,3 +161,11 @@
 - next_ticket: #438
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: 구조적 버그/정책 이슈는 테스트 증거로 close 가능, 런타임 민감 이슈는 실동작 증거 없으면 코멘트만 남기고 open 유지
+
+### 2026-03-08 | session=codex-issue451-ci-fail
+- branch: feature/issue-445-project-cleanup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #451
+- next_ticket: #451
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: 최근 main.py 분리 리팩터에서 남은 미사용 import와 테스트 파일 line-length 위반으로 CI ruff 단계가 실패한다.

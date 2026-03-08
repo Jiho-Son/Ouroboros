@@ -12,15 +12,6 @@ from zoneinfo import ZoneInfo
 import pytest
 
 import src.main as main_module
-from src.config import Settings
-from src.context.layer import ContextLayer
-from src.context.scheduler import ScheduleResult
-from src.core.blackout_manager import BlackoutOrderManager
-from src.core.order_policy import OrderPolicyRejected, get_session_info
-from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
-from src.db import init_db, log_trade
-from src.evolution.scorecard import DailyScorecard
-from src.logging.decision_logger import DecisionLogger
 from src.analysis.atr_helpers import (
     _compute_kr_atr_value,
     _estimate_pred_down_prob_from_rsi,
@@ -35,6 +26,10 @@ from src.broker.pending_orders import (
     handle_domestic_pending_orders,
     handle_overseas_pending_orders,
 )
+from src.config import Settings
+from src.context.layer import ContextLayer
+from src.context.scheduler import ScheduleResult
+from src.core.blackout_manager import BlackoutOrderManager
 from src.core.blackout_runtime import (
     _maybe_queue_order_intent,
     process_blackout_recovery_orders,
@@ -49,6 +44,8 @@ from src.core.order_helpers import (
     _should_block_overseas_buy_for_fx_buffer,
     _should_force_exit_for_overnight,
 )
+from src.core.order_policy import OrderPolicyRejected, get_session_info
+from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
 from src.core.session_risk import (
     _SESSION_RISK_LAST_BY_MARKET,
     _SESSION_RISK_OVERRIDES_BY_MARKET,
@@ -58,6 +55,9 @@ from src.core.session_risk import (
     _resolve_market_setting,
     _stoploss_cooldown_minutes,
 )
+from src.db import init_db, log_trade
+from src.evolution.scorecard import DailyScorecard
+from src.logging.decision_logger import DecisionLogger
 from src.main import (
     _acquire_live_runtime_lock,
     _apply_dashboard_flag,
@@ -545,7 +545,10 @@ def test_resolve_market_setting_uses_session_profile_override() -> None:
     market = MagicMock()
     market.code = "US_NASDAQ"
 
-    with patch("src.core.session_risk.get_session_info", return_value=MagicMock(session_id="US_PRE")):
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="US_PRE"),
+    ):
         value = _resolve_market_setting(
             market=market,
             settings=settings,
@@ -568,7 +571,10 @@ def test_stoploss_cooldown_minutes_uses_session_override() -> None:
     market = MagicMock()
     market.code = "KR"
 
-    with patch("src.core.session_risk.get_session_info", return_value=MagicMock(session_id="NXT_AFTER")):
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="NXT_AFTER"),
+    ):
         value = _stoploss_cooldown_minutes(settings, market=market)
 
     assert value == 45
@@ -587,7 +593,10 @@ def test_resolve_market_setting_ignores_profile_when_reload_disabled() -> None:
     market = MagicMock()
     market.code = "US_NASDAQ"
 
-    with patch("src.core.session_risk.get_session_info", return_value=MagicMock(session_id="US_PRE")):
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="US_PRE"),
+    ):
         value = _resolve_market_setting(
             market=market,
             settings=settings,
@@ -610,7 +619,10 @@ def test_resolve_market_setting_falls_back_on_invalid_profile_json() -> None:
     market = MagicMock()
     market.code = "US_NASDAQ"
 
-    with patch("src.core.session_risk.get_session_info", return_value=MagicMock(session_id="US_PRE")):
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="US_PRE"),
+    ):
         value = _resolve_market_setting(
             market=market,
             settings=settings,
@@ -633,7 +645,10 @@ def test_resolve_market_setting_coerces_bool_string_override() -> None:
     market = MagicMock()
     market.code = "US_NASDAQ"
 
-    with patch("src.core.session_risk.get_session_info", return_value=MagicMock(session_id="US_AFTER")):
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="US_AFTER"),
+    ):
         value = _resolve_market_setting(
             market=market,
             settings=settings,
@@ -7906,7 +7921,10 @@ async def test_session_boundary_falls_back_when_profile_reload_fails() -> None:
 
 def test_overnight_policy_prioritizes_killswitch_over_exception() -> None:
     market = MagicMock()
-    with patch("src.core.order_helpers.get_session_info", return_value=MagicMock(session_id="US_AFTER")):
+    with patch(
+        "src.core.order_helpers.get_session_info",
+        return_value=MagicMock(session_id="US_AFTER"),
+    ):
         settings = MagicMock()
         settings.OVERNIGHT_EXCEPTION_ENABLED = True
         try:
