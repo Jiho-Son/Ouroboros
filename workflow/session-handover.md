@@ -169,3 +169,11 @@
 - next_ticket: #451
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: 최근 main.py 분리 리팩터에서 남은 미사용 import와 테스트 파일 line-length 위반으로 CI ruff 단계가 실패한다.
+
+### 2026-03-08 | session=codex-issue447-start
+- branch: feature/issue-447-trading-cycle-subfunctions
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #447
+- next_ticket: #447
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: trading_cycle()를 데이터 수집, 시나리오 평가, 주문 실행, 로깅 helper로 분해하되 함수 시그니처와 동작은 유지한다.

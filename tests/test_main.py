@@ -8731,3 +8731,90 @@ async def test_run_restores_pre_refresh_playbook_when_mid_session_refresh_genera
     assert mock_trading_cycle.await_args_list[1].args[3] is original_playbook
     pre_market_planner.generate_playbook.assert_awaited_once()
     telegram.notify_playbook_failed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_trading_cycle_orchestrates_stage_helpers_in_order() -> None:
+    """Issue #447 regression: trading_cycle should preserve stage orchestration contracts."""
+    call_order: list[str] = []
+    criticality = MagicMock(value="NORMAL")
+    snapshot = {"criticality": criticality}
+    decision_data = {"decision": MagicMock(action="HOLD", confidence=0)}
+    execution_result = {
+        "should_return": False,
+        "order_succeeded": True,
+        "quantity": 0,
+        "trade_price": 0.0,
+        "trade_pnl": 0.0,
+        "buy_trade": None,
+        "buy_price": 0.0,
+        "sell_qty": 0,
+    }
+
+    async def collect_side_effect(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs["runtime_session_id"] == "KRX_REG"
+        call_order.append("collect")
+        return snapshot
+
+    async def evaluate_side_effect(**kwargs: Any) -> dict[str, Any]:
+        assert call_order == ["collect"]
+        assert kwargs["snapshot"] is snapshot
+        call_order.append("evaluate")
+        return decision_data
+
+    async def execute_side_effect(**kwargs: Any) -> dict[str, Any]:
+        assert call_order == ["collect", "evaluate"]
+        assert kwargs["snapshot"] is snapshot
+        assert kwargs["decision_data"] is decision_data
+        call_order.append("execute")
+        return execution_result
+
+    def log_side_effect(**kwargs: Any) -> None:
+        assert call_order == ["collect", "evaluate", "execute"]
+        assert kwargs["snapshot"] is snapshot
+        assert kwargs["decision_data"] is decision_data
+        assert kwargs["execution_result"] is execution_result
+        call_order.append("log")
+
+    criticality_assessor = MagicMock(get_timeout=MagicMock(return_value=5.0))
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    with (
+        patch("src.main.get_session_info", return_value=MagicMock(session_id="KRX_REG")),
+        patch(
+            "src.main._collect_trading_cycle_market_snapshot",
+            new=AsyncMock(side_effect=collect_side_effect),
+        ),
+        patch(
+            "src.main._evaluate_trading_cycle_decision",
+            new=AsyncMock(side_effect=evaluate_side_effect),
+        ),
+        patch(
+            "src.main._execute_trading_cycle_action",
+            new=AsyncMock(side_effect=execute_side_effect),
+        ),
+        patch("src.main._log_trading_cycle_trade", side_effect=log_side_effect),
+    ):
+        await main_module.trading_cycle(
+            broker=MagicMock(),
+            overseas_broker=MagicMock(),
+            scenario_engine=MagicMock(),
+            playbook=MagicMock(),
+            risk=MagicMock(),
+            db_conn=MagicMock(),
+            decision_logger=MagicMock(),
+            context_store=MagicMock(),
+            criticality_assessor=criticality_assessor,
+            telegram=MagicMock(),
+            market=market,
+            stock_code="005930",
+            scan_candidates={},
+            settings=MagicMock(),
+        )
+
+    assert call_order == ["collect", "evaluate", "execute", "log"]
+    criticality_assessor.get_timeout.assert_called_once_with(criticality)
