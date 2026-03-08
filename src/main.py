@@ -21,6 +21,12 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from src.analysis.atr_helpers import (
+    _compute_kr_atr_value,
+    _compute_overseas_atr_value,
+    _estimate_pred_down_prob_from_rsi,
+    _split_trade_pnl_components,
+)
 from src.analysis.smart_scanner import ScanCandidate, SmartVolatilityScanner
 from src.analysis.volatility import VolatilityAnalyzer
 from src.brain.context_selector import ContextSelector
@@ -109,7 +115,6 @@ BLACKOUT_ORDER_MANAGER = BlackoutOrderManager(
 _SESSION_CLOSE_WINDOWS = {"NXT_AFTER", "US_AFTER"}
 _RUNTIME_EXIT_STATES: dict[str, PositionState] = {}
 _RUNTIME_EXIT_PEAKS: dict[str, float] = {}
-_VOLATILITY_ANALYZER = VolatilityAnalyzer()
 _STAGED_EXIT_EVIDENCE_KEY = "_staged_exit_evidence"
 
 
@@ -186,154 +191,6 @@ _BUY_COOLDOWN_SECONDS = 600  # 10-minute cooldown after insufficient-balance rej
 # Daily trading mode constants (for Free tier API efficiency)
 DAILY_TRADE_SESSIONS = 4  # Number of trading sessions per day
 TRADE_SESSION_INTERVAL_HOURS = 6  # Hours between sessions
-
-
-def _split_trade_pnl_components(
-    *,
-    market: MarketInfo,
-    trade_pnl: float,
-    buy_price: float,
-    sell_price: float,
-    quantity: int,
-    buy_fx_rate: float | None = None,
-    sell_fx_rate: float | None = None,
-) -> tuple[float, float]:
-    """Split total trade pnl into strategy/fx components.
-
-    For overseas symbols, use buy/sell FX rates when both are available.
-    Otherwise preserve backward-compatible behaviour (all strategy pnl).
-    """
-    if trade_pnl == 0.0:
-        return 0.0, 0.0
-    if market.is_domestic:
-        return trade_pnl, 0.0
-
-    if (
-        buy_fx_rate is not None
-        and sell_fx_rate is not None
-        and buy_fx_rate > 0
-        and sell_fx_rate > 0
-        and quantity > 0
-        and buy_price > 0
-        and sell_price > 0
-    ):
-        buy_notional = buy_price * quantity
-        fx_return = (sell_fx_rate - buy_fx_rate) / buy_fx_rate
-        fx_pnl = buy_notional * fx_return
-        strategy_pnl = trade_pnl - fx_pnl
-        return strategy_pnl, fx_pnl
-
-    return trade_pnl, 0.0
-
-
-def _estimate_pred_down_prob_from_rsi(rsi: float | str | None) -> float:
-    """Estimate downside probability from RSI using a simple linear mapping."""
-    if rsi is None:
-        return 0.5
-    rsi_value = max(0.0, min(100.0, safe_float(rsi, 50.0)))
-    return rsi_value / 100.0
-
-
-async def _compute_kr_atr_value(
-    *,
-    broker: KISBroker,
-    stock_code: str,
-    period: int = 14,
-) -> float:
-    """Compute ATR(period) for KR stocks using daily OHLC."""
-    days = max(period + 1, 30)
-    try:
-        daily_prices = await _retry_connection(
-            broker.get_daily_prices,
-            stock_code,
-            days=days,
-            label=f"daily_prices:{stock_code}",
-        )
-    except ConnectionError as exc:
-        logger.warning("ATR source unavailable for %s: %s", stock_code, exc)
-        return 0.0
-    except Exception as exc:
-        logger.warning("Unexpected ATR fetch failure for %s: %s", stock_code, exc)
-        return 0.0
-
-    if not isinstance(daily_prices, list):
-        return 0.0
-
-    highs: list[float] = []
-    lows: list[float] = []
-    closes: list[float] = []
-    for row in daily_prices:
-        if not isinstance(row, dict):
-            continue
-        high = safe_float(row.get("high"), 0.0)
-        low = safe_float(row.get("low"), 0.0)
-        close = safe_float(row.get("close"), 0.0)
-        if high <= 0 or low <= 0 or close <= 0:
-            continue
-        highs.append(high)
-        lows.append(low)
-        closes.append(close)
-
-    if len(highs) < period + 1 or len(lows) < period + 1 or len(closes) < period + 1:
-        return 0.0
-    return max(0.0, _VOLATILITY_ANALYZER.calculate_atr(highs, lows, closes, period=period))
-
-
-async def _compute_overseas_atr_value(
-    *,
-    overseas_broker: OverseasBroker,
-    exchange_code: str,
-    stock_code: str,
-    period: int = 14,
-) -> float:
-    """Compute ATR(period) for overseas stocks using daily OHLC."""
-    days = max(period + 1, 30)
-    try:
-        daily_prices = await _retry_connection(
-            overseas_broker.get_daily_prices,
-            exchange_code,
-            stock_code,
-            days=days,
-            label=f"overseas_daily_prices:{exchange_code}:{stock_code}",
-        )
-    except ConnectionError as exc:
-        logger.warning(
-            "Overseas ATR source unavailable for %s/%s: %s",
-            exchange_code,
-            stock_code,
-            exc,
-        )
-        return 0.0
-    except Exception as exc:
-        logger.warning(
-            "Unexpected overseas ATR fetch failure for %s/%s: %s",
-            exchange_code,
-            stock_code,
-            exc,
-        )
-        return 0.0
-
-    if not isinstance(daily_prices, list):
-        return 0.0
-
-    highs: list[float] = []
-    lows: list[float] = []
-    closes: list[float] = []
-    for row in daily_prices:
-        if not isinstance(row, dict):
-            continue
-        high = safe_float(row.get("high"), 0.0)
-        low = safe_float(row.get("low"), 0.0)
-        close = safe_float(row.get("close"), 0.0)
-        if high <= 0 or low <= 0 or close <= 0:
-            continue
-        highs.append(high)
-        lows.append(low)
-        closes.append(close)
-
-    if len(highs) < period + 1 or len(lows) < period + 1 or len(closes) < period + 1:
-        return 0.0
-    return max(0.0, _VOLATILITY_ANALYZER.calculate_atr(highs, lows, closes, period=period))
 
 
 async def _inject_staged_exit_features(
