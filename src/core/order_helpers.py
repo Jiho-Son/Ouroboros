@@ -167,8 +167,7 @@ def _should_force_exit_for_overnight(
     session_id = get_session_info(market).session_id
     if session_id not in _SESSION_CLOSE_WINDOWS:
         return False
-    # Lazy import to avoid circular dependency (will move to kill_switch_runtime in Task 6)
-    from src.main import KILL_SWITCH
+    from src.core.kill_switch_runtime import KILL_SWITCH
 
     if KILL_SWITCH.new_orders_blocked:
         return True

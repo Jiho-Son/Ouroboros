@@ -8469,7 +8469,8 @@ async def test_refresh_order_state_failure_summary_includes_more_count() -> None
         markets.append(market)
 
     with pytest.raises(RuntimeError, match=r"\(\+1 more\)$") as exc_info:
-        await main_module._refresh_order_state_for_kill_switch(
+        from src.core.kill_switch_runtime import _refresh_order_state_for_kill_switch
+        await _refresh_order_state_for_kill_switch(
             broker=broker,
             overseas_broker=overseas_broker,
             markets=markets,
