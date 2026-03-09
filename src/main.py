@@ -13,12 +13,16 @@ import json
 import logging
 import os
 import signal
+import sys
 import threading
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.analysis.atr_helpers import (
     _split_trade_pnl_components,
@@ -87,9 +91,9 @@ from src.db import (
     init_db,
     log_trade,
 )
+from src.decision_logging.decision_logger import DecisionLogger
 from src.evolution.daily_review import DailyReviewer
 from src.evolution.optimizer import EvolutionOptimizer
-from src.logging.decision_logger import DecisionLogger
 from src.logging_config import setup_logging
 from src.markets.schedule import MARKETS, MarketInfo, get_next_market_open, get_open_markets
 from src.notifications.telegram_client import (
