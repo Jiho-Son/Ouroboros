@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
+from typing import Any
 
 from src.broker.kis_api import KISBroker, kr_round_down
 from src.broker.overseas import OverseasBroker
@@ -22,6 +24,57 @@ logger = logging.getLogger(__name__)
 
 _BUY_COOLDOWN_SECONDS = 600  # 10-minute cooldown after insufficient-balance rejection
 
+RollbackOpenPosition = Callable[..., None]
+
+
+def _resolve_overseas_market_code(exchange_code: str) -> str:
+    for market_code, market in MARKETS.items():
+        if market.exchange_code == exchange_code and not market.is_domestic:
+            return market_code
+    logger.warning(
+        "Unknown overseas exchange code %s for pending-order rollback; using fallback market key",
+        exchange_code,
+    )
+    return f"US_{exchange_code}"
+
+
+def _rollback_pending_position(
+    *,
+    rollback_open_position: RollbackOpenPosition | None,
+    market_code: str,
+    exchange_code: str,
+    stock_code: str,
+    action: str,
+) -> None:
+    if rollback_open_position is None:
+        return
+    rollback_open_position(
+        market_code=market_code,
+        exchange_code=exchange_code,
+        stock_code=stock_code,
+        action=action,
+    )
+
+
+def _require_order_acceptance(
+    result: dict[str, Any],
+    *,
+    order_type: str,
+    stock_code: str,
+    exchange_code: str,
+) -> None:
+    if result.get("rt_cd", "0") == "0":
+        return
+    raise ValueError(
+        f"Order rejected ({order_type} {stock_code} {exchange_code} "
+        f"rt_cd={result.get('rt_cd')} msg={result.get('msg1', '')})"
+    )
+
+
+def _is_ambiguous_submit_error(exc: Exception) -> bool:
+    """Return True when submit result is unknown and rollback would be unsafe."""
+    return isinstance(exc, ConnectionError)
+
 
 async def handle_domestic_pending_orders(
     broker: KISBroker,
@@ -30,6 +83,7 @@ async def handle_domestic_pending_orders(
     sell_resubmit_counts: dict[str, int],
     buy_cooldown: dict[str, float] | None = None,
     quote_market_div_code: str = "J",
+    rollback_open_position: RollbackOpenPosition | None = None,
 ) -> None:
     """Check and handle unfilled (pending) domestic limit orders.
 
@@ -117,6 +171,13 @@ async def handle_domestic_pending_orders(
                         )
                     except Exception as notify_exc:
                         logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                    _rollback_pending_position(
+                        rollback_open_position=rollback_open_position,
+                        market_code="KR",
+                        exchange_code=order_exchange,
+                        stock_code=stock_code,
+                        action="BUY",
+                    )
                 else:
                     try:
                         last_price, _, _ = await broker.get_current_price(
@@ -130,12 +191,18 @@ async def handle_domestic_pending_orders(
                             order_type="BUY",
                             price=float(new_price),
                         )
-                        await broker.send_order(
+                        result = await broker.send_order(
                             stock_code=stock_code,
                             order_type="BUY",
                             quantity=psbl_qty,
                             price=new_price,
                             session_id=classify_session_id(MARKETS["KR"]),
+                        )
+                        _require_order_acceptance(
+                            result,
+                            order_type="BUY",
+                            stock_code=stock_code,
+                            exchange_code=order_exchange,
                         )
                         sell_resubmit_counts[buy_resubmit_key] = (
                             sell_resubmit_counts.get(buy_resubmit_key, 0) + 1
@@ -169,6 +236,19 @@ async def handle_domestic_pending_orders(
                             logger.warning("notify_unfilled_order failed: %s", notify_exc)
                         if buy_cooldown is not None:
                             buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                        if _is_ambiguous_submit_error(exc):
+                            logger.warning(
+                                "Skip BUY rollback for KR %s: resubmit submit status unknown",
+                                stock_code,
+                            )
+                            continue
+                        _rollback_pending_position(
+                            rollback_open_position=rollback_open_position,
+                            market_code="KR",
+                            exchange_code=order_exchange,
+                            stock_code=stock_code,
+                            action="BUY",
+                        )
 
             elif sll_buy == "01":
                 # SELL pending — attempt one resubmit at a wider spread.
@@ -188,6 +268,13 @@ async def handle_domestic_pending_orders(
                         )
                     except Exception as notify_exc:
                         logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                    _rollback_pending_position(
+                        rollback_open_position=rollback_open_position,
+                        market_code="KR",
+                        exchange_code=order_exchange,
+                        stock_code=stock_code,
+                        action="SELL",
+                    )
                 else:
                     # First unfilled SELL → resubmit at last * 0.996 (-0.4%).
                     try:
@@ -200,12 +287,18 @@ async def handle_domestic_pending_orders(
                             order_type="SELL",
                             price=float(new_price),
                         )
-                        await broker.send_order(
+                        result = await broker.send_order(
                             stock_code=stock_code,
                             order_type="SELL",
                             quantity=psbl_qty,
                             price=new_price,
                             session_id=classify_session_id(MARKETS["KR"]),
+                        )
+                        _require_order_acceptance(
+                            result,
+                            order_type="SELL",
+                            stock_code=stock_code,
+                            exchange_code=order_exchange,
                         )
                         sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                         try:
@@ -225,6 +318,29 @@ async def handle_domestic_pending_orders(
                             stock_code,
                             exc,
                         )
+                        try:
+                            await telegram.notify_unfilled_order(
+                                stock_code=stock_code,
+                                market="KR",
+                                action="SELL",
+                                quantity=psbl_qty,
+                                outcome="cancelled",
+                            )
+                        except Exception as notify_exc:
+                            logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                        if _is_ambiguous_submit_error(exc):
+                            logger.warning(
+                                "Skip SELL rollback for KR %s: resubmit submit status unknown",
+                                stock_code,
+                            )
+                            continue
+                        _rollback_pending_position(
+                            rollback_open_position=rollback_open_position,
+                            market_code="KR",
+                            exchange_code=order_exchange,
+                            stock_code=stock_code,
+                            action="SELL",
+                        )
 
         except Exception as exc:
             logger.error(
@@ -240,6 +356,7 @@ async def handle_overseas_pending_orders(
     settings: Settings,
     sell_resubmit_counts: dict[str, int],
     buy_cooldown: dict[str, float] | None = None,
+    rollback_open_position: RollbackOpenPosition | None = None,
 ) -> None:
     """Check and handle unfilled (pending) overseas limit orders.
 
@@ -300,6 +417,7 @@ async def handle_overseas_pending_orders(
                 nccs_qty = int(order.get("nccs_qty", "0") or "0")
                 order_exchange = order.get("ovrs_excg_cd") or exchange_code
                 key = f"{order_exchange}:{stock_code}"
+                market_code = _resolve_overseas_market_code(order_exchange)
 
                 if not stock_code or not odno or nccs_qty <= 0:
                     continue
@@ -342,6 +460,13 @@ async def handle_overseas_pending_orders(
                             )
                         except Exception as notify_exc:
                             logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                        _rollback_pending_position(
+                            rollback_open_position=rollback_open_position,
+                            market_code=market_code,
+                            exchange_code=order_exchange,
+                            stock_code=stock_code,
+                            action="BUY",
+                        )
                     else:
                         try:
                             price_data = await overseas_broker.get_overseas_price(
@@ -350,7 +475,7 @@ async def handle_overseas_pending_orders(
                             last_price = float(price_data.get("output", {}).get("last", "0") or "0")
                             if last_price <= 0:
                                 raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
-                            new_price = round(last_price * 1.004, 4)
+                            new_price = round(last_price * 1.004, 2 if last_price >= 1 else 4)
                             market_info = next(
                                 (
                                     m
@@ -365,12 +490,18 @@ async def handle_overseas_pending_orders(
                                     order_type="BUY",
                                     price=float(new_price),
                                 )
-                            await overseas_broker.send_overseas_order(
+                            result = await overseas_broker.send_overseas_order(
                                 exchange_code=order_exchange,
                                 stock_code=stock_code,
                                 order_type="BUY",
                                 quantity=nccs_qty,
                                 price=new_price,
+                            )
+                            _require_order_acceptance(
+                                result,
+                                order_type="BUY",
+                                stock_code=stock_code,
+                                exchange_code=order_exchange,
                             )
                             sell_resubmit_counts[buy_resubmit_key] = (
                                 sell_resubmit_counts.get(buy_resubmit_key, 0) + 1
@@ -405,6 +536,20 @@ async def handle_overseas_pending_orders(
                                 logger.warning("notify_unfilled_order failed: %s", notify_exc)
                             if buy_cooldown is not None:
                                 buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                            if _is_ambiguous_submit_error(exc):
+                                logger.warning(
+                                    "Skip BUY rollback for %s %s: resubmit submit status unknown",
+                                    order_exchange,
+                                    stock_code,
+                                )
+                                continue
+                            _rollback_pending_position(
+                                rollback_open_position=rollback_open_position,
+                                market_code=market_code,
+                                exchange_code=order_exchange,
+                                stock_code=stock_code,
+                                action="BUY",
+                            )
 
                 elif sll_buy == "01":
                     # SELL pending — attempt one resubmit at a wider spread.
@@ -425,6 +570,13 @@ async def handle_overseas_pending_orders(
                             )
                         except Exception as notify_exc:
                             logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                        _rollback_pending_position(
+                            rollback_open_position=rollback_open_position,
+                            market_code=market_code,
+                            exchange_code=order_exchange,
+                            stock_code=stock_code,
+                            action="SELL",
+                        )
                     else:
                         # First unfilled SELL → resubmit at last * 0.996 (-0.4%).
                         try:
@@ -434,7 +586,7 @@ async def handle_overseas_pending_orders(
                             last_price = float(price_data.get("output", {}).get("last", "0") or "0")
                             if last_price <= 0:
                                 raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
-                            new_price = round(last_price * 0.996, 4)
+                            new_price = round(last_price * 0.996, 2 if last_price >= 1 else 4)
                             market_info = next(
                                 (
                                     m
@@ -449,12 +601,18 @@ async def handle_overseas_pending_orders(
                                     order_type="SELL",
                                     price=float(new_price),
                                 )
-                            await overseas_broker.send_overseas_order(
+                            result = await overseas_broker.send_overseas_order(
                                 exchange_code=order_exchange,
                                 stock_code=stock_code,
                                 order_type="SELL",
                                 quantity=nccs_qty,
                                 price=new_price,
+                            )
+                            _require_order_acceptance(
+                                result,
+                                order_type="SELL",
+                                stock_code=stock_code,
+                                exchange_code=order_exchange,
                             )
                             sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                             try:
@@ -474,6 +632,30 @@ async def handle_overseas_pending_orders(
                                 order_exchange,
                                 stock_code,
                                 exc,
+                            )
+                            try:
+                                await telegram.notify_unfilled_order(
+                                    stock_code=stock_code,
+                                    market=order_exchange,
+                                    action="SELL",
+                                    quantity=nccs_qty,
+                                    outcome="cancelled",
+                                )
+                            except Exception as notify_exc:
+                                logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                            if _is_ambiguous_submit_error(exc):
+                                logger.warning(
+                                    "Skip SELL rollback for %s %s: resubmit submit status unknown",
+                                    order_exchange,
+                                    stock_code,
+                                )
+                                continue
+                            _rollback_pending_position(
+                                rollback_open_position=rollback_open_position,
+                                market_code=market_code,
+                                exchange_code=order_exchange,
+                                stock_code=stock_code,
+                                action="SELL",
                             )
 
             except Exception as exc:

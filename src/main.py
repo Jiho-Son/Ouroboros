@@ -129,6 +129,76 @@ def _ensure_runtime_mode_allowed(mode: str) -> None:
         raise ValueError("paper mode runtime execution is banned")
 
 
+def _rollback_pending_order_position(
+    *,
+    db_conn: Any,
+    market_code: str,
+    exchange_code: str,
+    stock_code: str,
+    action: str,
+    runtime_session_id: str,
+    settings: Settings,
+) -> None:
+    """Rollback optimistic DB trades when a pending order is cancelled without replacement."""
+    if action == "BUY":
+        if not get_open_position(db_conn, stock_code, market_code):
+            return
+        log_trade(
+            conn=db_conn,
+            stock_code=stock_code,
+            action="SELL",
+            confidence=0,
+            rationale="[pending-buy-cancel] Cancelled unfilled BUY without replacement",
+            quantity=0,
+            price=0.0,
+            pnl=0.0,
+            market=market_code,
+            exchange_code=exchange_code,
+            session_id=runtime_session_id,
+            mode=settings.MODE,
+        )
+        return
+
+    if get_open_position(db_conn, stock_code, market_code):
+        return
+
+    buy_trade = get_latest_buy_trade(
+        db_conn,
+        stock_code,
+        market_code,
+        exchange_code=exchange_code,
+    )
+    if not buy_trade or buy_trade.get("price") is None:
+        return
+
+    selection_context = buy_trade.get("selection_context")
+    if isinstance(selection_context, str) and selection_context.strip():
+        try:
+            decoded_selection_context = json.loads(selection_context)
+        except json.JSONDecodeError:
+            decoded_selection_context = None
+        selection_context = (
+            decoded_selection_context if isinstance(decoded_selection_context, dict) else None
+        )
+
+    log_trade(
+        conn=db_conn,
+        stock_code=stock_code,
+        action="BUY",
+        confidence=0,
+        rationale="[pending-sell-restore] Cancelled unfilled SELL without replacement",
+        quantity=int(buy_trade.get("quantity") or 0),
+        price=float(buy_trade["price"]),
+        pnl=0.0,
+        market=market_code,
+        exchange_code=exchange_code,
+        session_id=runtime_session_id,
+        selection_context=selection_context,
+        decision_id=buy_trade.get("decision_id"),
+        mode=settings.MODE,
+    )
+
+
 async def _sync_realtime_hard_stop_monitor(
     *,
     monitor: RealtimeHardStopMonitor | None,
@@ -1833,6 +1903,12 @@ async def _prepare_daily_session_market(
                 sell_resubmit_counts,
                 daily_buy_cooldown,
                 quote_market_div_code=domestic_quote_market_div_code,
+                rollback_open_position=lambda **kwargs: _rollback_pending_order_position(
+                    db_conn=db_conn,
+                    runtime_session_id=runtime_session_id,
+                    settings=settings,
+                    **kwargs,
+                ),
             )
         except Exception as exc:
             logger.warning("Domestic pending order check failed: %s", exc)
@@ -1844,6 +1920,12 @@ async def _prepare_daily_session_market(
                 settings,
                 sell_resubmit_counts,
                 daily_buy_cooldown,
+                rollback_open_position=lambda **kwargs: _rollback_pending_order_position(
+                    db_conn=db_conn,
+                    runtime_session_id=runtime_session_id,
+                    settings=settings,
+                    **kwargs,
+                ),
             )
         except Exception as exc:
             logger.warning("Pending order check failed: %s", exc)
@@ -3761,6 +3843,14 @@ async def run(settings: Settings) -> None:
                                 quote_market_div_code=_resolve_domestic_quote_market_div_code(
                                     session_info.session_id
                                 ),
+                                rollback_open_position=(
+                                    lambda **kwargs: _rollback_pending_order_position(
+                                        db_conn=db_conn,
+                                        runtime_session_id=session_info.session_id,
+                                        settings=settings,
+                                        **kwargs,
+                                    )
+                                ),
                             )
                         except Exception as exc:
                             logger.warning("Domestic pending order check failed: %s", exc)
@@ -3774,6 +3864,14 @@ async def run(settings: Settings) -> None:
                                 settings,
                                 sell_resubmit_counts,
                                 buy_cooldown,
+                                rollback_open_position=(
+                                    lambda **kwargs: _rollback_pending_order_position(
+                                        db_conn=db_conn,
+                                        runtime_session_id=session_info.session_id,
+                                        settings=settings,
+                                        **kwargs,
+                                    )
+                                ),
                             )
                         except Exception as exc:
                             logger.warning("Pending order check failed: %s", exc)
