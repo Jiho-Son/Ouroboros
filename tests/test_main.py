@@ -7831,7 +7831,7 @@ class TestHandleOverseasPendingOrders:
 
     @pytest.mark.asyncio
     async def test_overseas_sell_resubmit_connection_error_skips_rollback(self) -> None:
-        """Network errors after SELL submit must not restore DB position blindly."""
+        """SELL ambiguity must stay untouched when broker reconciliation also fails."""
         settings = self._make_settings("US_NASDAQ")
         telegram = self._make_telegram()
         rollback_open_position = MagicMock()
@@ -7844,11 +7844,16 @@ class TestHandleOverseasPendingOrders:
             "ovrs_excg_cd": "NASD",
         }
         overseas_broker = MagicMock()
-        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.get_overseas_pending_orders = AsyncMock(
+            side_effect=[[pending_order], ConnectionError("pending refresh failed")]
+        )
         overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
         overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "18.60"}})
         overseas_broker.send_overseas_order = AsyncMock(
             side_effect=ConnectionError("Network error sending overseas order: timeout")
+        )
+        overseas_broker.get_overseas_balance = AsyncMock(
+            side_effect=ConnectionError("balance refresh failed")
         )
 
         await handle_overseas_pending_orders(
@@ -7865,8 +7870,101 @@ class TestHandleOverseasPendingOrders:
         assert notify_kwargs["outcome"] == "cancelled"
 
     @pytest.mark.asyncio
+    async def test_overseas_buy_resubmit_connection_error_rolls_back_when_broker_confirms_absent(
+        self,
+    ) -> None:
+        """BUY ambiguity must roll back only after broker confirms no pending order or holding."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+
+        pending_order = {
+            "pdno": "QURE",
+            "odno": "ORD009",
+            "sll_buy_dvsn_cd": "02",
+            "nccs_qty": "4",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(
+            side_effect=[[pending_order], []]
+        )
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "15.84"}})
+        overseas_broker.send_overseas_order = AsyncMock(
+            side_effect=ConnectionError("Network error sending overseas order: timeout")
+        )
+        overseas_broker.get_overseas_balance = AsyncMock(return_value={"output1": []})
+
+        await handle_overseas_pending_orders(
+            overseas_broker,
+            telegram,
+            settings,
+            {},
+            {},
+            rollback_open_position=rollback_open_position,
+        )
+
+        rollback_open_position.assert_called_once_with(
+            market_code="US_NASDAQ",
+            exchange_code="NASD",
+            stock_code="QURE",
+            action="BUY",
+        )
+
+    @pytest.mark.asyncio
+    async def test_overseas_sell_resubmit_connection_error_restores_when_broker_confirms_pending(
+        self,
+    ) -> None:
+        """SELL ambiguity must restore position when broker still shows a pending replacement."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+        sell_resubmit_counts: dict[str, int] = {}
+
+        original_pending_order = {
+            "pdno": "ATRA",
+            "odno": "ORD010",
+            "sll_buy_dvsn_cd": "01",
+            "nccs_qty": "112",
+            "ovrs_excg_cd": "NASD",
+        }
+        replacement_pending_order = {
+            "pdno": "ATRA",
+            "odno": "ORD011",
+            "sll_buy_dvsn_cd": "01",
+            "nccs_qty": "112",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(
+            side_effect=[[original_pending_order], [replacement_pending_order]]
+        )
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "18.60"}})
+        overseas_broker.send_overseas_order = AsyncMock(
+            side_effect=ConnectionError("Network error sending overseas order: timeout")
+        )
+
+        await handle_overseas_pending_orders(
+            overseas_broker,
+            telegram,
+            settings,
+            sell_resubmit_counts,
+            rollback_open_position=rollback_open_position,
+        )
+
+        rollback_open_position.assert_called_once_with(
+            market_code="US_NASDAQ",
+            exchange_code="NASD",
+            stock_code="ATRA",
+            action="SELL",
+        )
+        assert sell_resubmit_counts["NASD:ATRA"] == 1
+
+    @pytest.mark.asyncio
     async def test_domestic_buy_resubmit_connection_error_skips_rollback(self) -> None:
-        """Network errors after KR BUY submit must not close DB position blindly."""
+        """KR BUY ambiguity must stay untouched when broker reconciliation also fails."""
         settings = self._make_settings("US_NASDAQ")
         telegram = self._make_telegram()
         rollback_open_position = MagicMock()
@@ -7880,10 +7978,13 @@ class TestHandleOverseasPendingOrders:
             "order_exchange": "KRX",
         }
         broker = MagicMock()
-        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.get_domestic_pending_orders = AsyncMock(
+            side_effect=[[pending_order], ConnectionError("pending refresh failed")]
+        )
         broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
         broker.get_current_price = AsyncMock(return_value=(70000.0, 0.0, 0.0))
         broker.send_order = AsyncMock(side_effect=ConnectionError("Network error sending order"))
+        broker.get_balance = AsyncMock(side_effect=ConnectionError("balance refresh failed"))
 
         await handle_domestic_pending_orders(
             broker,
@@ -7898,6 +7999,87 @@ class TestHandleOverseasPendingOrders:
         notify_kwargs = telegram.notify_unfilled_order.call_args[1]
         assert notify_kwargs["action"] == "BUY"
         assert notify_kwargs["outcome"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_domestic_buy_resubmit_connection_error_rolls_back_when_broker_confirms_absent(
+        self,
+    ) -> None:
+        """KR BUY ambiguity must roll back only after broker confirms no pending order or holding."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORDKR4",
+            "ord_gno_brno": "001",
+            "sll_buy_dvsn_cd": "02",
+            "psbl_qty": "3",
+            "order_exchange": "KRX",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(side_effect=[[pending_order], []])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(70000.0, 0.0, 0.0))
+        broker.send_order = AsyncMock(side_effect=ConnectionError("Network error sending order"))
+        broker.get_balance = AsyncMock(return_value={"output1": []})
+
+        await handle_domestic_pending_orders(
+            broker,
+            telegram,
+            settings,
+            {},
+            {},
+            rollback_open_position=rollback_open_position,
+        )
+
+        rollback_open_position.assert_called_once_with(
+            market_code="KR",
+            exchange_code="KRX",
+            stock_code="005930",
+            action="BUY",
+        )
+
+    @pytest.mark.asyncio
+    async def test_domestic_sell_resubmit_connection_error_restores_when_broker_confirms_holding(
+        self,
+    ) -> None:
+        """KR SELL ambiguity must restore the position when broker still reports holdings."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORDKR5",
+            "ord_gno_brno": "001",
+            "sll_buy_dvsn_cd": "01",
+            "psbl_qty": "5",
+            "order_exchange": "KRX",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(side_effect=[[pending_order], []])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(70000.0, 0.0, 0.0))
+        broker.send_order = AsyncMock(side_effect=ConnectionError("Network error sending order"))
+        broker.get_balance = AsyncMock(
+            return_value={"output1": [{"pdno": "005930", "ord_psbl_qty": "5"}]}
+        )
+
+        await handle_domestic_pending_orders(
+            broker,
+            telegram,
+            settings,
+            {},
+            rollback_open_position=rollback_open_position,
+        )
+
+        rollback_open_position.assert_called_once_with(
+            market_code="KR",
+            exchange_code="KRX",
+            stock_code="005930",
+            action="SELL",
+        )
 
 
 # ---------------------------------------------------------------------------
