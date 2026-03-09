@@ -247,7 +247,12 @@ async def _handle_realtime_hard_stop_trigger(
             )
             monitor.release_in_flight(trigger.market_code, trigger.stock_code)
             return False
+    except Exception as exc:
+        logger.warning("Realtime hard-stop handling failed for %s: %s", trigger.stock_code, exc)
+        monitor.release_in_flight(trigger.market_code, trigger.stock_code)
+        return False
 
+    try:
         decision_id = decision_logger.log_decision(
             stock_code=trigger.stock_code,
             market=market.code,
@@ -341,14 +346,25 @@ async def _handle_realtime_hard_stop_trigger(
             decision_id=decision_id,
             mode=settings.MODE if settings else "paper",
         )
+    except Exception as exc:
+        logger.warning(
+            "Realtime hard-stop post-submit handling failed for %s: %s",
+            trigger.stock_code,
+            exc,
+        )
+    finally:
         monitor.remove(trigger.market_code, trigger.stock_code)
         if websocket_client is not None:
-            await websocket_client.unsubscribe(trigger.stock_code)
-        return True
-    except Exception as exc:
-        logger.warning("Realtime hard-stop handling failed for %s: %s", trigger.stock_code, exc)
-        monitor.release_in_flight(trigger.market_code, trigger.stock_code)
-        return False
+            try:
+                await websocket_client.unsubscribe(trigger.stock_code)
+            except Exception as exc:
+                logger.warning(
+                    "Realtime hard-stop unsubscribe failed for %s (%s): %s",
+                    trigger.stock_code,
+                    market.name,
+                    exc,
+                )
+    return True
 
 
 async def _handle_kr_realtime_price_event(
@@ -3517,6 +3533,10 @@ async def run(settings: Settings) -> None:
             while not shutdown.is_set():
                 # Wait for trading to be unpaused
                 await pause_trading.wait()
+                realtime_hard_stop_task = _restart_realtime_hard_stop_task_if_needed(
+                    client=realtime_hard_stop_client,
+                    task=realtime_hard_stop_task,
+                )
                 _run_context_scheduler(context_scheduler, now=datetime.now(UTC))
 
                 # Reset mid_refreshed on a new calendar date so each trading day
