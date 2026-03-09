@@ -115,7 +115,7 @@ def parse_price_event(raw: str) -> KISWebSocketPriceEvent | None:
         return None
 
     rsym = fields[0].strip().upper()
-    market_code = _OVERSEAS_EVENT_PREFIXES.get(rsym[:4])
+    market_code = _resolve_overseas_market_code_from_rsym(rsym)
     stock_code = fields[1].strip().upper()
     if market_code is None or not stock_code:
         return None
@@ -274,6 +274,13 @@ def _parse_int(value: str | int | None, *, default: int) -> int:
         return int(value or default)
     except (TypeError, ValueError):
         return default
+
+
+def _resolve_overseas_market_code_from_rsym(rsym: str) -> str | None:
+    for prefix in sorted(_OVERSEAS_EVENT_PREFIXES, key=len, reverse=True):
+        if rsym.startswith(prefix):
+            return _OVERSEAS_EVENT_PREFIXES[prefix]
+    return None
 
 
 def _extract_ws_text(message: object) -> str | None:

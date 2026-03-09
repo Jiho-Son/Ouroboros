@@ -94,6 +94,24 @@ def test_parse_price_event_reads_overseas_trade_price() -> None:
     )
 
 
+def test_parse_price_event_reads_three_char_overseas_session_prefix() -> None:
+    raw = (
+        "0|HDFSCNT0|001|"
+        "BAYIBM^IBM^2^20260309^20260309^093000^20260309^223000^"
+        "0015000^0015100^0014900^0014801^5^0000199^00136^"
+        "0014800^0014810^10^12^100^200^100000^30^70^120.0^1"
+    )
+
+    event = parse_price_event(raw)
+
+    assert event == KISWebSocketPriceEvent(
+        market_code="US_NYSE",
+        stock_code="IBM",
+        price=148.01,
+        tr_id="HDFSCNT0",
+    )
+
+
 @pytest.mark.asyncio
 async def test_subscribe_sends_message_to_live_socket() -> None:
     broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
