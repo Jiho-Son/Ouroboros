@@ -182,6 +182,26 @@ async def test_subscribe_rejects_invalid_market_without_poisoning_state() -> Non
 
 
 @pytest.mark.asyncio
+async def test_unsubscribe_removes_overseas_subscription_and_sends_unsubscribe() -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    ws = _FakeWebSocket(messages=[])
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=lambda _url: _FakeConnect(ws),
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+    )
+    client._ws = ws
+
+    await client.subscribe("US_NASDAQ", "AAPL")
+    await client.unsubscribe("US_NASDAQ", "AAPL")
+
+    assert client._subscriptions == set()
+    assert ws.sent_json[-1]["body"]["input"]["tr_key"] == "DNASAAPL"
+    assert ws.sent_json[-1]["header"]["tr_type"] == "0"
+
+
+@pytest.mark.asyncio
 async def test_run_reconnects_and_resubscribes_existing_symbols() -> None:
     broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
     first_ws = _FakeWebSocket(messages=[RuntimeError("boom")])
