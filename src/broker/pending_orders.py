@@ -10,7 +10,10 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from src.broker.balance_utils import _extract_held_codes_from_balance
+from src.broker.balance_utils import (
+    _extract_held_codes_from_balance,
+    _extract_held_qty_from_balance,
+)
 from src.broker.kis_api import KISBroker, kr_round_down
 from src.broker.overseas import OverseasBroker
 from src.config import Settings
@@ -46,15 +49,19 @@ def _rollback_pending_position(
     exchange_code: str,
     stock_code: str,
     action: str,
+    quantity: int | None = None,
 ) -> None:
     if rollback_open_position is None:
         return
-    rollback_open_position(
-        market_code=market_code,
-        exchange_code=exchange_code,
-        stock_code=stock_code,
-        action=action,
-    )
+    kwargs: dict[str, Any] = {
+        "market_code": market_code,
+        "exchange_code": exchange_code,
+        "stock_code": stock_code,
+        "action": action,
+    }
+    if quantity is not None:
+        kwargs["quantity"] = quantity
+    rollback_open_position(**kwargs)
 
 
 def _require_order_acceptance(
@@ -133,8 +140,8 @@ async def _reconcile_domestic_ambiguous_submit(
     stock_code: str,
     action: str,
     exchange_code: str,
-) -> str:
-    """Return pending/held/absent/unknown for a domestic ambiguous resubmit."""
+) -> tuple[str, int | None]:
+    """Return state and broker-confirmed qty for a domestic ambiguous resubmit."""
     try:
         refreshed_orders = await broker.get_domestic_pending_orders()
     except Exception as exc:
@@ -151,7 +158,16 @@ async def _reconcile_domestic_ambiguous_submit(
             action=action,
             exchange_code=exchange_code,
         ):
-            return "pending"
+            if action == "SELL":
+                for order in refreshed_orders:
+                    if _has_matching_domestic_pending_order(
+                        [order],
+                        stock_code=stock_code,
+                        action=action,
+                        exchange_code=exchange_code,
+                    ):
+                        return "pending", int(order.get("psbl_qty", "0") or "0")
+            return "pending", None
 
     try:
         balance_data = await broker.get_balance()
@@ -162,12 +178,15 @@ async def _reconcile_domestic_ambiguous_submit(
             stock_code,
             exc,
         )
-        return "unknown"
+        return "unknown", None
 
     held_codes = _extract_held_codes_from_balance(balance_data, is_domestic=True)
     if stock_code.strip().upper() in held_codes:
-        return "held"
-    return "absent"
+        return (
+            "held",
+            _extract_held_qty_from_balance(balance_data, stock_code, is_domestic=True),
+        )
+    return "absent", None
 
 
 async def _reconcile_overseas_ambiguous_submit(
@@ -176,8 +195,8 @@ async def _reconcile_overseas_ambiguous_submit(
     stock_code: str,
     action: str,
     exchange_code: str,
-) -> str:
-    """Return pending/held/absent/unknown for an overseas ambiguous resubmit."""
+) -> tuple[str, int | None]:
+    """Return state and broker-confirmed qty for an overseas ambiguous resubmit."""
     try:
         refreshed_orders = await overseas_broker.get_overseas_pending_orders(exchange_code)
     except Exception as exc:
@@ -195,7 +214,16 @@ async def _reconcile_overseas_ambiguous_submit(
             action=action,
             exchange_code=exchange_code,
         ):
-            return "pending"
+            if action == "SELL":
+                for order in refreshed_orders:
+                    if _has_matching_overseas_pending_order(
+                        [order],
+                        stock_code=stock_code,
+                        action=action,
+                        exchange_code=exchange_code,
+                    ):
+                        return "pending", int(order.get("nccs_qty", "0") or "0")
+            return "pending", None
 
     try:
         balance_data = await overseas_broker.get_overseas_balance(exchange_code)
@@ -207,7 +235,7 @@ async def _reconcile_overseas_ambiguous_submit(
             stock_code,
             exc,
         )
-        return "unknown"
+        return "unknown", None
 
     held_codes = _extract_held_codes_from_balance(
         balance_data,
@@ -215,8 +243,11 @@ async def _reconcile_overseas_ambiguous_submit(
         exchange_code=exchange_code,
     )
     if stock_code.strip().upper() in held_codes:
-        return "held"
-    return "absent"
+        return (
+            "held",
+            _extract_held_qty_from_balance(balance_data, stock_code, is_domestic=False),
+        )
+    return "absent", None
 
 
 async def handle_domestic_pending_orders(
@@ -378,7 +409,7 @@ async def handle_domestic_pending_orders(
                         except Exception as notify_exc:
                             logger.warning("notify_unfilled_order failed: %s", notify_exc)
                         if _is_ambiguous_submit_error(exc):
-                            reconcile_state = await _reconcile_domestic_ambiguous_submit(
+                            reconcile_state, _ = await _reconcile_domestic_ambiguous_submit(
                                 broker,
                                 stock_code=stock_code,
                                 action="BUY",
@@ -497,6 +528,7 @@ async def handle_domestic_pending_orders(
                             stock_code,
                             exc,
                         )
+                        reconciled_qty: int | None = None
                         try:
                             await telegram.notify_unfilled_order(
                                 stock_code=stock_code,
@@ -508,12 +540,13 @@ async def handle_domestic_pending_orders(
                         except Exception as notify_exc:
                             logger.warning("notify_unfilled_order failed: %s", notify_exc)
                         if _is_ambiguous_submit_error(exc):
-                            reconcile_state = await _reconcile_domestic_ambiguous_submit(
+                            reconcile_state, reconciled_qty = (
+                                await _reconcile_domestic_ambiguous_submit(
                                 broker,
                                 stock_code=stock_code,
                                 action="SELL",
                                 exchange_code=order_exchange,
-                            )
+                            ))
                             if reconcile_state == "pending":
                                 sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                                 logger.warning(
@@ -546,6 +579,7 @@ async def handle_domestic_pending_orders(
                             exchange_code=order_exchange,
                             stock_code=stock_code,
                             action="SELL",
+                            quantity=reconciled_qty,
                         )
 
         except Exception as exc:
@@ -741,7 +775,7 @@ async def handle_overseas_pending_orders(
                             except Exception as notify_exc:
                                 logger.warning("notify_unfilled_order failed: %s", notify_exc)
                             if _is_ambiguous_submit_error(exc):
-                                reconcile_state = await _reconcile_overseas_ambiguous_submit(
+                                reconcile_state, _ = await _reconcile_overseas_ambiguous_submit(
                                     overseas_broker,
                                     stock_code=stock_code,
                                     action="BUY",
@@ -882,6 +916,7 @@ async def handle_overseas_pending_orders(
                                 stock_code,
                                 exc,
                             )
+                            reconciled_qty: int | None = None
                             try:
                                 await telegram.notify_unfilled_order(
                                     stock_code=stock_code,
@@ -893,12 +928,13 @@ async def handle_overseas_pending_orders(
                             except Exception as notify_exc:
                                 logger.warning("notify_unfilled_order failed: %s", notify_exc)
                             if _is_ambiguous_submit_error(exc):
-                                reconcile_state = await _reconcile_overseas_ambiguous_submit(
+                                reconcile_state, reconciled_qty = (
+                                    await _reconcile_overseas_ambiguous_submit(
                                     overseas_broker,
                                     stock_code=stock_code,
                                     action="SELL",
                                     exchange_code=order_exchange,
-                                )
+                                ))
                                 if reconcile_state == "pending":
                                     sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                                     logger.warning(
@@ -936,6 +972,7 @@ async def handle_overseas_pending_orders(
                                 exchange_code=order_exchange,
                                 stock_code=stock_code,
                                 action="SELL",
+                                quantity=reconciled_qty,
                             )
 
             except Exception as exc:

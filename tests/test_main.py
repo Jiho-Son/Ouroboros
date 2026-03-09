@@ -7959,6 +7959,7 @@ class TestHandleOverseasPendingOrders:
             exchange_code="NASD",
             stock_code="ATRA",
             action="SELL",
+            quantity=112,
         )
         assert sell_resubmit_counts["NASD:ATRA"] == 1
 
@@ -8079,6 +8080,7 @@ class TestHandleOverseasPendingOrders:
             exchange_code="KRX",
             stock_code="005930",
             action="SELL",
+            quantity=5,
         )
 
 
@@ -9884,6 +9886,56 @@ class TestPendingOrderRollback:
             exchange_code="NASD",
         )
         assert _extract_buy_fx_rate(restored_buy) == pytest.approx(1370.25)
+
+    def test_sell_rollback_uses_broker_confirmed_remaining_quantity(self) -> None:
+        db_conn = init_db(":memory:")
+        log_trade(
+            conn=db_conn,
+            stock_code="ATRA",
+            action="BUY",
+            confidence=80,
+            rationale="entry",
+            quantity=112,
+            price=18.75,
+            pnl=0.0,
+            market="US_NASDAQ",
+            exchange_code="NASD",
+            session_id="US_REG",
+            selection_context={"fx_rate": 1370.25, "signal": "rebound"},
+            decision_id="buy-dec",
+            mode="live",
+        )
+        log_trade(
+            conn=db_conn,
+            stock_code="ATRA",
+            action="SELL",
+            confidence=90,
+            rationale="optimistic sell log",
+            quantity=112,
+            price=18.60,
+            pnl=0.0,
+            market="US_NASDAQ",
+            exchange_code="NASD",
+            session_id="US_REG",
+            decision_id="sell-dec",
+            mode="live",
+        )
+
+        _rollback_pending_order_position(
+            db_conn=db_conn,
+            market_code="US_NASDAQ",
+            exchange_code="NASD",
+            stock_code="ATRA",
+            action="SELL",
+            quantity=40,
+            runtime_session_id="US_REG",
+            settings=_make_settings(),
+        )
+
+        restored = main_module.get_open_position(db_conn, "ATRA", "US_NASDAQ")
+        assert restored is not None
+        assert restored["quantity"] == 40
+        assert restored["price"] == pytest.approx(18.75)
 
     def test_sell_rollback_preserves_selection_context_dict(self) -> None:
         db_conn = init_db(":memory:")
