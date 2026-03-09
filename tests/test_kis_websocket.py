@@ -166,3 +166,29 @@ async def test_run_uses_exact_configured_ws_url() -> None:
     await client.run()
 
     assert seen_urls == ["ws://example.test/custom-path"]
+
+
+@pytest.mark.asyncio
+async def test_run_can_restart_with_same_client_instance() -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    seen_urls: list[str] = []
+
+    def connect(url: str) -> _FakeConnect:
+        seen_urls.append(url)
+        return _FakeConnect(_FakeWebSocket(messages=[]))
+
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=connect,
+        ws_url="ws://example.test/custom-path",
+        retry_delay_seconds=0.0,
+        max_retries=1,
+    )
+
+    await client.run()
+    await client.run()
+
+    assert seen_urls == [
+        "ws://example.test/custom-path",
+        "ws://example.test/custom-path",
+    ]

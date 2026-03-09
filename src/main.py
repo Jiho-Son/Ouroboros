@@ -138,7 +138,13 @@ async def _sync_realtime_hard_stop_monitor(
     if monitor is None or not market.is_domestic:
         return
 
-    if decision_action != "HOLD" or not open_position:
+    if not open_position:
+        monitor.remove(market.code, stock_code)
+        if websocket_client is not None:
+            await websocket_client.unsubscribe(stock_code)
+        return
+
+    if decision_action not in {"HOLD", "SELL"}:
         monitor.remove(market.code, stock_code)
         if websocket_client is not None:
             await websocket_client.unsubscribe(stock_code)
@@ -171,6 +177,22 @@ async def _sync_realtime_hard_stop_monitor(
     )
     if websocket_client is not None:
         await websocket_client.subscribe(stock_code)
+
+
+async def _clear_realtime_hard_stop_tracking(
+    *,
+    monitor: RealtimeHardStopMonitor | None,
+    websocket_client: KISWebSocketClient | None,
+    market: MarketInfo,
+    stock_code: str,
+) -> None:
+    """Remove a domestic symbol from realtime hard-stop tracking."""
+    if monitor is None or not market.is_domestic:
+        return
+
+    monitor.remove(market.code, stock_code)
+    if websocket_client is not None:
+        await websocket_client.unsubscribe(stock_code)
 
 
 async def _handle_realtime_hard_stop_trigger(
@@ -1089,6 +1111,8 @@ async def _execute_trading_cycle_action(
     decision_data: dict[str, Any],
     settings: Settings | None = None,
     buy_cooldown: dict[str, float] | None = None,
+    realtime_hard_stop_monitor: RealtimeHardStopMonitor | None = None,
+    realtime_hard_stop_client: KISWebSocketClient | None = None,
 ) -> dict[str, Any]:
     decision = decision_data["decision"]
     match = decision_data["match"]
@@ -1378,6 +1402,12 @@ async def _execute_trading_cycle_action(
             logger.warning("Telegram notification failed: %s", exc)
 
     if decision.action == "SELL" and order_succeeded:
+        await _clear_realtime_hard_stop_tracking(
+            monitor=realtime_hard_stop_monitor,
+            websocket_client=realtime_hard_stop_client,
+            market=market,
+            stock_code=stock_code,
+        )
         buy_trade = get_latest_buy_trade(
             db_conn,
             stock_code,
@@ -1547,6 +1577,8 @@ async def trading_cycle(
         decision_data=decision_data,
         settings=settings,
         buy_cooldown=buy_cooldown,
+        realtime_hard_stop_monitor=realtime_hard_stop_monitor,
+        realtime_hard_stop_client=realtime_hard_stop_client,
     )
     if execution_result["should_return"]:
         return

@@ -124,6 +124,7 @@ class KISWebSocketClient:
             await self._session.close()
 
     async def run(self) -> None:
+        self._stop_requested = False
         retries = 0
         while not self._stop_requested:
             try:
@@ -152,7 +153,12 @@ class KISWebSocketClient:
                 break
             await asyncio.sleep(self._retry_delay_seconds)
 
-        await self.stop()
+        if self._ws is not None and hasattr(self._ws, "close"):
+            await self._ws.close()
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+        self._ws = None
+        self._session = None
 
     def _default_connect(self, url: str) -> Any:
         if self._session is None or self._session.closed:

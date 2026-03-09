@@ -62,6 +62,7 @@ from src.evolution.scorecard import DailyScorecard
 from src.main import (
     _acquire_live_runtime_lock,
     _apply_dashboard_flag,
+    _execute_trading_cycle_action,
     _handle_market_close,
     _handle_realtime_hard_stop_trigger,
     _has_market_session_transition,
@@ -150,6 +151,45 @@ async def test_sync_realtime_hard_stop_monitor_registers_hold_position() -> None
 
 
 @pytest.mark.asyncio
+async def test_sync_realtime_hard_stop_monitor_keeps_tracking_while_sell_is_pending() -> None:
+    monitor = RealtimeHardStopMonitor()
+    market = MARKETS["KR"]
+    market_data = {"_staged_exit_evidence": {"stop_loss_threshold": -3.5}}
+    websocket_client = MagicMock()
+    websocket_client.subscribe = AsyncMock()
+    websocket_client.unsubscribe = AsyncMock()
+    monitor.register(
+        market_code="KR",
+        stock_code="005930",
+        entry_price=100.0,
+        quantity=7,
+        hard_stop_pct=-3.5,
+        decision_id="buy-dec",
+        position_timestamp="2026-03-09T00:00:00+00:00",
+    )
+
+    await _sync_realtime_hard_stop_monitor(
+        monitor=monitor,
+        websocket_client=websocket_client,
+        market=market,
+        stock_code="005930",
+        decision_action="SELL",
+        open_position={
+            "price": 100.0,
+            "quantity": 7,
+            "decision_id": "buy-dec",
+            "timestamp": "2026-03-09T00:00:00+00:00",
+        },
+        market_data=market_data,
+    )
+
+    tracked = monitor.get("KR", "005930")
+    assert tracked is not None
+    assert tracked.hard_stop_price == pytest.approx(96.5)
+    websocket_client.unsubscribe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_handle_realtime_hard_stop_trigger_submits_sell_and_logs_trade() -> None:
     db_conn = init_db(":memory:")
     log_trade(
@@ -231,6 +271,131 @@ async def test_handle_realtime_hard_stop_trigger_submits_sell_and_logs_trade() -
     assert latest_sell[4] == "sell-dec"
     assert json.loads(str(latest_sell[5]))["source"] == "websocket_hard_stop"
     assert monitor.get("KR", "005930") is None
+
+
+@pytest.mark.asyncio
+async def test_execute_trading_cycle_action_clears_realtime_hard_stop_after_successful_sell(
+) -> None:
+    db_conn = init_db(":memory:")
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=87,
+        rationale="initial entry",
+        quantity=7,
+        price=100.0,
+        pnl=0.0,
+        market="KR",
+        exchange_code="KRX",
+        session_id="KRX_REG",
+        decision_id="buy-dec",
+        mode="live",
+    )
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    monitor = RealtimeHardStopMonitor()
+    websocket_client = MagicMock()
+    websocket_client.unsubscribe = AsyncMock()
+    monitor.register(
+        market_code="KR",
+        stock_code="005930",
+        entry_price=100.0,
+        quantity=7,
+        hard_stop_pct=-3.5,
+        decision_id="buy-dec",
+        position_timestamp="2026-03-09T00:00:00+00:00",
+    )
+
+    execution_result = await _execute_trading_cycle_action(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=MagicMock(),
+        telegram=MagicMock(notify_trade_execution=AsyncMock()),
+        market=MARKETS["KR"],
+        stock_code="005930",
+        runtime_session_id="KRX_REG",
+        snapshot={
+            "current_price": 96.0,
+            "total_cash": 1_000_000.0,
+            "pnl_pct": -4.0,
+            "candidate": None,
+            "balance_data": {"output1": [{"pdno": "005930", "hldg_qty": "7"}]},
+        },
+        decision_data={
+            "decision": main_module.TradeDecision(
+                action="SELL",
+                confidence=90,
+                rationale="polling sell",
+            ),
+            "match": _make_sell_match(),
+            "decision_id": "sell-dec",
+        },
+        settings=_make_settings(),
+        realtime_hard_stop_monitor=monitor,
+        realtime_hard_stop_client=websocket_client,
+    )
+
+    assert execution_result["order_succeeded"] is True
+    assert monitor.get("KR", "005930") is None
+    websocket_client.unsubscribe.assert_awaited_once_with("005930")
+
+
+@pytest.mark.asyncio
+async def test_execute_trading_cycle_action_keeps_realtime_hard_stop_after_rejected_sell(
+) -> None:
+    db_conn = init_db(":memory:")
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"rt_cd": "1", "msg1": "rejected"})
+    monitor = RealtimeHardStopMonitor()
+    websocket_client = MagicMock()
+    websocket_client.unsubscribe = AsyncMock()
+    monitor.register(
+        market_code="KR",
+        stock_code="005930",
+        entry_price=100.0,
+        quantity=7,
+        hard_stop_pct=-3.5,
+        decision_id="buy-dec",
+        position_timestamp="2026-03-09T00:00:00+00:00",
+    )
+
+    execution_result = await _execute_trading_cycle_action(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=MagicMock(),
+        telegram=MagicMock(notify_trade_execution=AsyncMock()),
+        market=MARKETS["KR"],
+        stock_code="005930",
+        runtime_session_id="KRX_REG",
+        snapshot={
+            "current_price": 96.0,
+            "total_cash": 1_000_000.0,
+            "pnl_pct": -4.0,
+            "candidate": None,
+            "balance_data": {"output1": [{"pdno": "005930", "hldg_qty": "7"}]},
+        },
+        decision_data={
+            "decision": main_module.TradeDecision(
+                action="SELL",
+                confidence=90,
+                rationale="polling sell",
+            ),
+            "match": _make_sell_match(),
+            "decision_id": "sell-dec",
+        },
+        settings=_make_settings(),
+        realtime_hard_stop_monitor=monitor,
+        realtime_hard_stop_client=websocket_client,
+    )
+
+    assert execution_result["order_succeeded"] is False
+    assert monitor.get("KR", "005930") is not None
+    websocket_client.unsubscribe.assert_not_awaited()
 
 
 @pytest.mark.asyncio
