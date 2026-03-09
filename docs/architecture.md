@@ -217,6 +217,7 @@ High-frequency trading with individual stock analysis:
 - **Break-Even Lock**: Once in BE_LOCK/ARMED, exit if price falls to entry price
 - **ATR Trailing Stop**: `trailing_stop_price = peak_price - (atr_multiplier_k × ATR)`
 - **Model Signal**: Exit if `pred_down_prob >= model_prob_threshold AND liquidity_weak`
+- Realtime KR websocket highs may raise the cached `peak_price`, but favorable-exit decisions still execute in the regular trading-cycle staged-exit path.
 - `evaluate_exit()`: Returns `ExitEvaluation` with next state, exit flag, reason, trailing price
 - `ExitRuleConfig`: Frozen dataclass with all tunable parameters
 
