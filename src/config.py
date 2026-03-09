@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     KIS_APP_SECRET: str
     KIS_ACCOUNT_NO: str  # format: "XXXXXXXX-XX"
     KIS_BASE_URL: str = "https://openapivts.koreainvestment.com:29443"
+    KIS_WS_URL: str | None = None
+    KIS_WS_PATH: str = "/tryitout"
 
     # Google Gemini
     GEMINI_API_KEY: str
@@ -80,6 +82,9 @@ class Settings(BaseSettings):
     ORDER_BLACKOUT_QUEUE_MAX: int = Field(default=500, ge=10, le=5000)
     BLACKOUT_RECOVERY_PRICE_REVALIDATION_ENABLED: bool = True
     BLACKOUT_RECOVERY_MAX_PRICE_DRIFT_PCT: float = Field(default=5.0, ge=0.0, le=100.0)
+    REALTIME_HARD_STOP_ENABLED: bool = True
+    REALTIME_HARD_STOP_RETRY_DELAY_SECONDS: float = Field(default=1.0, ge=0.0, le=30.0)
+    REALTIME_HARD_STOP_MAX_RETRIES: int = Field(default=1000, ge=1, le=100000)
 
     # Pre-Market Planner
     PRE_MARKET_MINUTES: int = Field(default=30, ge=10, le=120)
@@ -141,6 +146,14 @@ class Settings(BaseSettings):
     @property
     def account_product_code(self) -> str:
         return self.KIS_ACCOUNT_NO.split("-")[1]
+
+    @property
+    def kis_ws_url(self) -> str:
+        if self.KIS_WS_URL:
+            return self.KIS_WS_URL
+        if "openapivts" in self.KIS_BASE_URL:
+            return "ws://ops.koreainvestment.com:31000"
+        return "ws://ops.koreainvestment.com:21000"
 
     @property
     def enabled_market_list(self) -> list[str]:

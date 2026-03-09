@@ -33,6 +33,12 @@
 # 1. KIS 실전 URL로 변경 (모의: openapivts 포트 29443)
 KIS_BASE_URL=https://openapi.koreainvestment.com:9443
 
+# 1-1. WebSocket URL 확인 (미설정 시 코드가 자동 기본값 선택)
+# 실전 기본값: ws://ops.koreainvestment.com:21000
+# 모의 기본값: ws://ops.koreainvestment.com:31000
+# 필요 시만 직접 override
+# KIS_WS_URL=ws://ops.koreainvestment.com:21000
+
 # 2. 실전 APP_KEY / APP_SECRET으로 교체
 KIS_APP_KEY=<실전_APP_KEY>
 KIS_APP_SECRET=<실전_APP_SECRET>
@@ -48,6 +54,8 @@ PAPER_OVERSEAS_CASH=0
 > ⚠️ `KIS_BASE_URL` 포트 주의:
 > - **모의(VTS)**: `https://openapivts.koreainvestment.com:29443`
 > - **실전**: `https://openapi.koreainvestment.com:9443`
+> - **모의 WebSocket 기본값**: `ws://ops.koreainvestment.com:31000`
+> - **실전 WebSocket 기본값**: `ws://ops.koreainvestment.com:21000`
 
 ### 2-2. TR_ID 자동 분기 확인
 
@@ -88,7 +96,13 @@ python -m src.main --mode=live --dashboard
 - [ ] 로그에 `MODE=live` 출력 확인
 - [ ] 첫 잔고 조회 성공 (ConnectionError 없음)
 - [ ] Telegram 알림 수신 확인 ("System started")
+- [ ] KR realtime 모드에서 `Realtime KR hard-stop websocket monitor started` 로그 확인
 - [ ] 첫 주문 후 KIS 앱에서 체결 내역 확인
+
+### 3-4. 손절/익절 동작 차이 확인
+- [ ] KR 하드 스탑은 WebSocket 실시간 가격 이벤트 기준으로 감시됨
+- [ ] 익절/ATR trailing/모델 보조 청산은 기존 polling loop 기준으로 유지됨
+- [ ] WebSocket 장애 시 polling 기반 staged-exit이 fallback으로 남아 있음
 
 ---
 

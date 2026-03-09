@@ -198,6 +198,34 @@ class KISBroker:
             logger.info("Token refreshed successfully")
             return self._access_token
 
+    async def get_websocket_approval_key(self) -> str:
+        """Return a websocket approval key for realtime subscriptions."""
+        session = self._get_session()
+        url = f"{self._base_url}/oauth2/Approval"
+        body = {
+            "grant_type": "client_credentials",
+            "appkey": self._app_key,
+            "secretkey": self._app_secret,
+        }
+        headers = {
+            "content-type": "application/json; charset=utf-8",
+            "appkey": self._app_key,
+            "appsecret": self._app_secret,
+        }
+
+        async with session.post(url, json=body, headers=headers) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise ConnectionError(
+                    f"Websocket approval key request failed ({resp.status}): {text}"
+                )
+            data = cast(dict[str, Any], await resp.json())
+
+        approval_key = data.get("approval_key")
+        if not isinstance(approval_key, str) or not approval_key:
+            raise ConnectionError("Websocket approval key response missing approval_key")
+        return approval_key
+
     # ------------------------------------------------------------------
     # Hash Key (required for POST bodies)
     # ------------------------------------------------------------------

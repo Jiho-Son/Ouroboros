@@ -45,6 +45,7 @@ from src.core.order_helpers import (
     _should_force_exit_for_overnight,
 )
 from src.core.order_policy import OrderPolicyRejected, get_session_info
+from src.core.realtime_hard_stop import HardStopTrigger, RealtimeHardStopMonitor
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected
 from src.core.session_risk import (
     _SESSION_RISK_LAST_BY_MARKET,
@@ -62,10 +63,12 @@ from src.main import (
     _acquire_live_runtime_lock,
     _apply_dashboard_flag,
     _handle_market_close,
+    _handle_realtime_hard_stop_trigger,
     _has_market_session_transition,
     _load_daily_session_market_candidates,
     _refresh_cached_playbook_on_session_transition,
     _release_live_runtime_lock,
+    _restart_realtime_hard_stop_task_if_needed,
     _retry_connection,
     _run_context_scheduler,
     _run_evolution_loop,
@@ -75,11 +78,13 @@ from src.main import (
     _should_rescan_market,
     _should_reuse_stored_playbook,
     _start_dashboard_server,
+    _sync_realtime_hard_stop_monitor,
     run_daily_session,
     safe_float,
     sync_positions_from_broker,
     trading_cycle,
 )
+from src.markets.schedule import MARKETS
 from src.strategy.exit_manager import (
     _RUNTIME_EXIT_PEAKS,
     _RUNTIME_EXIT_STATES,
@@ -111,6 +116,139 @@ def _make_settings(**overrides: Any) -> Settings:
     }
     base.update(overrides)
     return Settings(**base)
+
+
+@pytest.mark.asyncio
+async def test_sync_realtime_hard_stop_monitor_registers_hold_position() -> None:
+    monitor = RealtimeHardStopMonitor()
+    market = MARKETS["KR"]
+    market_data = {"_staged_exit_evidence": {"stop_loss_threshold": -3.5}}
+    websocket_client = MagicMock()
+    websocket_client.subscribe = AsyncMock()
+    websocket_client.unsubscribe = AsyncMock()
+
+    await _sync_realtime_hard_stop_monitor(
+        monitor=monitor,
+        websocket_client=websocket_client,
+        market=market,
+        stock_code="005930",
+        decision_action="HOLD",
+        open_position={
+            "price": 100.0,
+            "quantity": 7,
+            "decision_id": "buy-dec",
+            "timestamp": "2026-03-09T00:00:00+00:00",
+        },
+        market_data=market_data,
+    )
+
+    tracked = monitor.get("KR", "005930")
+    assert tracked is not None
+    assert tracked.hard_stop_price == pytest.approx(96.5)
+    assert tracked.quantity == 7
+    websocket_client.subscribe.assert_awaited_once_with("005930")
+
+
+@pytest.mark.asyncio
+async def test_handle_realtime_hard_stop_trigger_submits_sell_and_logs_trade() -> None:
+    db_conn = init_db(":memory:")
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=87,
+        rationale="initial entry",
+        quantity=7,
+        price=100.0,
+        pnl=0.0,
+        market="KR",
+        exchange_code="KRX",
+        session_id="KRX_REG",
+        decision_id="buy-dec",
+        mode="live",
+    )
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    decision_logger = MagicMock()
+    decision_logger.log_decision.return_value = "sell-dec"
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    monitor = RealtimeHardStopMonitor()
+    websocket_client = MagicMock()
+    websocket_client.unsubscribe = AsyncMock()
+    monitor.register(
+        market_code="KR",
+        stock_code="005930",
+        entry_price=100.0,
+        quantity=7,
+        hard_stop_pct=-3.5,
+        decision_id="buy-dec",
+        position_timestamp="2026-03-09T00:00:00+00:00",
+    )
+
+    ok = await _handle_realtime_hard_stop_trigger(
+        broker=broker,
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        telegram=telegram,
+        settings=_make_settings(),
+        monitor=monitor,
+        websocket_client=websocket_client,
+        trigger=HardStopTrigger(
+            market_code="KR",
+            stock_code="005930",
+            last_price=96.0,
+            hard_stop_price=96.5,
+            quantity=7,
+            decision_id="buy-dec",
+            position_timestamp="2026-03-09T00:00:00+00:00",
+        ),
+    )
+
+    assert ok is True
+    broker.send_order.assert_called_once()
+    telegram.notify_trade_execution.assert_awaited_once()
+    websocket_client.unsubscribe.assert_awaited_once_with("005930")
+    decision_logger.log_decision.assert_called_once()
+    decision_logger.update_outcome.assert_called_once_with(
+        decision_id="buy-dec",
+        pnl=pytest.approx(-28.0),
+        accuracy=0,
+    )
+    latest_sell = db_conn.execute(
+        """
+        SELECT action, price, quantity, pnl, decision_id, selection_context
+        FROM trades
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    assert latest_sell is not None
+    assert latest_sell[0] == "SELL"
+    assert latest_sell[1] == pytest.approx(96.0)
+    assert latest_sell[2] == 7
+    assert latest_sell[3] == pytest.approx(-28.0)
+    assert latest_sell[4] == "sell-dec"
+    assert json.loads(str(latest_sell[5]))["source"] == "websocket_hard_stop"
+    assert monitor.get("KR", "005930") is None
+
+
+@pytest.mark.asyncio
+async def test_restart_realtime_hard_stop_task_if_needed_restarts_completed_task() -> None:
+    async def _finished() -> None:
+        return None
+
+    completed = asyncio.create_task(_finished())
+    await completed
+
+    client = MagicMock()
+    client.run = AsyncMock(return_value=None)
+
+    restarted = _restart_realtime_hard_stop_task_if_needed(client=client, task=completed)
+
+    assert restarted is not None
+    await restarted
+    client.run.assert_awaited_once()
 
 
 @pytest.mark.asyncio

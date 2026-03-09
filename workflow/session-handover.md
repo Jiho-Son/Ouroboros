@@ -185,3 +185,11 @@
 - next_ticket: #459
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: favorable exit 반응성만 분리 개선하며 hard-stop websocket 경로와 책임을 섞지 않는다. main 최신 기준 티켓 브랜치로 진행한다.
+
+### 2026-03-09 | session=codex-issue458-start
+- branch: feature/issue-458-kr-websocket-hard-stop
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #458, #459
+- next_ticket: #458
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: KR 하드 스탑 초과손실을 줄이기 위해 WebSocket 기반 실시간 손절 감시를 우선 도입하고, 익절 반응성 개선은 #459로 분리한다.

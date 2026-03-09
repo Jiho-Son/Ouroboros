@@ -39,6 +39,25 @@ class TestTokenManagement:
         await broker.close()
 
     @pytest.mark.asyncio
+    async def test_fetches_websocket_approval_key(self, settings):
+        broker = KISBroker(settings)
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"approval_key": "ws_approval_123"})
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            approval = await broker.get_websocket_approval_key()
+
+        assert approval == "ws_approval_123"
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"]["appkey"] == settings.KIS_APP_KEY
+        assert kwargs["json"]["secretkey"] == settings.KIS_APP_SECRET
+
+        await broker.close()
+
+    @pytest.mark.asyncio
     async def test_reuses_cached_token(self, settings):
         broker = KISBroker(settings)
         broker._access_token = "cached_token"

@@ -39,6 +39,7 @@ from src.broker.balance_utils import (
     _extract_held_qty_from_balance,
 )
 from src.broker.kis_api import KISBroker, kr_round_down
+from src.broker.kis_websocket import KISWebSocketClient, KISWebSocketPriceEvent
 from src.broker.overseas import OverseasBroker
 from src.broker.pending_orders import (
     handle_domestic_pending_orders,
@@ -76,6 +77,7 @@ from src.core.order_policy import (
     validate_order_policy,
 )
 from src.core.priority_queue import PriorityTaskQueue
+from src.core.realtime_hard_stop import HardStopTrigger, RealtimeHardStopMonitor
 from src.core.risk_manager import CircuitBreakerTripped, FatFingerRejected, RiskManager
 from src.core.session_risk import (
     _STOPLOSS_REENTRY_COOLDOWN_UNTIL,
@@ -120,6 +122,226 @@ def _ensure_runtime_mode_allowed(mode: str) -> None:
     """Reject runtime execution modes that are banned by policy."""
     if mode == "paper":
         raise ValueError("paper mode runtime execution is banned")
+
+
+async def _sync_realtime_hard_stop_monitor(
+    *,
+    monitor: RealtimeHardStopMonitor | None,
+    websocket_client: KISWebSocketClient | None,
+    market: MarketInfo,
+    stock_code: str,
+    decision_action: str,
+    open_position: dict[str, Any] | None,
+    market_data: dict[str, Any],
+) -> None:
+    """Register/remove domestic positions from the realtime hard-stop monitor."""
+    if monitor is None or not market.is_domestic:
+        return
+
+    if decision_action != "HOLD" or not open_position:
+        monitor.remove(market.code, stock_code)
+        if websocket_client is not None:
+            await websocket_client.unsubscribe(stock_code)
+        return
+
+    raw_evidence = market_data.get("_staged_exit_evidence")
+    if not isinstance(raw_evidence, dict):
+        monitor.remove(market.code, stock_code)
+        if websocket_client is not None:
+            await websocket_client.unsubscribe(stock_code)
+        return
+
+    stop_loss_pct = safe_float(raw_evidence.get("stop_loss_threshold"), 0.0)
+    entry_price = safe_float(open_position.get("price"), 0.0)
+    quantity = int(open_position.get("quantity") or 0)
+    if stop_loss_pct >= 0 or entry_price <= 0 or quantity <= 0:
+        monitor.remove(market.code, stock_code)
+        if websocket_client is not None:
+            await websocket_client.unsubscribe(stock_code)
+        return
+
+    monitor.register(
+        market_code=market.code,
+        stock_code=stock_code,
+        entry_price=entry_price,
+        quantity=quantity,
+        hard_stop_pct=stop_loss_pct,
+        decision_id=str(open_position.get("decision_id") or ""),
+        position_timestamp=str(open_position.get("timestamp") or ""),
+    )
+    if websocket_client is not None:
+        await websocket_client.subscribe(stock_code)
+
+
+async def _handle_realtime_hard_stop_trigger(
+    *,
+    broker: KISBroker,
+    db_conn: Any,
+    decision_logger: DecisionLogger,
+    telegram: TelegramClient,
+    settings: Settings | None,
+    monitor: RealtimeHardStopMonitor,
+    websocket_client: KISWebSocketClient | None,
+    trigger: HardStopTrigger,
+) -> bool:
+    """Submit a domestic SELL order for a realtime hard-stop breach."""
+    market = MARKETS[trigger.market_code]
+    runtime_session_id = get_session_info(market).session_id
+    current_price = float(trigger.last_price)
+    order_price = kr_round_down(current_price * 0.998)
+    rationale = (
+        "Realtime hard-stop triggered "
+        f"(last_price={current_price:.2f} <= hard_stop_price={trigger.hard_stop_price:.2f})"
+    )
+
+    try:
+        validate_order_policy(
+            market=market,
+            order_type="SELL",
+            price=float(order_price),
+        )
+        result = await broker.send_order(
+            stock_code=trigger.stock_code,
+            order_type="SELL",
+            quantity=trigger.quantity,
+            price=order_price,
+            session_id=runtime_session_id,
+        )
+        if result.get("rt_cd", "0") != "0":
+            logger.warning(
+                "Realtime hard-stop SELL rejected for %s: rt_cd=%s msg=%s",
+                trigger.stock_code,
+                result.get("rt_cd"),
+                result.get("msg1"),
+            )
+            monitor.release_in_flight(trigger.market_code, trigger.stock_code)
+            return False
+
+        decision_id = decision_logger.log_decision(
+            stock_code=trigger.stock_code,
+            market=market.code,
+            exchange_code=market.exchange_code,
+            session_id=runtime_session_id,
+            action="SELL",
+            confidence=95,
+            rationale=rationale,
+            context_snapshot={
+                "realtime_hard_stop": {
+                    "source": "websocket_hard_stop",
+                    "last_price": current_price,
+                    "hard_stop_price": trigger.hard_stop_price,
+                    "quantity": trigger.quantity,
+                }
+            },
+            input_data={
+                "current_price": current_price,
+                "hard_stop_price": trigger.hard_stop_price,
+                "source": "websocket_hard_stop",
+            },
+        )
+
+        try:
+            await telegram.notify_trade_execution(
+                stock_code=trigger.stock_code,
+                market=market.name,
+                action="SELL",
+                quantity=trigger.quantity,
+                price=current_price,
+                confidence=95,
+            )
+        except Exception as exc:
+            logger.warning("Telegram notification failed: %s", exc)
+
+        buy_trade = get_latest_buy_trade(
+            db_conn,
+            trigger.stock_code,
+            market.code,
+            exchange_code=market.exchange_code,
+        )
+        buy_price = 0.0
+        sell_qty = trigger.quantity
+        trade_pnl = 0.0
+        strategy_pnl: float | None = None
+        fx_pnl: float | None = None
+        if buy_trade and buy_trade.get("price") is not None:
+            buy_price = float(buy_trade["price"])
+            buy_qty = int(buy_trade.get("quantity") or 0)
+            sell_qty = _resolve_sell_qty_for_pnl(sell_qty=trigger.quantity, buy_qty=buy_qty)
+            trade_pnl = (current_price - buy_price) * sell_qty
+            decision_logger.update_outcome(
+                decision_id=buy_trade["decision_id"],
+                pnl=trade_pnl,
+                accuracy=1 if trade_pnl > 0 else 0,
+            )
+            if trade_pnl < 0:
+                cooldown_key = _stoploss_cooldown_key(market=market, stock_code=trigger.stock_code)
+                cooldown_minutes = _stoploss_cooldown_minutes(settings, market=market)
+                _STOPLOSS_REENTRY_COOLDOWN_UNTIL[cooldown_key] = (
+                    datetime.now(UTC).timestamp() + cooldown_minutes * 60
+                )
+            strategy_pnl, fx_pnl = _split_trade_pnl_components(
+                market=market,
+                trade_pnl=trade_pnl,
+                buy_price=buy_price,
+                sell_price=current_price,
+                quantity=sell_qty,
+                buy_fx_rate=None,
+                sell_fx_rate=None,
+            )
+
+        log_trade(
+            conn=db_conn,
+            stock_code=trigger.stock_code,
+            action="SELL",
+            confidence=95,
+            rationale=rationale,
+            quantity=trigger.quantity,
+            price=current_price,
+            pnl=trade_pnl,
+            strategy_pnl=strategy_pnl,
+            fx_pnl=fx_pnl,
+            market=market.code,
+            exchange_code=market.exchange_code,
+            session_id=runtime_session_id,
+            selection_context={
+                "source": "websocket_hard_stop",
+                "hard_stop_price": trigger.hard_stop_price,
+            },
+            decision_id=decision_id,
+            mode=settings.MODE if settings else "paper",
+        )
+        monitor.remove(trigger.market_code, trigger.stock_code)
+        if websocket_client is not None:
+            await websocket_client.unsubscribe(trigger.stock_code)
+        return True
+    except Exception as exc:
+        logger.warning("Realtime hard-stop handling failed for %s: %s", trigger.stock_code, exc)
+        monitor.release_in_flight(trigger.market_code, trigger.stock_code)
+        return False
+
+
+def _restart_realtime_hard_stop_task_if_needed(
+    *,
+    client: KISWebSocketClient | None,
+    task: asyncio.Task[None] | None,
+) -> asyncio.Task[None] | None:
+    """Restart websocket hard-stop monitoring when the background task exits."""
+    if client is None:
+        return None
+    if task is not None and not task.done():
+        return task
+
+    if task is not None:
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            exc = None
+        if exc is not None:
+            logger.warning("Realtime hard-stop websocket task exited with error: %s", exc)
+        else:
+            logger.warning("Realtime hard-stop websocket task exited; restarting monitor")
+
+    return asyncio.create_task(client.run())
 
 
 def _acquire_live_runtime_lock(settings: Settings) -> Any:
@@ -605,6 +827,8 @@ async def _evaluate_trading_cycle_decision(
     runtime_session_id: str,
     snapshot: dict[str, Any],
     settings: Settings | None = None,
+    realtime_hard_stop_monitor: RealtimeHardStopMonitor | None = None,
+    realtime_hard_stop_client: KISWebSocketClient | None = None,
 ) -> dict[str, Any]:
     market_data = snapshot["market_data"]
     portfolio_data = snapshot["portfolio_data"]
@@ -768,6 +992,25 @@ async def _evaluate_trading_cycle_decision(
                 stock_code,
                 market.name,
             )
+        await _sync_realtime_hard_stop_monitor(
+            monitor=realtime_hard_stop_monitor,
+            websocket_client=realtime_hard_stop_client,
+            market=market,
+            stock_code=stock_code,
+            decision_action=decision.action,
+            open_position=open_position,
+            market_data=market_data,
+        )
+    else:
+        await _sync_realtime_hard_stop_monitor(
+            monitor=realtime_hard_stop_monitor,
+            websocket_client=realtime_hard_stop_client,
+            market=market,
+            stock_code=stock_code,
+            decision_action=decision.action,
+            open_position=None,
+            market_data=market_data,
+        )
     logger.info(
         "Decision for %s (%s): %s (confidence=%d)",
         stock_code,
@@ -1254,6 +1497,8 @@ async def trading_cycle(
     scan_candidates: dict[str, dict[str, ScanCandidate]],
     settings: Settings | None = None,
     buy_cooldown: dict[str, float] | None = None,
+    realtime_hard_stop_monitor: RealtimeHardStopMonitor | None = None,
+    realtime_hard_stop_client: KISWebSocketClient | None = None,
 ) -> None:
     """Execute one trading cycle for a single stock."""
     cycle_start_time = asyncio.get_event_loop().time()
@@ -1285,6 +1530,8 @@ async def trading_cycle(
         runtime_session_id=runtime_session_id,
         snapshot=snapshot,
         settings=settings,
+        realtime_hard_stop_monitor=realtime_hard_stop_monitor,
+        realtime_hard_stop_client=realtime_hard_stop_client,
     )
     execution_result = await _execute_trading_cycle_action(
         broker=broker,
@@ -2676,6 +2923,35 @@ async def run(settings: Settings) -> None:
             errors=settings.TELEGRAM_NOTIFY_ERRORS,
         ),
     )
+    realtime_hard_stop_monitor = RealtimeHardStopMonitor()
+    realtime_hard_stop_client: KISWebSocketClient | None = None
+    realtime_hard_stop_task: asyncio.Task[None] | None = None
+
+    if settings.TRADE_MODE == "realtime" and settings.REALTIME_HARD_STOP_ENABLED:
+        async def _on_kr_realtime_price(event: KISWebSocketPriceEvent) -> None:
+            trigger = realtime_hard_stop_monitor.evaluate_price("KR", event.stock_code, event.price)
+            if trigger is None:
+                return
+            await _handle_realtime_hard_stop_trigger(
+                broker=broker,
+                db_conn=db_conn,
+                decision_logger=decision_logger,
+                telegram=telegram,
+                settings=settings,
+                monitor=realtime_hard_stop_monitor,
+                websocket_client=realtime_hard_stop_client,
+                trigger=trigger,
+            )
+
+        realtime_hard_stop_client = KISWebSocketClient(
+            broker=broker,
+            ws_url=f"{settings.kis_ws_url.rstrip('/')}{settings.KIS_WS_PATH}",
+            on_price=_on_kr_realtime_price,
+            retry_delay_seconds=settings.REALTIME_HARD_STOP_RETRY_DELAY_SECONDS,
+            max_retries=settings.REALTIME_HARD_STOP_MAX_RETRIES,
+        )
+        realtime_hard_stop_task = asyncio.create_task(realtime_hard_stop_client.run())
+        logger.info("Realtime KR hard-stop websocket monitor started")
 
     # Initialize Telegram command handler
     command_handler = TelegramCommandHandler(telegram)
@@ -3107,6 +3383,10 @@ async def run(settings: Settings) -> None:
             while not shutdown.is_set():
                 # Wait for trading to be unpaused
                 await pause_trading.wait()
+                realtime_hard_stop_task = _restart_realtime_hard_stop_task_if_needed(
+                    client=realtime_hard_stop_client,
+                    task=realtime_hard_stop_task,
+                )
                 _run_context_scheduler(context_scheduler, now=datetime.now(UTC))
 
                 # Reset intra-day CB baseline on a new calendar date
@@ -3533,6 +3813,8 @@ async def run(settings: Settings) -> None:
                                     scan_candidates,
                                     settings,
                                     buy_cooldown,
+                                    realtime_hard_stop_monitor,
+                                    realtime_hard_stop_client,
                                 )
                                 break
                             except CircuitBreakerTripped as exc:
@@ -3592,6 +3874,10 @@ async def run(settings: Settings) -> None:
         # Notify shutdown before closing resources
         await telegram.notify_system_shutdown("Normal shutdown")
         # Clean up resources
+        if realtime_hard_stop_client is not None:
+            await realtime_hard_stop_client.stop()
+        if realtime_hard_stop_task is not None:
+            await realtime_hard_stop_task
         await command_handler.stop_polling()
         await broker.close()
         await telegram.close()
