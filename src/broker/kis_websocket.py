@@ -137,6 +137,51 @@ def parse_price_event(raw: str) -> KISWebSocketPriceEvent | None:
     )
 
 
+def classify_price_event_parse_failure(raw: str) -> str | None:
+    """Return a coarse reason when a websocket payload cannot be parsed as a price event."""
+    if not raw:
+        return "empty payload"
+    if raw[0] not in {"0", "1"}:
+        return "unsupported prefix"
+
+    parts = raw.split("|", 3)
+    if len(parts) != 4:
+        return "unexpected frame shape"
+
+    _, tr_id, _, payload = parts
+    fields = payload.split("^")
+    if tr_id == _DOMESTIC_PRICE_TR_ID:
+        if len(fields) < 3:
+            return "domestic payload too short"
+        if not fields[0].strip():
+            return "missing domestic stock code"
+        try:
+            float(fields[2])
+        except ValueError:
+            return "invalid domestic price"
+        return None
+
+    if tr_id != _OVERSEAS_PRICE_TR_ID:
+        return f"unsupported tr_id={tr_id}"
+    if len(fields) < 12:
+        return "overseas payload too short"
+
+    rsym = fields[0].strip().upper()
+    if _resolve_overseas_market_code_from_rsym(rsym) is None:
+        return f"unknown overseas prefix={rsym[:4] or 'missing'}"
+    if not fields[1].strip().upper():
+        return "missing overseas stock code"
+
+    last_price_raw = fields[11].strip()
+    if not last_price_raw:
+        return "missing overseas last price"
+    try:
+        int(last_price_raw)
+    except ValueError:
+        return "invalid overseas last price"
+    return None
+
+
 class KISWebSocketClient:
     """Lightweight websocket client for KIS realtime price subscriptions."""
 
@@ -162,13 +207,21 @@ class KISWebSocketClient:
         self._stop_requested = False
 
     async def subscribe(self, market_code: str, stock_code: str) -> None:
-        resolve_realtime_price_subscription(
+        tr_id, tr_key = resolve_realtime_price_subscription(
             market_code=market_code,
             stock_code=stock_code,
         )
         subscription = (market_code, stock_code.strip().upper())
         already_subscribed = subscription in self._subscriptions
         self._subscriptions.add(subscription)
+        if not already_subscribed:
+            logger.info(
+                "Registering realtime websocket subscription market=%s stock=%s tr_id=%s tr_key=%s",
+                subscription[0],
+                subscription[1],
+                tr_id,
+                tr_key,
+            )
         if self._ws is not None and not already_subscribed:
             await self._send_subscription(
                 self._ws,
@@ -214,6 +267,7 @@ class KISWebSocketClient:
             try:
                 async with self._connect(self._ws_url) as ws:
                     self._ws = ws
+                    logger.info("Connected realtime websocket url=%s", self._ws_url)
                     await self._resubscribe_all(ws)
                     async for raw in ws:
                         if self._stop_requested:
@@ -222,6 +276,18 @@ class KISWebSocketClient:
                         if text is None:
                             continue
                         event = parse_price_event(text)
+                        if event is None:
+                            reason = classify_price_event_parse_failure(text)
+                            if reason is not None:
+                                logger.debug("Ignoring websocket payload with %s", reason)
+                            continue
+                        logger.debug(
+                            "Parsed realtime websocket event market=%s stock=%s price=%s tr_id=%s",
+                            event.market_code,
+                            event.stock_code,
+                            event.price,
+                            event.tr_id,
+                        )
                         if event is not None and self._on_price is not None:
                             await self._on_price(event)
                 if self._stop_requested:
@@ -250,6 +316,8 @@ class KISWebSocketClient:
         return self._session.ws_connect(url)
 
     async def _resubscribe_all(self, ws: Any) -> None:
+        if self._subscriptions:
+            logger.info("Resubscribing %d realtime websocket symbols", len(self._subscriptions))
         for market_code, stock_code in sorted(self._subscriptions):
             await self._send_subscription(
                 ws,

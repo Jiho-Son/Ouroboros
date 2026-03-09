@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +30,12 @@ class HardStopTrigger:
     quantity: int
     decision_id: str
     position_timestamp: str
+
+
+@dataclass(frozen=True, slots=True)
+class HardStopEvaluation:
+    reason: str
+    trigger: HardStopTrigger | None = None
 
 
 class RealtimeHardStopMonitor:
@@ -60,13 +69,26 @@ class RealtimeHardStopMonitor:
             in_flight=existing.in_flight if existing is not None else False,
         )
         self._tracked[(market_code, stock_code)] = tracked
+        logger.info(
+            "Registered realtime hard-stop market=%s stock=%s quantity=%d hard_stop_price=%.4f",
+            market_code,
+            stock_code,
+            quantity,
+            hard_stop_price,
+        )
         return tracked
 
     def get(self, market_code: str, stock_code: str) -> TrackedHardStop | None:
         return self._tracked.get((market_code, stock_code))
 
     def remove(self, market_code: str, stock_code: str) -> None:
-        self._tracked.pop((market_code, stock_code), None)
+        removed = self._tracked.pop((market_code, stock_code), None)
+        if removed is not None:
+            logger.info(
+                "Removed realtime hard-stop market=%s stock=%s",
+                market_code,
+                stock_code,
+            )
 
     def tracked_symbols(self) -> set[str]:
         return {stock_code for (_, stock_code) in self._tracked}
@@ -77,22 +99,49 @@ class RealtimeHardStopMonitor:
         if tracked is None or not tracked.in_flight:
             return
         self._tracked[key] = replace(tracked, in_flight=False)
+        logger.info(
+            "Released realtime hard-stop in-flight state market=%s stock=%s",
+            market_code,
+            stock_code,
+        )
 
-    def evaluate_price(
+    def evaluate_price_diagnostic(
         self,
         market_code: str,
         stock_code: str,
         last_price: float,
-    ) -> HardStopTrigger | None:
+    ) -> HardStopEvaluation:
         key = (market_code, stock_code)
         tracked = self._tracked.get(key)
-        if tracked is None or tracked.in_flight:
-            return None
+        if tracked is None:
+            logger.debug(
+                "Realtime hard-stop evaluate skipped market=%s stock=%s reason=untracked last_price=%.4f",
+                market_code,
+                stock_code,
+                last_price,
+            )
+            return HardStopEvaluation(reason="untracked")
+        if tracked.in_flight:
+            logger.debug(
+                "Realtime hard-stop evaluate skipped market=%s stock=%s reason=in_flight last_price=%.4f hard_stop_price=%.4f",
+                market_code,
+                stock_code,
+                last_price,
+                tracked.hard_stop_price,
+            )
+            return HardStopEvaluation(reason="in_flight")
         if last_price > tracked.hard_stop_price:
-            return None
+            logger.debug(
+                "Realtime hard-stop evaluate skipped market=%s stock=%s reason=above_stop last_price=%.4f hard_stop_price=%.4f",
+                market_code,
+                stock_code,
+                last_price,
+                tracked.hard_stop_price,
+            )
+            return HardStopEvaluation(reason="above_stop")
 
         self._tracked[key] = replace(tracked, in_flight=True)
-        return HardStopTrigger(
+        trigger = HardStopTrigger(
             market_code=market_code,
             stock_code=stock_code,
             last_price=last_price,
@@ -101,3 +150,19 @@ class RealtimeHardStopMonitor:
             decision_id=tracked.decision_id,
             position_timestamp=tracked.position_timestamp,
         )
+        logger.info(
+            "Realtime hard-stop trigger fired market=%s stock=%s last_price=%.4f hard_stop_price=%.4f",
+            market_code,
+            stock_code,
+            last_price,
+            tracked.hard_stop_price,
+        )
+        return HardStopEvaluation(reason="triggered", trigger=trigger)
+
+    def evaluate_price(
+        self,
+        market_code: str,
+        stock_code: str,
+        last_price: float,
+    ) -> HardStopTrigger | None:
+        return self.evaluate_price_diagnostic(market_code, stock_code, last_price).trigger
