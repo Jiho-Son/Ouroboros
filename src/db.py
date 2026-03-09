@@ -419,7 +419,12 @@ def get_latest_buy_trade(
     row = cursor.fetchone()
     if not row:
         return None
-    return {"decision_id": row[0], "price": row[1], "quantity": row[2]}
+    return {
+        "decision_id": row[0],
+        "price": row[1],
+        "quantity": row[2],
+        "selection_context": row[3],
+    }
 
 
 def get_open_position(

@@ -69,9 +69,46 @@ def test_parse_price_event_reads_domestic_trade_price() -> None:
     event = parse_price_event(raw)
 
     assert event == KISWebSocketPriceEvent(
+        market_code="KR",
         stock_code="005930",
         price=61500,
         tr_id="H0STCNT0",
+    )
+
+
+def test_parse_price_event_reads_overseas_trade_price() -> None:
+    raw = (
+        "0|HDFSCNT0|001|"
+        "DNASAAPL^AAPL^4^20260309^20260309^093000^20260309^223000^"
+        "001500000^001510000^001490000^001480100^5^000019900^00136^"
+        "001480000^001481000^10^12^100^200^100000^30^70^120.0^1"
+    )
+
+    event = parse_price_event(raw)
+
+    assert event == KISWebSocketPriceEvent(
+        market_code="US_NASDAQ",
+        stock_code="AAPL",
+        price=148.01,
+        tr_id="HDFSCNT0",
+    )
+
+
+def test_parse_price_event_reads_three_char_overseas_session_prefix() -> None:
+    raw = (
+        "0|HDFSCNT0|001|"
+        "BAYIBM^IBM^2^20260309^20260309^093000^20260309^223000^"
+        "0015000^0015100^0014900^0014801^5^0000199^00136^"
+        "0014800^0014810^10^12^100^200^100000^30^70^120.0^1"
+    )
+
+    event = parse_price_event(raw)
+
+    assert event == KISWebSocketPriceEvent(
+        market_code="US_NYSE",
+        stock_code="IBM",
+        price=148.01,
+        tr_id="HDFSCNT0",
     )
 
 
@@ -87,9 +124,27 @@ async def test_subscribe_sends_message_to_live_socket() -> None:
     )
     client._ws = ws
 
-    await client.subscribe("005930")
+    await client.subscribe("KR", "005930")
 
     assert ws.sent_json[0]["body"]["input"]["tr_key"] == "005930"
+
+
+@pytest.mark.asyncio
+async def test_subscribe_sends_overseas_market_prefix_in_key() -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    ws = _FakeWebSocket(messages=[])
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=lambda _url: _FakeConnect(ws),
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+    )
+    client._ws = ws
+
+    await client.subscribe("US_NASDAQ", "AAPL")
+
+    assert ws.sent_json[0]["body"]["input"]["tr_id"] == "HDFSCNT0"
+    assert ws.sent_json[0]["body"]["input"]["tr_key"] == "DNASAAPL"
 
 
 @pytest.mark.asyncio
@@ -104,10 +159,46 @@ async def test_subscribe_does_not_resend_duplicate_registration() -> None:
     )
     client._ws = ws
 
-    await client.subscribe("005930")
-    await client.subscribe("005930")
+    await client.subscribe("KR", "005930")
+    await client.subscribe("KR", "005930")
 
     assert len(ws.sent_json) == 1
+
+
+@pytest.mark.asyncio
+async def test_subscribe_rejects_invalid_market_without_poisoning_state() -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=lambda _url: _FakeConnect(_FakeWebSocket(messages=[])),
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+    )
+
+    with pytest.raises(ValueError, match="unsupported realtime websocket market: US_OTC"):
+        await client.subscribe("US_OTC", "TQQQ")
+
+    assert client._subscriptions == set()
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_removes_overseas_subscription_and_sends_unsubscribe() -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    ws = _FakeWebSocket(messages=[])
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=lambda _url: _FakeConnect(ws),
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+    )
+    client._ws = ws
+
+    await client.subscribe("US_NASDAQ", "AAPL")
+    await client.unsubscribe("US_NASDAQ", "AAPL")
+
+    assert client._subscriptions == set()
+    assert ws.sent_json[-1]["body"]["input"]["tr_key"] == "DNASAAPL"
+    assert ws.sent_json[-1]["header"]["tr_type"] == "0"
 
 
 @pytest.mark.asyncio
@@ -131,7 +222,7 @@ async def test_run_reconnects_and_resubscribes_existing_symbols() -> None:
         on_price=callback,
         max_retries=2,
     )
-    await client.subscribe("005930")
+    await client.subscribe("KR", "005930")
 
     task = asyncio.create_task(client.run())
     await asyncio.sleep(0)
@@ -143,6 +234,36 @@ async def test_run_reconnects_and_resubscribes_existing_symbols() -> None:
     assert first_ws.sent_json[0]["body"]["input"]["tr_key"] == "005930"
     assert second_ws.sent_json[0]["body"]["input"]["tr_key"] == "005930"
     callback.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_reconnects_and_resubscribes_overseas_symbols_without_double_prefix() -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    first_ws = _FakeWebSocket(messages=[RuntimeError("boom")])
+    second_ws = _FakeWebSocket(messages=[])
+    queue = [_FakeConnect(first_ws), _FakeConnect(second_ws)]
+
+    def connect(_url: str) -> _FakeConnect:
+        return queue.pop(0)
+
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=connect,
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+        max_retries=2,
+    )
+    await client.subscribe("US_NASDAQ", "AAPL")
+
+    task = asyncio.create_task(client.run())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    client.request_stop()
+    await task
+
+    assert client._subscriptions == {("US_NASDAQ", "AAPL")}
+    assert first_ws.sent_json[0]["body"]["input"]["tr_key"] == "DNASAAPL"
+    assert second_ws.sent_json[0]["body"]["input"]["tr_key"] == "DNASAAPL"
 
 
 @pytest.mark.asyncio

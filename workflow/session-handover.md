@@ -201,3 +201,11 @@
 - next_ticket: #459
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: #458 websocket 경로를 선행 cherry-pick한 뒤 favorable-exit peak hint만 추가 반영한다. hard-stop 직접 실행 책임은 유지한다.
+
+### 2026-03-09 | session=codex-issue461-start
+- branch: feature/issue-461-us-realtime-hard-stop
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #461, #458, #459
+- next_ticket: #461
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: KR websocket hard-stop 경로를 US_NASDAQ/US_NYSE/US_AMEX까지 일반화하되, favorable exit 책임은 유지하고 PR 본문 거버넌스 검증까지 선행한다.

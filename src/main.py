@@ -39,7 +39,11 @@ from src.broker.balance_utils import (
     _extract_held_qty_from_balance,
 )
 from src.broker.kis_api import KISBroker, kr_round_down
-from src.broker.kis_websocket import KISWebSocketClient, KISWebSocketPriceEvent
+from src.broker.kis_websocket import (
+    KISWebSocketClient,
+    KISWebSocketPriceEvent,
+    supports_realtime_price_market,
+)
 from src.broker.overseas import OverseasBroker
 from src.broker.pending_orders import (
     handle_domestic_pending_orders,
@@ -135,27 +139,27 @@ async def _sync_realtime_hard_stop_monitor(
     open_position: dict[str, Any] | None,
     market_data: dict[str, Any],
 ) -> None:
-    """Register/remove domestic positions from the realtime hard-stop monitor."""
-    if monitor is None or not market.is_domestic:
+    """Register/remove supported positions from the realtime hard-stop monitor."""
+    if monitor is None or not supports_realtime_price_market(market.code):
         return
 
     if not open_position:
         monitor.remove(market.code, stock_code)
         if websocket_client is not None:
-            await websocket_client.unsubscribe(stock_code)
+            await websocket_client.unsubscribe(market.code, stock_code)
         return
 
     if decision_action != "HOLD":
         monitor.remove(market.code, stock_code)
         if websocket_client is not None:
-            await websocket_client.unsubscribe(stock_code)
+            await websocket_client.unsubscribe(market.code, stock_code)
         return
 
     raw_evidence = market_data.get("_staged_exit_evidence")
     if not isinstance(raw_evidence, dict):
         monitor.remove(market.code, stock_code)
         if websocket_client is not None:
-            await websocket_client.unsubscribe(stock_code)
+            await websocket_client.unsubscribe(market.code, stock_code)
         return
 
     stop_loss_pct = safe_float(raw_evidence.get("stop_loss_threshold"), 0.0)
@@ -164,7 +168,7 @@ async def _sync_realtime_hard_stop_monitor(
     if stop_loss_pct >= 0 or entry_price <= 0 or quantity <= 0:
         monitor.remove(market.code, stock_code)
         if websocket_client is not None:
-            await websocket_client.unsubscribe(stock_code)
+            await websocket_client.unsubscribe(market.code, stock_code)
         return
 
     monitor.register(
@@ -177,7 +181,7 @@ async def _sync_realtime_hard_stop_monitor(
         position_timestamp=str(open_position.get("timestamp") or ""),
     )
     if websocket_client is not None:
-        await websocket_client.subscribe(stock_code)
+        await websocket_client.subscribe(market.code, stock_code)
 
 
 async def _clear_realtime_hard_stop_tracking(
@@ -187,14 +191,14 @@ async def _clear_realtime_hard_stop_tracking(
     market: MarketInfo,
     stock_code: str,
 ) -> None:
-    """Remove a domestic symbol from realtime hard-stop tracking."""
-    if monitor is None or not market.is_domestic:
+    """Remove a supported symbol from realtime hard-stop tracking."""
+    if monitor is None or not supports_realtime_price_market(market.code):
         return
 
     monitor.remove(market.code, stock_code)
     if websocket_client is not None:
         try:
-            await websocket_client.unsubscribe(stock_code)
+            await websocket_client.unsubscribe(market.code, stock_code)
         except Exception as exc:
             logger.warning(
                 "Realtime hard-stop unsubscribe failed for %s (%s): %s",
@@ -207,6 +211,7 @@ async def _clear_realtime_hard_stop_tracking(
 async def _handle_realtime_hard_stop_trigger(
     *,
     broker: KISBroker,
+    overseas_broker: OverseasBroker,
     db_conn: Any,
     decision_logger: DecisionLogger,
     telegram: TelegramClient,
@@ -215,21 +220,28 @@ async def _handle_realtime_hard_stop_trigger(
     websocket_client: KISWebSocketClient | None,
     trigger: HardStopTrigger,
 ) -> bool:
-    """Submit a domestic SELL order for a realtime hard-stop breach."""
+    """Submit a market-appropriate SELL order for a realtime hard-stop breach."""
     market = MARKETS[trigger.market_code]
     runtime_session_id = get_session_info(market).session_id
     current_price = float(trigger.last_price)
-    order_price = kr_round_down(current_price * 0.998)
+    if market.is_domestic:
+        order_price = kr_round_down(current_price * 0.998)
+    else:
+        price_decimals = 2 if current_price >= 1.0 else 4
+        order_price = round(current_price * 0.998, price_decimals)
     rationale = (
         "Realtime hard-stop triggered "
         f"(last_price={current_price:.2f} <= hard_stop_price={trigger.hard_stop_price:.2f})"
     )
     try:
-        balance_data = await broker.get_balance()
+        if market.is_domestic:
+            balance_data = await broker.get_balance()
+        else:
+            balance_data = await overseas_broker.get_overseas_balance(market.exchange_code)
         quantity = _extract_held_qty_from_balance(
             balance_data,
             trigger.stock_code,
-            is_domestic=True,
+            is_domestic=market.is_domestic,
         )
     except Exception as exc:
         logger.warning(
@@ -240,6 +252,8 @@ async def _handle_realtime_hard_stop_trigger(
         monitor.release_in_flight(trigger.market_code, trigger.stock_code)
         return False
 
+    sell_fx_rate = _extract_fx_rate_from_sources(balance_data)
+
     if quantity <= 0:
         logger.info(
             "Realtime hard-stop skipped for %s: broker shows no sellable balance",
@@ -248,7 +262,7 @@ async def _handle_realtime_hard_stop_trigger(
         monitor.remove(trigger.market_code, trigger.stock_code)
         if websocket_client is not None:
             try:
-                await websocket_client.unsubscribe(trigger.stock_code)
+                await websocket_client.unsubscribe(trigger.market_code, trigger.stock_code)
             except Exception as exc:
                 logger.warning(
                     "Realtime hard-stop unsubscribe failed for %s (%s): %s",
@@ -270,7 +284,7 @@ async def _handle_realtime_hard_stop_trigger(
         monitor.remove(trigger.market_code, trigger.stock_code)
         if websocket_client is not None:
             try:
-                await websocket_client.unsubscribe(trigger.stock_code)
+                await websocket_client.unsubscribe(trigger.market_code, trigger.stock_code)
             except Exception as exc:
                 logger.warning(
                     "Realtime hard-stop unsubscribe failed for %s (%s): %s",
@@ -286,13 +300,22 @@ async def _handle_realtime_hard_stop_trigger(
             order_type="SELL",
             price=float(order_price),
         )
-        result = await broker.send_order(
-            stock_code=trigger.stock_code,
-            order_type="SELL",
-            quantity=quantity,
-            price=order_price,
-            session_id=runtime_session_id,
-        )
+        if market.is_domestic:
+            result = await broker.send_order(
+                stock_code=trigger.stock_code,
+                order_type="SELL",
+                quantity=quantity,
+                price=order_price,
+                session_id=runtime_session_id,
+            )
+        else:
+            result = await overseas_broker.send_overseas_order(
+                exchange_code=market.exchange_code,
+                stock_code=trigger.stock_code,
+                order_type="SELL",
+                quantity=quantity,
+                price=order_price,
+            )
         if result.get("rt_cd", "0") != "0":
             logger.warning(
                 "Realtime hard-stop SELL rejected for %s: rt_cd=%s msg=%s",
@@ -371,15 +394,23 @@ async def _handle_realtime_hard_stop_trigger(
                 _STOPLOSS_REENTRY_COOLDOWN_UNTIL[cooldown_key] = (
                     datetime.now(UTC).timestamp() + cooldown_minutes * 60
                 )
+            buy_fx_rate = _extract_buy_fx_rate(buy_trade)
             strategy_pnl, fx_pnl = _split_trade_pnl_components(
                 market=market,
                 trade_pnl=trade_pnl,
                 buy_price=buy_price,
                 sell_price=current_price,
                 quantity=sell_qty,
-                buy_fx_rate=None,
-                sell_fx_rate=None,
+                buy_fx_rate=buy_fx_rate,
+                sell_fx_rate=sell_fx_rate,
             )
+
+        selection_context: dict[str, Any] = {
+            "source": "websocket_hard_stop",
+            "hard_stop_price": trigger.hard_stop_price,
+        }
+        if sell_fx_rate is not None and not market.is_domestic:
+            selection_context["fx_rate"] = sell_fx_rate
 
         log_trade(
             conn=db_conn,
@@ -395,10 +426,7 @@ async def _handle_realtime_hard_stop_trigger(
             market=market.code,
             exchange_code=market.exchange_code,
             session_id=runtime_session_id,
-            selection_context={
-                "source": "websocket_hard_stop",
-                "hard_stop_price": trigger.hard_stop_price,
-            },
+            selection_context=selection_context,
             decision_id=decision_id,
             mode=settings.MODE if settings else "paper",
         )
@@ -412,7 +440,7 @@ async def _handle_realtime_hard_stop_trigger(
         monitor.remove(trigger.market_code, trigger.stock_code)
         if websocket_client is not None:
             try:
-                await websocket_client.unsubscribe(trigger.stock_code)
+                await websocket_client.unsubscribe(trigger.market_code, trigger.stock_code)
             except Exception as exc:
                 logger.warning(
                     "Realtime hard-stop unsubscribe failed for %s (%s): %s",
@@ -423,10 +451,11 @@ async def _handle_realtime_hard_stop_trigger(
     return True
 
 
-async def _handle_kr_realtime_price_event(
+async def _handle_realtime_price_event(
     *,
     event: KISWebSocketPriceEvent,
     broker: KISBroker,
+    overseas_broker: OverseasBroker,
     db_conn: Any,
     decision_logger: DecisionLogger,
     telegram: TelegramClient,
@@ -435,10 +464,10 @@ async def _handle_kr_realtime_price_event(
     websocket_client: KISWebSocketClient | None,
 ) -> None:
     """Apply favorable-exit peak hints before evaluating realtime hard-stop triggers."""
-    tracked = monitor.get("KR", event.stock_code)
+    tracked = monitor.get(event.market_code, event.stock_code)
     if tracked is not None:
         update_runtime_exit_peak(
-            market_code="KR",
+            market_code=event.market_code,
             stock_code=event.stock_code,
             decision_id=tracked.decision_id,
             position_timestamp=tracked.position_timestamp,
@@ -446,12 +475,13 @@ async def _handle_kr_realtime_price_event(
             last_price=float(event.price),
         )
 
-    trigger = monitor.evaluate_price("KR", event.stock_code, event.price)
+    trigger = monitor.evaluate_price(event.market_code, event.stock_code, event.price)
     if trigger is None:
         return
 
     await _handle_realtime_hard_stop_trigger(
         broker=broker,
+        overseas_broker=overseas_broker,
         db_conn=db_conn,
         decision_logger=decision_logger,
         telegram=telegram,
@@ -3080,10 +3110,11 @@ async def run(settings: Settings) -> None:
     realtime_hard_stop_task: asyncio.Task[None] | None = None
 
     if settings.TRADE_MODE == "realtime" and settings.REALTIME_HARD_STOP_ENABLED:
-        async def _on_kr_realtime_price(event: KISWebSocketPriceEvent) -> None:
-            await _handle_kr_realtime_price_event(
+        async def _on_realtime_price(event: KISWebSocketPriceEvent) -> None:
+            await _handle_realtime_price_event(
                 event=event,
                 broker=broker,
+                overseas_broker=overseas_broker,
                 db_conn=db_conn,
                 decision_logger=decision_logger,
                 telegram=telegram,
@@ -3095,7 +3126,7 @@ async def run(settings: Settings) -> None:
         realtime_hard_stop_client = KISWebSocketClient(
             broker=broker,
             ws_url=f"{settings.kis_ws_url.rstrip('/')}{settings.KIS_WS_PATH}",
-            on_price=_on_kr_realtime_price,
+            on_price=_on_realtime_price,
             retry_delay_seconds=settings.REALTIME_HARD_STOP_RETRY_DELAY_SECONDS,
             max_retries=settings.REALTIME_HARD_STOP_MAX_RETRIES,
         )
