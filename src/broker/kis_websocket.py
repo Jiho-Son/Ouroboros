@@ -162,11 +162,11 @@ class KISWebSocketClient:
         self._stop_requested = False
 
     async def subscribe(self, market_code: str, stock_code: str) -> None:
-        _, normalized_symbol = resolve_realtime_price_subscription(
+        resolve_realtime_price_subscription(
             market_code=market_code,
             stock_code=stock_code,
         )
-        subscription = (market_code, normalized_symbol)
+        subscription = (market_code, stock_code.strip().upper())
         already_subscribed = subscription in self._subscriptions
         self._subscriptions.add(subscription)
         if self._ws is not None and not already_subscribed:

@@ -217,6 +217,36 @@ async def test_run_reconnects_and_resubscribes_existing_symbols() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_reconnects_and_resubscribes_overseas_symbols_without_double_prefix() -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    first_ws = _FakeWebSocket(messages=[RuntimeError("boom")])
+    second_ws = _FakeWebSocket(messages=[])
+    queue = [_FakeConnect(first_ws), _FakeConnect(second_ws)]
+
+    def connect(_url: str) -> _FakeConnect:
+        return queue.pop(0)
+
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=connect,
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+        max_retries=2,
+    )
+    await client.subscribe("US_NASDAQ", "AAPL")
+
+    task = asyncio.create_task(client.run())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    client.request_stop()
+    await task
+
+    assert client._subscriptions == {("US_NASDAQ", "AAPL")}
+    assert first_ws.sent_json[0]["body"]["input"]["tr_key"] == "DNASAAPL"
+    assert second_ws.sent_json[0]["body"]["input"]["tr_key"] == "DNASAAPL"
+
+
+@pytest.mark.asyncio
 async def test_run_uses_exact_configured_ws_url() -> None:
     broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
     ws = _FakeWebSocket(messages=[])
