@@ -589,7 +589,30 @@ class TestSendOverseasOrder:
         call_args = mock_session.post.call_args
         body = call_args[1]["json"]
         assert body["ORD_DVSN"] == "00"  # limit order
-        assert body["OVRS_ORD_UNPR"] == "350.0"
+        assert body["OVRS_ORD_UNPR"] == "350.00"
+
+    @pytest.mark.asyncio
+    async def test_limit_order_keeps_four_decimals_below_one_dollar(
+        self,
+        overseas_broker: OverseasBroker,
+    ) -> None:
+        """Sub-$1 limit orders must preserve four decimals for KIS price rules."""
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(return_value={"rt_cd": "0"})
+
+        mock_session = MagicMock()
+        mock_session.post = MagicMock(return_value=_make_async_cm(mock_resp))
+
+        _setup_broker_mocks(overseas_broker, mock_session)
+        overseas_broker._broker._get_hash_key = AsyncMock(return_value="hashval")
+
+        await overseas_broker.send_overseas_order("AMEX", "ATRA", "SELL", 5, price=0.8765)
+
+        call_args = mock_session.post.call_args
+        body = call_args[1]["json"]
+        assert body["ORD_DVSN"] == "00"
+        assert body["OVRS_ORD_UNPR"] == "0.8765"
 
     @pytest.mark.asyncio
     async def test_order_http_error_raises(self, overseas_broker: OverseasBroker) -> None:

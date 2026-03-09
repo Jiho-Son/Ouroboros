@@ -12,6 +12,14 @@ from src.broker.kis_api import KISBroker
 logger = logging.getLogger(__name__)
 
 
+def _format_overseas_order_price(price: float) -> str:
+    """Format overseas limit prices with KIS-supported precision."""
+    if price <= 0:
+        return "0"
+    decimals = 2 if price >= 1 else 4
+    return f"{price:.{decimals}f}"
+
+
 # Ranking API uses different exchange codes than order/quote APIs.
 _RANKING_EXCHANGE_MAP: dict[str, str] = {
     "NASD": "NAS",
@@ -347,7 +355,7 @@ class OverseasBroker:
             "PDNO": stock_code,
             "ORD_DVSN": "00" if price > 0 else "01",  # 00=지정가, 01=시장가
             "ORD_QTY": str(quantity),
-            "OVRS_ORD_UNPR": str(price) if price > 0 else "0",
+            "OVRS_ORD_UNPR": _format_overseas_order_price(price),
             "ORD_SVR_DVSN_CD": "0",  # 0=해외주문
         }
 

@@ -19,6 +19,7 @@ from src.analysis.atr_helpers import (
 )
 from src.broker.balance_utils import (
     _extract_avg_price_from_balance,
+    _extract_buy_fx_rate,
     _extract_held_codes_from_balance,
     _extract_held_qty_from_balance,
 )
@@ -73,6 +74,7 @@ from src.main import (
     _release_live_runtime_lock,
     _restart_realtime_hard_stop_task_if_needed,
     _retry_connection,
+    _rollback_pending_order_position,
     _run_context_scheduler,
     _run_evolution_loop,
     _run_markets_in_parallel,
@@ -7476,7 +7478,7 @@ class TestHandleOverseasPendingOrders:
         overseas_broker.send_overseas_order.assert_called_once()
         resubmit_kwargs = overseas_broker.send_overseas_order.call_args[1]
         assert resubmit_kwargs["order_type"] == "BUY"
-        assert resubmit_kwargs["price"] == round(200.0 * 1.004, 4)
+        assert resubmit_kwargs["price"] == round(200.0 * 1.004, 2)
         assert "BUY:NASD:AAPL" in sell_resubmit_counts
         assert "NASD:AAPL" not in buy_cooldown
         telegram.notify_unfilled_order.assert_called_once()
@@ -7546,7 +7548,7 @@ class TestHandleOverseasPendingOrders:
         overseas_broker.send_overseas_order.assert_called_once()
         resubmit_kwargs = overseas_broker.send_overseas_order.call_args[1]
         assert resubmit_kwargs["order_type"] == "SELL"
-        assert resubmit_kwargs["price"] == round(200.0 * 0.996, 4)
+        assert resubmit_kwargs["price"] == round(200.0 * 0.996, 2)
         assert sell_resubmit_counts.get("NASD:AAPL") == 1
         notify_kwargs = telegram.notify_unfilled_order.call_args[1]
         assert notify_kwargs["outcome"] == "resubmitted"
@@ -7646,6 +7648,90 @@ class TestHandleOverseasPendingOrders:
         assert notify_kwargs["outcome"] == "cancelled"
 
     @pytest.mark.asyncio
+    async def test_buy_resubmit_rejection_rolls_back_open_position(self) -> None:
+        """Rejected overseas BUY resubmit must roll back the optimistic DB position."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+
+        pending_order = {
+            "pdno": "QURE",
+            "odno": "ORD006",
+            "sll_buy_dvsn_cd": "02",
+            "nccs_qty": "4",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "15.84"}})
+        overseas_broker.send_overseas_order = AsyncMock(
+            return_value={"rt_cd": "7", "msg1": "주문 가격을 확인 하시기 바랍니다."}
+        )
+        sell_resubmit_counts: dict[str, int] = {}
+
+        await handle_overseas_pending_orders(
+            overseas_broker,
+            telegram,
+            settings,
+            sell_resubmit_counts,
+            {},
+            rollback_open_position=rollback_open_position,
+        )
+
+        rollback_open_position.assert_called_once_with(
+            market_code="US_NASDAQ",
+            exchange_code="NASD",
+            stock_code="QURE",
+            action="BUY",
+        )
+        assert "BUY:NASD:QURE" not in sell_resubmit_counts
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["outcome"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_sell_resubmit_rejection_restores_open_position(self) -> None:
+        """Rejected overseas SELL resubmit must restore the DB open position for retry."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+        sell_resubmit_counts: dict[str, int] = {}
+
+        pending_order = {
+            "pdno": "ATRA",
+            "odno": "ORD007",
+            "sll_buy_dvsn_cd": "01",
+            "nccs_qty": "112",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "18.60"}})
+        overseas_broker.send_overseas_order = AsyncMock(
+            return_value={"rt_cd": "7", "msg1": "주문 가격을 확인 하시기 바랍니다."}
+        )
+
+        await handle_overseas_pending_orders(
+            overseas_broker,
+            telegram,
+            settings,
+            sell_resubmit_counts,
+            rollback_open_position=rollback_open_position,
+        )
+
+        rollback_open_position.assert_called_once_with(
+            market_code="US_NASDAQ",
+            exchange_code="NASD",
+            stock_code="ATRA",
+            action="SELL",
+        )
+        assert sell_resubmit_counts == {}
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["action"] == "SELL"
+        assert notify_kwargs["outcome"] == "cancelled"
+
+    @pytest.mark.asyncio
     async def test_us_exchanges_deduplicated_to_nasd(self) -> None:
         """US_NASDAQ, US_NYSE, US_AMEX should result in only one NASD query."""
         settings = self._make_settings("US_NASDAQ,US_NYSE,US_AMEX")
@@ -7663,6 +7749,85 @@ class TestHandleOverseasPendingOrders:
         # Should be called exactly once with "NASD"
         assert overseas_broker.get_overseas_pending_orders.call_count == 1
         overseas_broker.get_overseas_pending_orders.assert_called_once_with("NASD")
+
+    @pytest.mark.asyncio
+    async def test_domestic_buy_resubmit_rejection_rolls_back_open_position(self) -> None:
+        """Rejected domestic BUY resubmit must roll back the optimistic DB position."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORDKR1",
+            "ord_gno_brno": "001",
+            "sll_buy_dvsn_cd": "02",
+            "psbl_qty": "3",
+            "order_exchange": "KRX",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(70000.0, 0.0, 0.0))
+        broker.send_order = AsyncMock(return_value={"rt_cd": "7", "msg1": "가격 오류"})
+
+        await handle_domestic_pending_orders(
+            broker,
+            telegram,
+            settings,
+            {},
+            {},
+            rollback_open_position=rollback_open_position,
+        )
+
+        rollback_open_position.assert_called_once_with(
+            market_code="KR",
+            exchange_code="KRX",
+            stock_code="005930",
+            action="BUY",
+        )
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["action"] == "BUY"
+        assert notify_kwargs["outcome"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_domestic_sell_resubmit_rejection_restores_open_position(self) -> None:
+        """Rejected domestic SELL resubmit must restore the DB open position for retry."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORDKR2",
+            "ord_gno_brno": "001",
+            "sll_buy_dvsn_cd": "01",
+            "psbl_qty": "5",
+            "order_exchange": "KRX",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(70000.0, 0.0, 0.0))
+        broker.send_order = AsyncMock(return_value={"rt_cd": "7", "msg1": "가격 오류"})
+
+        await handle_domestic_pending_orders(
+            broker,
+            telegram,
+            settings,
+            {},
+            rollback_open_position=rollback_open_position,
+        )
+
+        rollback_open_position.assert_called_once_with(
+            market_code="KR",
+            exchange_code="KRX",
+            stock_code="005930",
+            action="SELL",
+        )
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["action"] == "SELL"
+        assert notify_kwargs["outcome"] == "cancelled"
 
 
 # ---------------------------------------------------------------------------
@@ -9377,6 +9542,149 @@ async def test_refresh_order_state_failure_summary_includes_more_count() -> None
             markets=markets,
         )
     assert "KR/KRX" in str(exc_info.value)
+
+
+class TestPendingOrderRollback:
+    """DB rollback helpers for cancelled pending orders."""
+
+    def test_buy_rollback_closes_optimistic_open_position(self) -> None:
+        db_conn = init_db(":memory:")
+        log_trade(
+            conn=db_conn,
+            stock_code="QURE",
+            action="BUY",
+            confidence=82,
+            rationale="optimistic buy log",
+            quantity=44,
+            price=15.84,
+            pnl=0.0,
+            market="US_NASDAQ",
+            exchange_code="NASD",
+            session_id="US_PRE",
+            decision_id="buy-dec",
+            mode="live",
+        )
+
+        _rollback_pending_order_position(
+            db_conn=db_conn,
+            market_code="US_NASDAQ",
+            exchange_code="NASD",
+            stock_code="QURE",
+            action="BUY",
+            runtime_session_id="US_PRE",
+            settings=_make_settings(),
+        )
+
+        assert main_module.get_open_position(db_conn, "QURE", "US_NASDAQ") is None
+
+    def test_sell_rollback_restores_open_position_after_optimistic_close(self) -> None:
+        db_conn = init_db(":memory:")
+        log_trade(
+            conn=db_conn,
+            stock_code="ATRA",
+            action="BUY",
+            confidence=80,
+            rationale="entry",
+            quantity=112,
+            price=18.75,
+            pnl=0.0,
+            market="US_NASDAQ",
+            exchange_code="NASD",
+            session_id="US_REG",
+            selection_context={"fx_rate": 1370.25, "signal": "rebound"},
+            decision_id="buy-dec",
+            mode="live",
+        )
+        log_trade(
+            conn=db_conn,
+            stock_code="ATRA",
+            action="SELL",
+            confidence=90,
+            rationale="optimistic sell log",
+            quantity=112,
+            price=18.60,
+            pnl=0.0,
+            market="US_NASDAQ",
+            exchange_code="NASD",
+            session_id="US_REG",
+            decision_id="sell-dec",
+            mode="live",
+        )
+
+        _rollback_pending_order_position(
+            db_conn=db_conn,
+            market_code="US_NASDAQ",
+            exchange_code="NASD",
+            stock_code="ATRA",
+            action="SELL",
+            runtime_session_id="US_REG",
+            settings=_make_settings(),
+        )
+
+        restored = main_module.get_open_position(db_conn, "ATRA", "US_NASDAQ")
+        assert restored is not None
+        assert restored["quantity"] == 112
+        assert restored["price"] == pytest.approx(18.75)
+        restored_buy = main_module.get_latest_buy_trade(
+            db_conn,
+            "ATRA",
+            "US_NASDAQ",
+            exchange_code="NASD",
+        )
+        assert _extract_buy_fx_rate(restored_buy) == pytest.approx(1370.25)
+
+    def test_sell_rollback_preserves_selection_context_dict(self) -> None:
+        db_conn = init_db(":memory:")
+        log_trade(
+            conn=db_conn,
+            stock_code="ATRA",
+            action="BUY",
+            confidence=80,
+            rationale="entry",
+            quantity=112,
+            price=18.75,
+            pnl=0.0,
+            market="US_NASDAQ",
+            exchange_code="NASD",
+            session_id="US_REG",
+            selection_context={"fx_rate": 1370.25, "signal": "rebound"},
+            decision_id="buy-dec",
+            mode="live",
+        )
+        log_trade(
+            conn=db_conn,
+            stock_code="ATRA",
+            action="SELL",
+            confidence=90,
+            rationale="optimistic sell log",
+            quantity=112,
+            price=18.60,
+            pnl=0.0,
+            market="US_NASDAQ",
+            exchange_code="NASD",
+            session_id="US_REG",
+            decision_id="sell-dec",
+            mode="live",
+        )
+
+        _rollback_pending_order_position(
+            db_conn=db_conn,
+            market_code="US_NASDAQ",
+            exchange_code="NASD",
+            stock_code="ATRA",
+            action="SELL",
+            runtime_session_id="US_REG",
+            settings=_make_settings(),
+        )
+
+        restored_buy = main_module.get_latest_buy_trade(
+            db_conn,
+            "ATRA",
+            "US_NASDAQ",
+            exchange_code="NASD",
+        )
+        assert restored_buy is not None
+        assert _extract_buy_fx_rate(restored_buy) == pytest.approx(1370.25)
 
 
 class TestMidSessionRefresh:
