@@ -193,3 +193,11 @@
 - next_ticket: #458
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: KR 하드 스탑 초과손실을 줄이기 위해 WebSocket 기반 실시간 손절 감시를 우선 도입하고, 익절 반응성 개선은 #459로 분리한다.
+
+### 2026-03-09 | session=codex-issue459-continue
+- branch: feature/issue-459-take-profit-responsiveness
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #459, #458, #461
+- next_ticket: #459
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: #458 websocket 경로를 선행 cherry-pick한 뒤 favorable-exit peak hint만 추가 반영한다. hard-stop 직접 실행 책임은 유지한다.

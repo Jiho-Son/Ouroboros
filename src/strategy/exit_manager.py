@@ -68,9 +68,51 @@ def _build_runtime_position_key(
     stock_code: str,
     open_position: dict[str, Any],
 ) -> str:
-    decision_id = str(open_position.get("decision_id") or "")
-    timestamp = str(open_position.get("timestamp") or "")
-    return f"{market_code}:{stock_code}:{decision_id}:{timestamp}"
+    return _build_runtime_position_key_from_fields(
+        market_code=market_code,
+        stock_code=stock_code,
+        decision_id=str(open_position.get("decision_id") or ""),
+        position_timestamp=str(open_position.get("timestamp") or ""),
+    )
+
+
+def _build_runtime_position_key_from_fields(
+    *,
+    market_code: str,
+    stock_code: str,
+    decision_id: str,
+    position_timestamp: str,
+) -> str:
+    return f"{market_code}:{stock_code}:{decision_id}:{position_timestamp}"
+
+
+def update_runtime_exit_peak(
+    *,
+    market_code: str,
+    stock_code: str,
+    decision_id: str,
+    position_timestamp: str,
+    entry_price: float,
+    last_price: float,
+) -> float | None:
+    """Raise the cached staged-exit peak for an open position when realtime data improves it."""
+    if not math.isfinite(last_price) or last_price <= 0:
+        return None
+
+    runtime_key = _build_runtime_position_key_from_fields(
+        market_code=market_code,
+        stock_code=stock_code,
+        decision_id=decision_id,
+        position_timestamp=position_timestamp,
+    )
+    floor_price = entry_price if math.isfinite(entry_price) and entry_price > 0 else 0.0
+    candidate_peak = max(floor_price, last_price)
+    current_peak = _RUNTIME_EXIT_PEAKS.get(runtime_key, 0.0)
+    if candidate_peak <= current_peak:
+        return current_peak if current_peak > 0 else None
+
+    _RUNTIME_EXIT_PEAKS[runtime_key] = candidate_peak
+    return candidate_peak
 
 
 def _clear_runtime_exit_cache_for_symbol(*, market_code: str, stock_code: str) -> None:

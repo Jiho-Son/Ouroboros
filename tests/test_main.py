@@ -22,6 +22,7 @@ from src.broker.balance_utils import (
     _extract_held_codes_from_balance,
     _extract_held_qty_from_balance,
 )
+from src.broker.kis_websocket import KISWebSocketPriceEvent
 from src.broker.pending_orders import (
     handle_domestic_pending_orders,
     handle_overseas_pending_orders,
@@ -63,6 +64,7 @@ from src.main import (
     _acquire_live_runtime_lock,
     _apply_dashboard_flag,
     _execute_trading_cycle_action,
+    _handle_kr_realtime_price_event,
     _handle_market_close,
     _handle_realtime_hard_stop_trigger,
     _has_market_session_transition,
@@ -91,6 +93,7 @@ from src.strategy.exit_manager import (
     _RUNTIME_EXIT_STATES,
     _apply_staged_exit_override_for_hold,
     _inject_staged_exit_features,
+    update_runtime_exit_peak,
 )
 from src.strategy.models import (
     DayPlaybook,
@@ -114,6 +117,7 @@ def _make_settings(**overrides: Any) -> Settings:
         "KIS_ACCOUNT_NO": "12345678-01",
         "GEMINI_API_KEY": "g",
         "MODE": "live",
+        "REALTIME_HARD_STOP_ENABLED": False,
     }
     base.update(overrides)
     return Settings(**base)
@@ -148,6 +152,73 @@ async def test_sync_realtime_hard_stop_monitor_registers_hold_position() -> None
     assert tracked.hard_stop_price == pytest.approx(96.5)
     assert tracked.quantity == 7
     websocket_client.subscribe.assert_awaited_once_with("005930")
+
+
+def test_update_runtime_exit_peak_only_raises_cached_peak() -> None:
+    _RUNTIME_EXIT_PEAKS.clear()
+
+    update_runtime_exit_peak(
+        market_code="KR",
+        stock_code="005930",
+        decision_id="d1",
+        position_timestamp="t1",
+        entry_price=100.0,
+        last_price=105.0,
+    )
+    update_runtime_exit_peak(
+        market_code="KR",
+        stock_code="005930",
+        decision_id="d1",
+        position_timestamp="t1",
+        entry_price=100.0,
+        last_price=103.0,
+    )
+    update_runtime_exit_peak(
+        market_code="KR",
+        stock_code="005930",
+        decision_id="d1",
+        position_timestamp="t1",
+        entry_price=100.0,
+        last_price=float("nan"),
+    )
+
+    assert _RUNTIME_EXIT_PEAKS["KR:005930:d1:t1"] == pytest.approx(105.0)
+
+
+def test_websocket_peak_hint_can_trigger_atr_trailing_exit_earlier() -> None:
+    _RUNTIME_EXIT_PEAKS.clear()
+    _RUNTIME_EXIT_STATES.clear()
+
+    market = MagicMock()
+    market.code = "KR"
+    market.name = "Korea"
+    decision = MagicMock(action="HOLD", confidence=70, rationale="hold")
+    open_position = {"price": 100.0, "quantity": 1, "decision_id": "d1", "timestamp": "t1"}
+
+    runtime_key = "KR:005930:d1:t1"
+    _RUNTIME_EXIT_STATES[runtime_key] = PositionState.ARMED
+
+    update_runtime_exit_peak(
+        market_code="KR",
+        stock_code="005930",
+        decision_id="d1",
+        position_timestamp="t1",
+        entry_price=100.0,
+        last_price=110.0,
+    )
+
+    out = _apply_staged_exit_override_for_hold(
+        decision=decision,
+        market=market,
+        stock_code="005930",
+        open_position=open_position,
+        market_data={"current_price": 104.0, "atr_value": 2.0, "pred_down_prob": 0.4},
+        stock_playbook=None,
+        settings=None,
+    )
+
+    assert out.action == "SELL"
+    assert out.rationale == "ATR trailing-stop triggered"
 
 
 @pytest.mark.asyncio
@@ -187,6 +258,37 @@ async def test_sync_realtime_hard_stop_monitor_keeps_tracking_while_sell_is_pend
     assert tracked is not None
     assert tracked.hard_stop_price == pytest.approx(96.5)
     websocket_client.unsubscribe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_kr_realtime_price_event_updates_peak_before_hard_stop_eval() -> None:
+    _RUNTIME_EXIT_PEAKS.clear()
+
+    monitor = RealtimeHardStopMonitor()
+    monitor.register(
+        market_code="KR",
+        stock_code="005930",
+        entry_price=100.0,
+        quantity=1,
+        hard_stop_pct=-2.0,
+        decision_id="d1",
+        position_timestamp="t1",
+    )
+
+    with patch("src.main._handle_realtime_hard_stop_trigger", new=AsyncMock()) as mock_handle:
+        await _handle_kr_realtime_price_event(
+            event=KISWebSocketPriceEvent(stock_code="005930", price=110, tr_id="H0STCNT0"),
+            broker=MagicMock(),
+            db_conn=MagicMock(),
+            decision_logger=MagicMock(),
+            telegram=MagicMock(),
+            settings=_make_settings(TRADE_MODE="realtime"),
+            monitor=monitor,
+            websocket_client=MagicMock(),
+        )
+
+    assert _RUNTIME_EXIT_PEAKS["KR:005930:d1:t1"] == pytest.approx(110.0)
+    mock_handle.assert_not_awaited()
 
 
 @pytest.mark.asyncio

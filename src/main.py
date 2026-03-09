@@ -108,6 +108,7 @@ from src.strategy.exit_manager import (
     _clear_runtime_exit_cache_for_symbol,
     _inject_staged_exit_features,
     _merge_staged_exit_evidence_into_log,
+    update_runtime_exit_peak,
 )
 from src.strategy.models import DayPlaybook, MarketOutlook
 from src.strategy.playbook_store import PlaybookStore
@@ -348,6 +349,45 @@ async def _handle_realtime_hard_stop_trigger(
         logger.warning("Realtime hard-stop handling failed for %s: %s", trigger.stock_code, exc)
         monitor.release_in_flight(trigger.market_code, trigger.stock_code)
         return False
+
+
+async def _handle_kr_realtime_price_event(
+    *,
+    event: KISWebSocketPriceEvent,
+    broker: KISBroker,
+    db_conn: Any,
+    decision_logger: DecisionLogger,
+    telegram: TelegramClient,
+    settings: Settings | None,
+    monitor: RealtimeHardStopMonitor,
+    websocket_client: KISWebSocketClient | None,
+) -> None:
+    """Apply favorable-exit peak hints before evaluating realtime hard-stop triggers."""
+    tracked = monitor.get("KR", event.stock_code)
+    if tracked is not None:
+        update_runtime_exit_peak(
+            market_code="KR",
+            stock_code=event.stock_code,
+            decision_id=tracked.decision_id,
+            position_timestamp=tracked.position_timestamp,
+            entry_price=tracked.entry_price,
+            last_price=float(event.price),
+        )
+
+    trigger = monitor.evaluate_price("KR", event.stock_code, event.price)
+    if trigger is None:
+        return
+
+    await _handle_realtime_hard_stop_trigger(
+        broker=broker,
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        telegram=telegram,
+        settings=settings,
+        monitor=monitor,
+        websocket_client=websocket_client,
+        trigger=trigger,
+    )
 
 
 def _restart_realtime_hard_stop_task_if_needed(
@@ -2969,10 +3009,8 @@ async def run(settings: Settings) -> None:
 
     if settings.TRADE_MODE == "realtime" and settings.REALTIME_HARD_STOP_ENABLED:
         async def _on_kr_realtime_price(event: KISWebSocketPriceEvent) -> None:
-            trigger = realtime_hard_stop_monitor.evaluate_price("KR", event.stock_code, event.price)
-            if trigger is None:
-                return
-            await _handle_realtime_hard_stop_trigger(
+            await _handle_kr_realtime_price_event(
+                event=event,
                 broker=broker,
                 db_conn=db_conn,
                 decision_logger=decision_logger,
@@ -2980,7 +3018,6 @@ async def run(settings: Settings) -> None:
                 settings=settings,
                 monitor=realtime_hard_stop_monitor,
                 websocket_client=realtime_hard_stop_client,
-                trigger=trigger,
             )
 
         realtime_hard_stop_client = KISWebSocketClient(
