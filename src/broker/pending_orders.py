@@ -517,17 +517,20 @@ async def handle_domestic_pending_orders(
                             if reconcile_state == "pending":
                                 sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                                 logger.warning(
-                                    "Restore SELL position for KR %s: broker confirms pending replacement",
+                                    "Restore SELL position for KR %s: "
+                                    "broker confirms pending replacement",
                                     stock_code,
                                 )
                             elif reconcile_state == "held":
                                 logger.warning(
-                                    "Restore SELL position for KR %s: broker still reports holdings",
+                                    "Restore SELL position for KR %s: "
+                                    "broker still reports holdings",
                                     stock_code,
                                 )
                             elif reconcile_state == "absent":
                                 logger.warning(
-                                    "Keep SELL position closed for KR %s: broker confirms no holding",
+                                    "Keep SELL position closed for KR %s: "
+                                    "broker confirms no holding",
                                     stock_code,
                                 )
                                 continue
@@ -749,7 +752,8 @@ async def handle_overseas_pending_orders(
                                         sell_resubmit_counts.get(buy_resubmit_key, 0) + 1
                                     )
                                     logger.warning(
-                                        "Confirm BUY resubmit pending for %s %s after ambiguous submit",
+                                        "Confirm BUY resubmit pending for %s %s "
+                                        "after ambiguous submit",
                                         order_exchange,
                                         stock_code,
                                     )
@@ -765,7 +769,8 @@ async def handle_overseas_pending_orders(
                                     if buy_cooldown is not None:
                                         buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
                                     logger.warning(
-                                        "Skip BUY rollback for %s %s: resubmit submit status unknown",
+                                        "Skip BUY rollback for %s %s: "
+                                        "resubmit submit status unknown",
                                         order_exchange,
                                         stock_code,
                                     )
@@ -897,26 +902,30 @@ async def handle_overseas_pending_orders(
                                 if reconcile_state == "pending":
                                     sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                                     logger.warning(
-                                        "Restore SELL position for %s %s: broker confirms pending replacement",
+                                        "Restore SELL position for %s %s: "
+                                        "broker confirms pending replacement",
                                         order_exchange,
                                         stock_code,
                                     )
                                 elif reconcile_state == "held":
                                     logger.warning(
-                                        "Restore SELL position for %s %s: broker still reports holdings",
+                                        "Restore SELL position for %s %s: "
+                                        "broker still reports holdings",
                                         order_exchange,
                                         stock_code,
                                     )
                                 elif reconcile_state == "absent":
                                     logger.warning(
-                                        "Keep SELL position closed for %s %s: broker confirms no holding",
+                                        "Keep SELL position closed for %s %s: "
+                                        "broker confirms no holding",
                                         order_exchange,
                                         stock_code,
                                     )
                                     continue
                                 else:
                                     logger.warning(
-                                        "Skip SELL rollback for %s %s: resubmit submit status unknown",
+                                        "Skip SELL rollback for %s %s: "
+                                        "resubmit submit status unknown",
                                         order_exchange,
                                         stock_code,
                                     )

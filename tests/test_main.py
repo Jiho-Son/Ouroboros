@@ -8004,7 +8004,7 @@ class TestHandleOverseasPendingOrders:
     async def test_domestic_buy_resubmit_connection_error_rolls_back_when_broker_confirms_absent(
         self,
     ) -> None:
-        """KR BUY ambiguity must roll back only after broker confirms no pending order or holding."""
+        """KR BUY ambiguity must roll back only after broker confirms absence."""
         settings = self._make_settings("US_NASDAQ")
         telegram = self._make_telegram()
         rollback_open_position = MagicMock()
