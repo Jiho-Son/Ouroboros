@@ -177,3 +177,11 @@
 - next_ticket: #447
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: trading_cycle()를 데이터 수집, 시나리오 평가, 주문 실행, 로깅 helper로 분해하되 함수 시그니처와 동작은 유지한다.
+
+### 2026-03-09 | session=codex-issue459-start
+- branch: feature/issue-459-take-profit-responsiveness
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #459, #458, #461
+- next_ticket: #459
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: favorable exit 반응성만 분리 개선하며 hard-stop websocket 경로와 책임을 섞지 않는다. main 최신 기준 티켓 브랜치로 진행한다.
