@@ -222,7 +222,7 @@ def test_websocket_peak_hint_can_trigger_atr_trailing_exit_earlier() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sync_realtime_hard_stop_monitor_keeps_tracking_while_sell_is_pending() -> None:
+async def test_sync_realtime_hard_stop_monitor_clears_tracking_while_sell_is_pending() -> None:
     monitor = RealtimeHardStopMonitor()
     market = MARKETS["KR"]
     market_data = {"_staged_exit_evidence": {"stop_loss_threshold": -3.5}}
@@ -254,10 +254,8 @@ async def test_sync_realtime_hard_stop_monitor_keeps_tracking_while_sell_is_pend
         market_data=market_data,
     )
 
-    tracked = monitor.get("KR", "005930")
-    assert tracked is not None
-    assert tracked.hard_stop_price == pytest.approx(96.5)
-    websocket_client.unsubscribe.assert_not_awaited()
+    assert monitor.get("KR", "005930") is None
+    websocket_client.unsubscribe.assert_awaited_once_with("005930")
 
 
 @pytest.mark.asyncio
@@ -310,6 +308,9 @@ async def test_handle_realtime_hard_stop_trigger_submits_sell_and_logs_trade() -
         mode="live",
     )
     broker = MagicMock()
+    broker.get_balance = AsyncMock(
+        return_value={"output1": [{"pdno": "005930", "ord_psbl_qty": "7"}], "output2": [{}]}
+    )
     broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
     decision_logger = MagicMock()
     decision_logger.log_decision.return_value = "sell-dec"
@@ -376,8 +377,128 @@ async def test_handle_realtime_hard_stop_trigger_submits_sell_and_logs_trade() -
 
 
 @pytest.mark.asyncio
+async def test_handle_realtime_hard_stop_trigger_uses_current_balance_qty() -> None:
+    db_conn = init_db(":memory:")
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=87,
+        rationale="initial entry",
+        quantity=10,
+        price=100.0,
+        pnl=0.0,
+        market="KR",
+        exchange_code="KRX",
+        session_id="KRX_REG",
+        decision_id="buy-dec",
+        mode="live",
+    )
+    broker = MagicMock()
+    broker.get_balance = AsyncMock(
+        return_value={"output1": [{"pdno": "005930", "ord_psbl_qty": "3"}], "output2": [{}]}
+    )
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    decision_logger = MagicMock()
+    decision_logger.log_decision.return_value = "sell-dec"
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    monitor = RealtimeHardStopMonitor()
+    websocket_client = MagicMock()
+    websocket_client.unsubscribe = AsyncMock()
+    monitor.register(
+        market_code="KR",
+        stock_code="005930",
+        entry_price=100.0,
+        quantity=10,
+        hard_stop_pct=-3.5,
+        decision_id="buy-dec",
+        position_timestamp="2026-03-09T00:00:00+00:00",
+    )
+
+    ok = await _handle_realtime_hard_stop_trigger(
+        broker=broker,
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        telegram=telegram,
+        settings=_make_settings(),
+        monitor=monitor,
+        websocket_client=websocket_client,
+        trigger=HardStopTrigger(
+            market_code="KR",
+            stock_code="005930",
+            last_price=96.0,
+            hard_stop_price=96.5,
+            quantity=10,
+            decision_id="buy-dec",
+            position_timestamp="2026-03-09T00:00:00+00:00",
+        ),
+    )
+
+    assert ok is True
+    broker.send_order.assert_awaited_once()
+    assert broker.send_order.await_args.kwargs["quantity"] == 3
+    decision_logger.update_outcome.assert_called_once_with(
+        decision_id="buy-dec",
+        pnl=pytest.approx(-12.0),
+        accuracy=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_realtime_hard_stop_trigger_queues_sell_during_blackout() -> None:
+    broker = MagicMock()
+    broker.get_balance = AsyncMock(
+        return_value={"output1": [{"pdno": "005930", "ord_psbl_qty": "4"}], "output2": [{}]}
+    )
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    monitor = RealtimeHardStopMonitor()
+    websocket_client = MagicMock()
+    websocket_client.unsubscribe = AsyncMock()
+    monitor.register(
+        market_code="KR",
+        stock_code="005930",
+        entry_price=100.0,
+        quantity=10,
+        hard_stop_pct=-3.5,
+        decision_id="buy-dec",
+        position_timestamp="2026-03-09T00:00:00+00:00",
+    )
+
+    with patch("src.main._maybe_queue_order_intent", return_value=True) as mock_queue:
+        ok = await _handle_realtime_hard_stop_trigger(
+            broker=broker,
+            db_conn=MagicMock(),
+            decision_logger=MagicMock(),
+            telegram=MagicMock(notify_trade_execution=AsyncMock()),
+            settings=_make_settings(),
+            monitor=monitor,
+            websocket_client=websocket_client,
+            trigger=HardStopTrigger(
+                market_code="KR",
+                stock_code="005930",
+                last_price=96.0,
+                hard_stop_price=96.5,
+                quantity=10,
+                decision_id="buy-dec",
+                position_timestamp="2026-03-09T00:00:00+00:00",
+            ),
+        )
+
+    assert ok is True
+    broker.send_order.assert_not_awaited()
+    assert mock_queue.call_args.kwargs["quantity"] == 4
+    assert mock_queue.call_args.kwargs["source"] == "websocket_hard_stop"
+    assert monitor.get("KR", "005930") is None
+    websocket_client.unsubscribe.assert_awaited_once_with("005930")
+
+
+@pytest.mark.asyncio
 async def test_realtime_hard_stop_post_submit_failure_does_not_rearm() -> None:
     broker = MagicMock()
+    broker.get_balance = AsyncMock(
+        return_value={"output1": [{"pdno": "005930", "ord_psbl_qty": "7"}], "output2": [{}]}
+    )
     broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
     decision_logger = MagicMock()
     decision_logger.log_decision.return_value = "sell-dec"

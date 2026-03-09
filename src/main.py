@@ -145,7 +145,7 @@ async def _sync_realtime_hard_stop_monitor(
             await websocket_client.unsubscribe(stock_code)
         return
 
-    if decision_action not in {"HOLD", "SELL"}:
+    if decision_action != "HOLD":
         monitor.remove(market.code, stock_code)
         if websocket_client is not None:
             await websocket_client.unsubscribe(stock_code)
@@ -224,6 +224,61 @@ async def _handle_realtime_hard_stop_trigger(
         "Realtime hard-stop triggered "
         f"(last_price={current_price:.2f} <= hard_stop_price={trigger.hard_stop_price:.2f})"
     )
+    try:
+        balance_data = await broker.get_balance()
+        quantity = _extract_held_qty_from_balance(
+            balance_data,
+            trigger.stock_code,
+            is_domestic=True,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Realtime hard-stop balance refresh failed for %s: %s",
+            trigger.stock_code,
+            exc,
+        )
+        monitor.release_in_flight(trigger.market_code, trigger.stock_code)
+        return False
+
+    if quantity <= 0:
+        logger.info(
+            "Realtime hard-stop skipped for %s: broker shows no sellable balance",
+            trigger.stock_code,
+        )
+        monitor.remove(trigger.market_code, trigger.stock_code)
+        if websocket_client is not None:
+            try:
+                await websocket_client.unsubscribe(trigger.stock_code)
+            except Exception as exc:
+                logger.warning(
+                    "Realtime hard-stop unsubscribe failed for %s (%s): %s",
+                    trigger.stock_code,
+                    market.name,
+                    exc,
+                )
+        return True
+
+    if _maybe_queue_order_intent(
+        market=market,
+        session_id=runtime_session_id,
+        stock_code=trigger.stock_code,
+        order_type="SELL",
+        quantity=quantity,
+        price=float(order_price),
+        source="websocket_hard_stop",
+    ):
+        monitor.remove(trigger.market_code, trigger.stock_code)
+        if websocket_client is not None:
+            try:
+                await websocket_client.unsubscribe(trigger.stock_code)
+            except Exception as exc:
+                logger.warning(
+                    "Realtime hard-stop unsubscribe failed for %s (%s): %s",
+                    trigger.stock_code,
+                    market.name,
+                    exc,
+                )
+        return True
 
     try:
         validate_order_policy(
@@ -234,7 +289,7 @@ async def _handle_realtime_hard_stop_trigger(
         result = await broker.send_order(
             stock_code=trigger.stock_code,
             order_type="SELL",
-            quantity=trigger.quantity,
+            quantity=quantity,
             price=order_price,
             session_id=runtime_session_id,
         )
@@ -266,12 +321,13 @@ async def _handle_realtime_hard_stop_trigger(
                     "source": "websocket_hard_stop",
                     "last_price": current_price,
                     "hard_stop_price": trigger.hard_stop_price,
-                    "quantity": trigger.quantity,
+                    "quantity": quantity,
                 }
             },
             input_data={
                 "current_price": current_price,
                 "hard_stop_price": trigger.hard_stop_price,
+                "quantity": quantity,
                 "source": "websocket_hard_stop",
             },
         )
@@ -281,7 +337,7 @@ async def _handle_realtime_hard_stop_trigger(
                 stock_code=trigger.stock_code,
                 market=market.name,
                 action="SELL",
-                quantity=trigger.quantity,
+                quantity=quantity,
                 price=current_price,
                 confidence=95,
             )
@@ -295,14 +351,14 @@ async def _handle_realtime_hard_stop_trigger(
             exchange_code=market.exchange_code,
         )
         buy_price = 0.0
-        sell_qty = trigger.quantity
+        sell_qty = quantity
         trade_pnl = 0.0
         strategy_pnl: float | None = None
         fx_pnl: float | None = None
         if buy_trade and buy_trade.get("price") is not None:
             buy_price = float(buy_trade["price"])
             buy_qty = int(buy_trade.get("quantity") or 0)
-            sell_qty = _resolve_sell_qty_for_pnl(sell_qty=trigger.quantity, buy_qty=buy_qty)
+            sell_qty = _resolve_sell_qty_for_pnl(sell_qty=quantity, buy_qty=buy_qty)
             trade_pnl = (current_price - buy_price) * sell_qty
             decision_logger.update_outcome(
                 decision_id=buy_trade["decision_id"],
@@ -331,7 +387,7 @@ async def _handle_realtime_hard_stop_trigger(
             action="SELL",
             confidence=95,
             rationale=rationale,
-            quantity=trigger.quantity,
+            quantity=quantity,
             price=current_price,
             pnl=trade_pnl,
             strategy_pnl=strategy_pnl,
