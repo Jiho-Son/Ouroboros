@@ -69,9 +69,28 @@ def test_parse_price_event_reads_domestic_trade_price() -> None:
     event = parse_price_event(raw)
 
     assert event == KISWebSocketPriceEvent(
+        market_code="KR",
         stock_code="005930",
         price=61500,
         tr_id="H0STCNT0",
+    )
+
+
+def test_parse_price_event_reads_overseas_trade_price() -> None:
+    raw = (
+        "0|HDFSCNT0|001|"
+        "DNASAAPL^AAPL^4^20260309^20260309^093000^20260309^223000^"
+        "001500000^001510000^001490000^001480100^5^000019900^00136^"
+        "001480000^001481000^10^12^100^200^100000^30^70^120.0^1"
+    )
+
+    event = parse_price_event(raw)
+
+    assert event == KISWebSocketPriceEvent(
+        market_code="US_NASDAQ",
+        stock_code="AAPL",
+        price=148.01,
+        tr_id="HDFSCNT0",
     )
 
 
@@ -87,9 +106,27 @@ async def test_subscribe_sends_message_to_live_socket() -> None:
     )
     client._ws = ws
 
-    await client.subscribe("005930")
+    await client.subscribe("KR", "005930")
 
     assert ws.sent_json[0]["body"]["input"]["tr_key"] == "005930"
+
+
+@pytest.mark.asyncio
+async def test_subscribe_sends_overseas_market_prefix_in_key() -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    ws = _FakeWebSocket(messages=[])
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=lambda _url: _FakeConnect(ws),
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+    )
+    client._ws = ws
+
+    await client.subscribe("US_NASDAQ", "AAPL")
+
+    assert ws.sent_json[0]["body"]["input"]["tr_id"] == "HDFSCNT0"
+    assert ws.sent_json[0]["body"]["input"]["tr_key"] == "DNASAAPL"
 
 
 @pytest.mark.asyncio
@@ -104,8 +141,8 @@ async def test_subscribe_does_not_resend_duplicate_registration() -> None:
     )
     client._ws = ws
 
-    await client.subscribe("005930")
-    await client.subscribe("005930")
+    await client.subscribe("KR", "005930")
+    await client.subscribe("KR", "005930")
 
     assert len(ws.sent_json) == 1
 
@@ -131,7 +168,7 @@ async def test_run_reconnects_and_resubscribes_existing_symbols() -> None:
         on_price=callback,
         max_retries=2,
     )
-    await client.subscribe("005930")
+    await client.subscribe("KR", "005930")
 
     task = asyncio.create_task(client.run())
     await asyncio.sleep(0)

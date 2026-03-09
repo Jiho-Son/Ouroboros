@@ -64,9 +64,9 @@ from src.main import (
     _acquire_live_runtime_lock,
     _apply_dashboard_flag,
     _execute_trading_cycle_action,
-    _handle_kr_realtime_price_event,
     _handle_market_close,
     _handle_realtime_hard_stop_trigger,
+    _handle_realtime_price_event,
     _has_market_session_transition,
     _load_daily_session_market_candidates,
     _refresh_cached_playbook_on_session_transition,
@@ -151,7 +151,38 @@ async def test_sync_realtime_hard_stop_monitor_registers_hold_position() -> None
     assert tracked is not None
     assert tracked.hard_stop_price == pytest.approx(96.5)
     assert tracked.quantity == 7
-    websocket_client.subscribe.assert_awaited_once_with("005930")
+    websocket_client.subscribe.assert_awaited_once_with("KR", "005930")
+
+
+@pytest.mark.asyncio
+async def test_sync_realtime_hard_stop_monitor_registers_us_hold_position() -> None:
+    monitor = RealtimeHardStopMonitor()
+    market = MARKETS["US_NASDAQ"]
+    market_data = {"_staged_exit_evidence": {"stop_loss_threshold": -3.5}}
+    websocket_client = MagicMock()
+    websocket_client.subscribe = AsyncMock()
+    websocket_client.unsubscribe = AsyncMock()
+
+    await _sync_realtime_hard_stop_monitor(
+        monitor=monitor,
+        websocket_client=websocket_client,
+        market=market,
+        stock_code="AAPL",
+        decision_action="HOLD",
+        open_position={
+            "price": 100.0,
+            "quantity": 7,
+            "decision_id": "buy-dec",
+            "timestamp": "2026-03-09T00:00:00+00:00",
+        },
+        market_data=market_data,
+    )
+
+    tracked = monitor.get("US_NASDAQ", "AAPL")
+    assert tracked is not None
+    assert tracked.hard_stop_price == pytest.approx(96.5)
+    assert tracked.quantity == 7
+    websocket_client.subscribe.assert_awaited_once_with("US_NASDAQ", "AAPL")
 
 
 def test_update_runtime_exit_peak_only_raises_cached_peak() -> None:
@@ -255,11 +286,11 @@ async def test_sync_realtime_hard_stop_monitor_clears_tracking_while_sell_is_pen
     )
 
     assert monitor.get("KR", "005930") is None
-    websocket_client.unsubscribe.assert_awaited_once_with("005930")
+    websocket_client.unsubscribe.assert_awaited_once_with("KR", "005930")
 
 
 @pytest.mark.asyncio
-async def test_handle_kr_realtime_price_event_updates_peak_before_hard_stop_eval() -> None:
+async def test_handle_realtime_price_event_updates_peak_before_hard_stop_eval() -> None:
     _RUNTIME_EXIT_PEAKS.clear()
 
     monitor = RealtimeHardStopMonitor()
@@ -274,9 +305,15 @@ async def test_handle_kr_realtime_price_event_updates_peak_before_hard_stop_eval
     )
 
     with patch("src.main._handle_realtime_hard_stop_trigger", new=AsyncMock()) as mock_handle:
-        await _handle_kr_realtime_price_event(
-            event=KISWebSocketPriceEvent(stock_code="005930", price=110, tr_id="H0STCNT0"),
+        await _handle_realtime_price_event(
+            event=KISWebSocketPriceEvent(
+                market_code="KR",
+                stock_code="005930",
+                price=110,
+                tr_id="H0STCNT0",
+            ),
             broker=MagicMock(),
+            overseas_broker=MagicMock(),
             db_conn=MagicMock(),
             decision_logger=MagicMock(),
             telegram=MagicMock(),
@@ -286,6 +323,43 @@ async def test_handle_kr_realtime_price_event_updates_peak_before_hard_stop_eval
         )
 
     assert _RUNTIME_EXIT_PEAKS["KR:005930:d1:t1"] == pytest.approx(110.0)
+    mock_handle.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_realtime_price_event_updates_us_peak_before_hard_stop_eval() -> None:
+    _RUNTIME_EXIT_PEAKS.clear()
+
+    monitor = RealtimeHardStopMonitor()
+    monitor.register(
+        market_code="US_NASDAQ",
+        stock_code="AAPL",
+        entry_price=100.0,
+        quantity=1,
+        hard_stop_pct=-2.0,
+        decision_id="d1",
+        position_timestamp="t1",
+    )
+
+    with patch("src.main._handle_realtime_hard_stop_trigger", new=AsyncMock()) as mock_handle:
+        await _handle_realtime_price_event(
+            event=KISWebSocketPriceEvent(
+                market_code="US_NASDAQ",
+                stock_code="AAPL",
+                price=110.25,
+                tr_id="HDFSCNT0",
+            ),
+            broker=MagicMock(),
+            overseas_broker=MagicMock(),
+            db_conn=MagicMock(),
+            decision_logger=MagicMock(),
+            telegram=MagicMock(),
+            settings=_make_settings(TRADE_MODE="realtime"),
+            monitor=monitor,
+            websocket_client=MagicMock(),
+        )
+
+    assert _RUNTIME_EXIT_PEAKS["US_NASDAQ:AAPL:d1:t1"] == pytest.approx(110.25)
     mock_handle.assert_not_awaited()
 
 
@@ -331,6 +405,7 @@ async def test_handle_realtime_hard_stop_trigger_submits_sell_and_logs_trade() -
 
     ok = await _handle_realtime_hard_stop_trigger(
         broker=broker,
+        overseas_broker=MagicMock(),
         db_conn=db_conn,
         decision_logger=decision_logger,
         telegram=telegram,
@@ -351,7 +426,7 @@ async def test_handle_realtime_hard_stop_trigger_submits_sell_and_logs_trade() -
     assert ok is True
     broker.send_order.assert_called_once()
     telegram.notify_trade_execution.assert_awaited_once()
-    websocket_client.unsubscribe.assert_awaited_once_with("005930")
+    websocket_client.unsubscribe.assert_awaited_once_with("KR", "005930")
     decision_logger.log_decision.assert_called_once()
     decision_logger.update_outcome.assert_called_once_with(
         decision_id="buy-dec",
@@ -418,6 +493,7 @@ async def test_handle_realtime_hard_stop_trigger_uses_current_balance_qty() -> N
 
     ok = await _handle_realtime_hard_stop_trigger(
         broker=broker,
+        overseas_broker=MagicMock(),
         db_conn=db_conn,
         decision_logger=decision_logger,
         telegram=telegram,
@@ -468,6 +544,7 @@ async def test_handle_realtime_hard_stop_trigger_queues_sell_during_blackout() -
     with patch("src.main._maybe_queue_order_intent", return_value=True) as mock_queue:
         ok = await _handle_realtime_hard_stop_trigger(
             broker=broker,
+            overseas_broker=MagicMock(),
             db_conn=MagicMock(),
             decision_logger=MagicMock(),
             telegram=MagicMock(notify_trade_execution=AsyncMock()),
@@ -490,7 +567,7 @@ async def test_handle_realtime_hard_stop_trigger_queues_sell_during_blackout() -
     assert mock_queue.call_args.kwargs["quantity"] == 4
     assert mock_queue.call_args.kwargs["source"] == "websocket_hard_stop"
     assert monitor.get("KR", "005930") is None
-    websocket_client.unsubscribe.assert_awaited_once_with("005930")
+    websocket_client.unsubscribe.assert_awaited_once_with("KR", "005930")
 
 
 @pytest.mark.asyncio
@@ -520,6 +597,7 @@ async def test_realtime_hard_stop_post_submit_failure_does_not_rearm() -> None:
     with patch("src.main.log_trade", side_effect=RuntimeError("trade persistence failed")):
         ok = await _handle_realtime_hard_stop_trigger(
             broker=broker,
+            overseas_broker=MagicMock(),
             db_conn=MagicMock(),
             decision_logger=decision_logger,
             telegram=telegram,
@@ -539,7 +617,99 @@ async def test_realtime_hard_stop_post_submit_failure_does_not_rearm() -> None:
 
     assert ok is True
     assert monitor.get("KR", "005930") is None
-    websocket_client.unsubscribe.assert_awaited_once_with("005930")
+    websocket_client.unsubscribe.assert_awaited_once_with("KR", "005930")
+
+
+@pytest.mark.asyncio
+async def test_handle_realtime_hard_stop_trigger_submits_overseas_sell_and_logs_trade() -> None:
+    db_conn = init_db(":memory:")
+    log_trade(
+        conn=db_conn,
+        stock_code="AAPL",
+        action="BUY",
+        confidence=87,
+        rationale="initial entry",
+        quantity=7,
+        price=100.0,
+        pnl=0.0,
+        market="US_NASDAQ",
+        exchange_code="NASD",
+        session_id="US_REG",
+        decision_id="buy-dec",
+        mode="live",
+    )
+    decision_logger = MagicMock()
+    decision_logger.log_decision.return_value = "sell-dec"
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    monitor = RealtimeHardStopMonitor()
+    websocket_client = MagicMock()
+    websocket_client.unsubscribe = AsyncMock()
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_balance = AsyncMock(
+        return_value={
+            "output1": [{"ovrs_pdno": "AAPL", "ord_psbl_qty": "7", "ovrs_excg_cd": "NASD"}],
+            "output2": [{}],
+        }
+    )
+    overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    monitor.register(
+        market_code="US_NASDAQ",
+        stock_code="AAPL",
+        entry_price=100.0,
+        quantity=7,
+        hard_stop_pct=-3.5,
+        decision_id="buy-dec",
+        position_timestamp="2026-03-09T00:00:00+00:00",
+    )
+
+    ok = await _handle_realtime_hard_stop_trigger(
+        broker=MagicMock(),
+        overseas_broker=overseas_broker,
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        telegram=telegram,
+        settings=_make_settings(),
+        monitor=monitor,
+        websocket_client=websocket_client,
+        trigger=HardStopTrigger(
+            market_code="US_NASDAQ",
+            stock_code="AAPL",
+            last_price=96.12,
+            hard_stop_price=96.5,
+            quantity=7,
+            decision_id="buy-dec",
+            position_timestamp="2026-03-09T00:00:00+00:00",
+        ),
+    )
+
+    assert ok is True
+    overseas_broker.get_overseas_balance.assert_awaited_once_with("NASD")
+    overseas_broker.send_overseas_order.assert_awaited_once()
+    assert overseas_broker.send_overseas_order.await_args.kwargs["price"] == pytest.approx(95.93)
+    telegram.notify_trade_execution.assert_awaited_once()
+    websocket_client.unsubscribe.assert_awaited_once_with("US_NASDAQ", "AAPL")
+    decision_logger.update_outcome.assert_called_once_with(
+        decision_id="buy-dec",
+        pnl=pytest.approx(-27.16),
+        accuracy=0,
+    )
+    latest_sell = db_conn.execute(
+        """
+        SELECT action, price, quantity, pnl, decision_id, selection_context
+        FROM trades
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    assert latest_sell is not None
+    assert latest_sell[0] == "SELL"
+    assert latest_sell[1] == pytest.approx(96.12)
+    assert latest_sell[2] == 7
+    assert latest_sell[3] == pytest.approx(-27.16)
+    assert latest_sell[4] == "sell-dec"
+    assert json.loads(str(latest_sell[5]))["source"] == "websocket_hard_stop"
+    assert monitor.get("US_NASDAQ", "AAPL") is None
 
 
 @pytest.mark.asyncio
@@ -609,7 +779,7 @@ async def test_execute_trading_cycle_action_clears_realtime_hard_stop_after_succ
 
     assert execution_result["order_succeeded"] is True
     assert monitor.get("KR", "005930") is None
-    websocket_client.unsubscribe.assert_awaited_once_with("005930")
+    websocket_client.unsubscribe.assert_awaited_once_with("KR", "005930")
 
 
 @pytest.mark.asyncio
