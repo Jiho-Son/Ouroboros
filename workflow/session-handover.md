@@ -209,3 +209,19 @@
 - next_ticket: #461
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: KR websocket hard-stop 경로를 US_NASDAQ/US_NYSE/US_AMEX까지 일반화하되, favorable exit 책임은 유지하고 PR 본문 거버넌스 검증까지 선행한다.
+
+### 2026-03-09 | session=codex-issue461-runtime-observation
+- branch: feature/issue-461-runtime-observation
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #461
+- next_ticket: #461
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
+
+### 2026-03-09 | session=codex-issue465-466-467-review-followup
+- branch: fix/issue-465-466-467-overseas-order-rejection
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #465, #466, #467, PR #468 review comments
+- next_ticket: #465
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: PR 리뷰 후 pending-order resubmit network ambiguity는 롤백 금지로 보수화하고, 브로커 제출 상태 재조정은 별도 이슈로 추적한다.

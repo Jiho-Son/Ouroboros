@@ -31,6 +31,10 @@ def _resolve_overseas_market_code(exchange_code: str) -> str:
     for market_code, market in MARKETS.items():
         if market.exchange_code == exchange_code and not market.is_domestic:
             return market_code
+    logger.warning(
+        "Unknown overseas exchange code %s for pending-order rollback; using fallback market key",
+        exchange_code,
+    )
     return f"US_{exchange_code}"
 
 
@@ -65,6 +69,11 @@ def _require_order_acceptance(
         f"Order rejected ({order_type} {stock_code} {exchange_code} "
         f"rt_cd={result.get('rt_cd')} msg={result.get('msg1', '')})"
     )
+
+
+def _is_ambiguous_submit_error(exc: Exception) -> bool:
+    """Return True when submit result is unknown and rollback would be unsafe."""
+    return isinstance(exc, ConnectionError)
 
 
 async def handle_domestic_pending_orders(
@@ -227,6 +236,12 @@ async def handle_domestic_pending_orders(
                             logger.warning("notify_unfilled_order failed: %s", notify_exc)
                         if buy_cooldown is not None:
                             buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                        if _is_ambiguous_submit_error(exc):
+                            logger.warning(
+                                "Skip BUY rollback for KR %s: resubmit submit status unknown",
+                                stock_code,
+                            )
+                            continue
                         _rollback_pending_position(
                             rollback_open_position=rollback_open_position,
                             market_code="KR",
@@ -313,6 +328,12 @@ async def handle_domestic_pending_orders(
                             )
                         except Exception as notify_exc:
                             logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                        if _is_ambiguous_submit_error(exc):
+                            logger.warning(
+                                "Skip SELL rollback for KR %s: resubmit submit status unknown",
+                                stock_code,
+                            )
+                            continue
                         _rollback_pending_position(
                             rollback_open_position=rollback_open_position,
                             market_code="KR",
@@ -515,6 +536,13 @@ async def handle_overseas_pending_orders(
                                 logger.warning("notify_unfilled_order failed: %s", notify_exc)
                             if buy_cooldown is not None:
                                 buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                            if _is_ambiguous_submit_error(exc):
+                                logger.warning(
+                                    "Skip BUY rollback for %s %s: resubmit submit status unknown",
+                                    order_exchange,
+                                    stock_code,
+                                )
+                                continue
                             _rollback_pending_position(
                                 rollback_open_position=rollback_open_position,
                                 market_code=market_code,
@@ -615,6 +643,13 @@ async def handle_overseas_pending_orders(
                                 )
                             except Exception as notify_exc:
                                 logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                            if _is_ambiguous_submit_error(exc):
+                                logger.warning(
+                                    "Skip SELL rollback for %s %s: resubmit submit status unknown",
+                                    order_exchange,
+                                    stock_code,
+                                )
+                                continue
                             _rollback_pending_position(
                                 rollback_open_position=rollback_open_position,
                                 market_code=market_code,

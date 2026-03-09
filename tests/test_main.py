@@ -7829,6 +7829,76 @@ class TestHandleOverseasPendingOrders:
         assert notify_kwargs["action"] == "SELL"
         assert notify_kwargs["outcome"] == "cancelled"
 
+    @pytest.mark.asyncio
+    async def test_overseas_sell_resubmit_connection_error_skips_rollback(self) -> None:
+        """Network errors after SELL submit must not restore DB position blindly."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+
+        pending_order = {
+            "pdno": "ATRA",
+            "odno": "ORD008",
+            "sll_buy_dvsn_cd": "01",
+            "nccs_qty": "112",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "18.60"}})
+        overseas_broker.send_overseas_order = AsyncMock(
+            side_effect=ConnectionError("Network error sending overseas order: timeout")
+        )
+
+        await handle_overseas_pending_orders(
+            overseas_broker,
+            telegram,
+            settings,
+            {},
+            rollback_open_position=rollback_open_position,
+        )
+
+        rollback_open_position.assert_not_called()
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["action"] == "SELL"
+        assert notify_kwargs["outcome"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_domestic_buy_resubmit_connection_error_skips_rollback(self) -> None:
+        """Network errors after KR BUY submit must not close DB position blindly."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORDKR3",
+            "ord_gno_brno": "001",
+            "sll_buy_dvsn_cd": "02",
+            "psbl_qty": "3",
+            "order_exchange": "KRX",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(70000.0, 0.0, 0.0))
+        broker.send_order = AsyncMock(side_effect=ConnectionError("Network error sending order"))
+
+        await handle_domestic_pending_orders(
+            broker,
+            telegram,
+            settings,
+            {},
+            {},
+            rollback_open_position=rollback_open_position,
+        )
+
+        rollback_open_position.assert_not_called()
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["action"] == "BUY"
+        assert notify_kwargs["outcome"] == "cancelled"
+
 
 # ---------------------------------------------------------------------------
 # Domestic Pending Order Handling
