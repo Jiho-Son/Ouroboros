@@ -192,7 +192,15 @@ async def _clear_realtime_hard_stop_tracking(
 
     monitor.remove(market.code, stock_code)
     if websocket_client is not None:
-        await websocket_client.unsubscribe(stock_code)
+        try:
+            await websocket_client.unsubscribe(stock_code)
+        except Exception as exc:
+            logger.warning(
+                "Realtime hard-stop unsubscribe failed for %s (%s): %s",
+                stock_code,
+                market.name,
+                exc,
+            )
 
 
 async def _handle_realtime_hard_stop_trigger(

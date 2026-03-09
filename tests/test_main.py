@@ -399,6 +399,81 @@ async def test_execute_trading_cycle_action_keeps_realtime_hard_stop_after_rejec
 
 
 @pytest.mark.asyncio
+async def test_execute_trading_cycle_action_ignores_unsubscribe_failure_after_successful_sell(
+) -> None:
+    db_conn = init_db(":memory:")
+    log_trade(
+        conn=db_conn,
+        stock_code="005930",
+        action="BUY",
+        confidence=87,
+        rationale="initial entry",
+        quantity=7,
+        price=100.0,
+        pnl=0.0,
+        market="KR",
+        exchange_code="KRX",
+        session_id="KRX_REG",
+        decision_id="buy-dec",
+        mode="live",
+    )
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    decision_logger = MagicMock()
+    monitor = RealtimeHardStopMonitor()
+    websocket_client = MagicMock()
+    websocket_client.unsubscribe = AsyncMock(side_effect=RuntimeError("ws down"))
+    monitor.register(
+        market_code="KR",
+        stock_code="005930",
+        entry_price=100.0,
+        quantity=7,
+        hard_stop_pct=-3.5,
+        decision_id="buy-dec",
+        position_timestamp="2026-03-09T00:00:00+00:00",
+    )
+
+    execution_result = await _execute_trading_cycle_action(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        telegram=MagicMock(notify_trade_execution=AsyncMock()),
+        market=MARKETS["KR"],
+        stock_code="005930",
+        runtime_session_id="KRX_REG",
+        snapshot={
+            "current_price": 96.0,
+            "total_cash": 1_000_000.0,
+            "pnl_pct": -4.0,
+            "candidate": None,
+            "balance_data": {"output1": [{"pdno": "005930", "hldg_qty": "7"}]},
+        },
+        decision_data={
+            "decision": main_module.TradeDecision(
+                action="SELL",
+                confidence=90,
+                rationale="polling sell",
+            ),
+            "match": _make_sell_match(),
+            "decision_id": "sell-dec",
+        },
+        settings=_make_settings(),
+        realtime_hard_stop_monitor=monitor,
+        realtime_hard_stop_client=websocket_client,
+    )
+
+    assert execution_result["order_succeeded"] is True
+    assert execution_result["trade_pnl"] == pytest.approx(-28.0)
+    decision_logger.update_outcome.assert_called_once_with(
+        decision_id="buy-dec",
+        pnl=pytest.approx(-28.0),
+        accuracy=0,
+    )
+
+
+@pytest.mark.asyncio
 async def test_restart_realtime_hard_stop_task_if_needed_restarts_completed_task() -> None:
     async def _finished() -> None:
         return None
