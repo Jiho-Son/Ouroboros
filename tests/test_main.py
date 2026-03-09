@@ -636,6 +636,7 @@ async def test_handle_realtime_hard_stop_trigger_submits_overseas_sell_and_logs_
         exchange_code="NASD",
         session_id="US_REG",
         decision_id="buy-dec",
+        selection_context={"fx_rate": 1200.0},
         mode="live",
     )
     decision_logger = MagicMock()
@@ -650,6 +651,7 @@ async def test_handle_realtime_hard_stop_trigger_submits_overseas_sell_and_logs_
         return_value={
             "output1": [{"ovrs_pdno": "AAPL", "ord_psbl_qty": "7", "ovrs_excg_cd": "NASD"}],
             "output2": [{}],
+            "exchange_rate": "1260.0",
         }
     )
     overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
@@ -696,7 +698,7 @@ async def test_handle_realtime_hard_stop_trigger_submits_overseas_sell_and_logs_
     )
     latest_sell = db_conn.execute(
         """
-        SELECT action, price, quantity, pnl, decision_id, selection_context
+        SELECT action, price, quantity, pnl, decision_id, selection_context, strategy_pnl, fx_pnl
         FROM trades
         ORDER BY id DESC
         LIMIT 1
@@ -708,7 +710,11 @@ async def test_handle_realtime_hard_stop_trigger_submits_overseas_sell_and_logs_
     assert latest_sell[2] == 7
     assert latest_sell[3] == pytest.approx(-27.16)
     assert latest_sell[4] == "sell-dec"
-    assert json.loads(str(latest_sell[5]))["source"] == "websocket_hard_stop"
+    selection_context = json.loads(str(latest_sell[5]))
+    assert selection_context["source"] == "websocket_hard_stop"
+    assert selection_context["fx_rate"] == pytest.approx(1260.0)
+    assert latest_sell[6] == pytest.approx(-62.16)
+    assert latest_sell[7] == pytest.approx(35.0)
     assert monitor.get("US_NASDAQ", "AAPL") is None
 
 

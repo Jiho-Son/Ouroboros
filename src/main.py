@@ -252,6 +252,8 @@ async def _handle_realtime_hard_stop_trigger(
         monitor.release_in_flight(trigger.market_code, trigger.stock_code)
         return False
 
+    sell_fx_rate = _extract_fx_rate_from_sources(balance_data)
+
     if quantity <= 0:
         logger.info(
             "Realtime hard-stop skipped for %s: broker shows no sellable balance",
@@ -392,15 +394,23 @@ async def _handle_realtime_hard_stop_trigger(
                 _STOPLOSS_REENTRY_COOLDOWN_UNTIL[cooldown_key] = (
                     datetime.now(UTC).timestamp() + cooldown_minutes * 60
                 )
+            buy_fx_rate = _extract_buy_fx_rate(buy_trade)
             strategy_pnl, fx_pnl = _split_trade_pnl_components(
                 market=market,
                 trade_pnl=trade_pnl,
                 buy_price=buy_price,
                 sell_price=current_price,
                 quantity=sell_qty,
-                buy_fx_rate=None,
-                sell_fx_rate=None,
+                buy_fx_rate=buy_fx_rate,
+                sell_fx_rate=sell_fx_rate,
             )
+
+        selection_context: dict[str, Any] = {
+            "source": "websocket_hard_stop",
+            "hard_stop_price": trigger.hard_stop_price,
+        }
+        if sell_fx_rate is not None and not market.is_domestic:
+            selection_context["fx_rate"] = sell_fx_rate
 
         log_trade(
             conn=db_conn,
@@ -416,10 +426,7 @@ async def _handle_realtime_hard_stop_trigger(
             market=market.code,
             exchange_code=market.exchange_code,
             session_id=runtime_session_id,
-            selection_context={
-                "source": "websocket_hard_stop",
-                "hard_stop_price": trigger.hard_stop_price,
-            },
+            selection_context=selection_context,
             decision_id=decision_id,
             mode=settings.MODE if settings else "paper",
         )

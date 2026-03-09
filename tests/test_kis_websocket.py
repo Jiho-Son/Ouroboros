@@ -166,6 +166,22 @@ async def test_subscribe_does_not_resend_duplicate_registration() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subscribe_rejects_invalid_market_without_poisoning_state() -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=lambda _url: _FakeConnect(_FakeWebSocket(messages=[])),
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+    )
+
+    with pytest.raises(ValueError, match="unsupported realtime websocket market: US_OTC"):
+        await client.subscribe("US_OTC", "TQQQ")
+
+    assert client._subscriptions == set()
+
+
+@pytest.mark.asyncio
 async def test_run_reconnects_and_resubscribes_existing_symbols() -> None:
     broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
     first_ws = _FakeWebSocket(messages=[RuntimeError("boom")])
