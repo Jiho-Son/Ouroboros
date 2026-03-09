@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from src.db import init_db
-from src.logging.decision_logger import DecisionLog, DecisionLogger
+from src.decision_logging.decision_logger import DecisionLog, DecisionLogger
 
 
 @pytest.fixture

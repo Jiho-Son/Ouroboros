@@ -13,9 +13,9 @@ import pytest
 from src.context.layer import ContextLayer
 from src.context.store import ContextStore
 from src.db import init_db, log_trade
+from src.decision_logging.decision_logger import DecisionLogger
 from src.evolution.daily_review import DailyReviewer
 from src.evolution.scorecard import DailyScorecard
-from src.logging.decision_logger import DecisionLogger
 
 TODAY = datetime.now(UTC).strftime("%Y-%m-%d")
 

@@ -19,6 +19,7 @@ import pytest
 
 from src.config import Settings
 from src.db import init_db, log_trade
+from src.decision_logging.decision_logger import DecisionLogger
 from src.evolution.ab_test import ABTester
 from src.evolution.optimizer import EvolutionOptimizer
 from src.evolution.performance_tracker import (
@@ -26,7 +27,6 @@ from src.evolution.performance_tracker import (
     PerformanceTracker,
     StrategyMetrics,
 )
-from src.logging.decision_logger import DecisionLogger
 
 # ------------------------------------------------------------------
 # Fixtures
