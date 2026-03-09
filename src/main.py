@@ -136,6 +136,7 @@ def _rollback_pending_order_position(
     exchange_code: str,
     stock_code: str,
     action: str,
+    quantity: int | None = None,
     runtime_session_id: str,
     settings: Settings,
 ) -> None:
@@ -187,7 +188,7 @@ def _rollback_pending_order_position(
         action="BUY",
         confidence=0,
         rationale="[pending-sell-restore] Cancelled unfilled SELL without replacement",
-        quantity=int(buy_trade.get("quantity") or 0),
+        quantity=int(quantity if quantity is not None else (buy_trade.get("quantity") or 0)),
         price=float(buy_trade["price"]),
         pnl=0.0,
         market=market_code,

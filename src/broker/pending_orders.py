@@ -10,6 +10,10 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from src.broker.balance_utils import (
+    _extract_held_codes_from_balance,
+    _extract_held_qty_from_balance,
+)
 from src.broker.kis_api import KISBroker, kr_round_down
 from src.broker.overseas import OverseasBroker
 from src.config import Settings
@@ -45,15 +49,19 @@ def _rollback_pending_position(
     exchange_code: str,
     stock_code: str,
     action: str,
+    quantity: int | None = None,
 ) -> None:
     if rollback_open_position is None:
         return
-    rollback_open_position(
-        market_code=market_code,
-        exchange_code=exchange_code,
-        stock_code=stock_code,
-        action=action,
-    )
+    kwargs: dict[str, Any] = {
+        "market_code": market_code,
+        "exchange_code": exchange_code,
+        "stock_code": stock_code,
+        "action": action,
+    }
+    if quantity is not None:
+        kwargs["quantity"] = quantity
+    rollback_open_position(**kwargs)
 
 
 def _require_order_acceptance(
@@ -74,6 +82,172 @@ def _require_order_acceptance(
 def _is_ambiguous_submit_error(exc: Exception) -> bool:
     """Return True when submit result is unknown and rollback would be unsafe."""
     return isinstance(exc, ConnectionError)
+
+
+def _has_matching_domestic_pending_order(
+    orders: list[dict[str, Any]],
+    *,
+    stock_code: str,
+    action: str,
+    exchange_code: str,
+) -> bool:
+    expected_side = "02" if action == "BUY" else "01"
+    normalized_stock_code = stock_code.strip().upper()
+    normalized_exchange_code = exchange_code.strip().upper()
+    for order in orders:
+        pending_stock_code = str(order.get("pdno", "")).strip().upper()
+        pending_side = str(order.get("sll_buy_dvsn_cd", "")).strip()
+        pending_exchange = str(order.get("order_exchange") or exchange_code).strip().upper()
+        pending_qty = int(order.get("psbl_qty", "0") or "0")
+        if (
+            pending_stock_code == normalized_stock_code
+            and pending_side == expected_side
+            and pending_exchange == normalized_exchange_code
+            and pending_qty > 0
+        ):
+            return True
+    return False
+
+
+def _has_matching_overseas_pending_order(
+    orders: list[dict[str, Any]],
+    *,
+    stock_code: str,
+    action: str,
+    exchange_code: str,
+) -> bool:
+    expected_side = "02" if action == "BUY" else "01"
+    normalized_stock_code = stock_code.strip().upper()
+    normalized_exchange_code = exchange_code.strip().upper()
+    for order in orders:
+        pending_stock_code = str(order.get("pdno", "")).strip().upper()
+        pending_side = str(order.get("sll_buy_dvsn_cd", "")).strip()
+        pending_exchange = str(order.get("ovrs_excg_cd") or exchange_code).strip().upper()
+        pending_qty = int(order.get("nccs_qty", "0") or "0")
+        if (
+            pending_stock_code == normalized_stock_code
+            and pending_side == expected_side
+            and pending_exchange == normalized_exchange_code
+            and pending_qty > 0
+        ):
+            return True
+    return False
+
+
+async def _reconcile_domestic_ambiguous_submit(
+    broker: KISBroker,
+    *,
+    stock_code: str,
+    action: str,
+    exchange_code: str,
+) -> tuple[str, int | None]:
+    """Return state and broker-confirmed qty for a domestic ambiguous resubmit."""
+    try:
+        refreshed_orders = await broker.get_domestic_pending_orders()
+    except Exception as exc:
+        logger.warning(
+            "Failed to reconcile domestic ambiguous %s submit for %s via pending orders: %s",
+            action,
+            stock_code,
+            exc,
+        )
+    else:
+        if _has_matching_domestic_pending_order(
+            refreshed_orders,
+            stock_code=stock_code,
+            action=action,
+            exchange_code=exchange_code,
+        ):
+            if action == "SELL":
+                for order in refreshed_orders:
+                    if _has_matching_domestic_pending_order(
+                        [order],
+                        stock_code=stock_code,
+                        action=action,
+                        exchange_code=exchange_code,
+                    ):
+                        return "pending", int(order.get("psbl_qty", "0") or "0")
+            return "pending", None
+
+    try:
+        balance_data = await broker.get_balance()
+    except Exception as exc:
+        logger.warning(
+            "Failed to reconcile domestic ambiguous %s submit for %s via holdings: %s",
+            action,
+            stock_code,
+            exc,
+        )
+        return "unknown", None
+
+    held_codes = _extract_held_codes_from_balance(balance_data, is_domestic=True)
+    if stock_code.strip().upper() in held_codes:
+        return (
+            "held",
+            _extract_held_qty_from_balance(balance_data, stock_code, is_domestic=True),
+        )
+    return "absent", None
+
+
+async def _reconcile_overseas_ambiguous_submit(
+    overseas_broker: OverseasBroker,
+    *,
+    stock_code: str,
+    action: str,
+    exchange_code: str,
+) -> tuple[str, int | None]:
+    """Return state and broker-confirmed qty for an overseas ambiguous resubmit."""
+    try:
+        refreshed_orders = await overseas_broker.get_overseas_pending_orders(exchange_code)
+    except Exception as exc:
+        logger.warning(
+            "Failed to reconcile overseas ambiguous %s submit for %s %s via pending orders: %s",
+            action,
+            exchange_code,
+            stock_code,
+            exc,
+        )
+    else:
+        if _has_matching_overseas_pending_order(
+            refreshed_orders,
+            stock_code=stock_code,
+            action=action,
+            exchange_code=exchange_code,
+        ):
+            if action == "SELL":
+                for order in refreshed_orders:
+                    if _has_matching_overseas_pending_order(
+                        [order],
+                        stock_code=stock_code,
+                        action=action,
+                        exchange_code=exchange_code,
+                    ):
+                        return "pending", int(order.get("nccs_qty", "0") or "0")
+            return "pending", None
+
+    try:
+        balance_data = await overseas_broker.get_overseas_balance(exchange_code)
+    except Exception as exc:
+        logger.warning(
+            "Failed to reconcile overseas ambiguous %s submit for %s %s via holdings: %s",
+            action,
+            exchange_code,
+            stock_code,
+            exc,
+        )
+        return "unknown", None
+
+    held_codes = _extract_held_codes_from_balance(
+        balance_data,
+        is_domestic=False,
+        exchange_code=exchange_code,
+    )
+    if stock_code.strip().upper() in held_codes:
+        return (
+            "held",
+            _extract_held_qty_from_balance(balance_data, stock_code, is_domestic=False),
+        )
+    return "absent", None
 
 
 async def handle_domestic_pending_orders(
@@ -234,14 +408,50 @@ async def handle_domestic_pending_orders(
                             )
                         except Exception as notify_exc:
                             logger.warning("notify_unfilled_order failed: %s", notify_exc)
-                        if buy_cooldown is not None:
-                            buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                        if _is_ambiguous_submit_error(exc):
+                            reconcile_state, _ = await _reconcile_domestic_ambiguous_submit(
+                                broker,
+                                stock_code=stock_code,
+                                action="BUY",
+                                exchange_code=order_exchange,
+                            )
+                            if reconcile_state == "pending":
+                                sell_resubmit_counts[buy_resubmit_key] = (
+                                    sell_resubmit_counts.get(buy_resubmit_key, 0) + 1
+                                )
+                                logger.warning(
+                                    "Confirm BUY resubmit pending for KR %s after ambiguous submit",
+                                    stock_code,
+                                )
+                                continue
+                            if reconcile_state == "held":
+                                logger.warning(
+                                    "Confirm BUY holding for KR %s after ambiguous submit",
+                                    stock_code,
+                                )
+                                continue
+                            if reconcile_state == "unknown":
+                                if buy_cooldown is not None:
+                                    buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                                logger.warning(
+                                    "Skip BUY rollback for KR %s: resubmit submit status unknown",
+                                    stock_code,
+                                )
+                                continue
+                            if buy_cooldown is not None:
+                                buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                                logger.warning(
+                                    "Confirm BUY absence for KR %s after ambiguous submit",
+                                    stock_code,
+                                )
+                        else:
+                            if buy_cooldown is not None:
+                                buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
                         if _is_ambiguous_submit_error(exc):
                             logger.warning(
-                                "Skip BUY rollback for KR %s: resubmit submit status unknown",
+                                "Rollback BUY for KR %s after broker confirms no replacement",
                                 stock_code,
                             )
-                            continue
                         _rollback_pending_position(
                             rollback_open_position=rollback_open_position,
                             market_code="KR",
@@ -318,6 +528,7 @@ async def handle_domestic_pending_orders(
                             stock_code,
                             exc,
                         )
+                        reconciled_qty: int | None = None
                         try:
                             await telegram.notify_unfilled_order(
                                 stock_code=stock_code,
@@ -329,17 +540,46 @@ async def handle_domestic_pending_orders(
                         except Exception as notify_exc:
                             logger.warning("notify_unfilled_order failed: %s", notify_exc)
                         if _is_ambiguous_submit_error(exc):
-                            logger.warning(
-                                "Skip SELL rollback for KR %s: resubmit submit status unknown",
-                                stock_code,
-                            )
-                            continue
+                            reconcile_state, reconciled_qty = (
+                                await _reconcile_domestic_ambiguous_submit(
+                                broker,
+                                stock_code=stock_code,
+                                action="SELL",
+                                exchange_code=order_exchange,
+                            ))
+                            if reconcile_state == "pending":
+                                sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
+                                logger.warning(
+                                    "Restore SELL position for KR %s: "
+                                    "broker confirms pending replacement",
+                                    stock_code,
+                                )
+                            elif reconcile_state == "held":
+                                logger.warning(
+                                    "Restore SELL position for KR %s: "
+                                    "broker still reports holdings",
+                                    stock_code,
+                                )
+                            elif reconcile_state == "absent":
+                                logger.warning(
+                                    "Keep SELL position closed for KR %s: "
+                                    "broker confirms no holding",
+                                    stock_code,
+                                )
+                                continue
+                            else:
+                                logger.warning(
+                                    "Skip SELL rollback for KR %s: resubmit submit status unknown",
+                                    stock_code,
+                                )
+                                continue
                         _rollback_pending_position(
                             rollback_open_position=rollback_open_position,
                             market_code="KR",
                             exchange_code=order_exchange,
                             stock_code=stock_code,
                             action="SELL",
+                            quantity=reconciled_qty,
                         )
 
         except Exception as exc:
@@ -534,15 +774,58 @@ async def handle_overseas_pending_orders(
                                 )
                             except Exception as notify_exc:
                                 logger.warning("notify_unfilled_order failed: %s", notify_exc)
-                            if buy_cooldown is not None:
-                                buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
                             if _is_ambiguous_submit_error(exc):
+                                reconcile_state, _ = await _reconcile_overseas_ambiguous_submit(
+                                    overseas_broker,
+                                    stock_code=stock_code,
+                                    action="BUY",
+                                    exchange_code=order_exchange,
+                                )
+                                if reconcile_state == "pending":
+                                    sell_resubmit_counts[buy_resubmit_key] = (
+                                        sell_resubmit_counts.get(buy_resubmit_key, 0) + 1
+                                    )
+                                    logger.warning(
+                                        "Confirm BUY resubmit pending for %s %s "
+                                        "after ambiguous submit",
+                                        order_exchange,
+                                        stock_code,
+                                    )
+                                    continue
+                                if reconcile_state == "held":
+                                    logger.warning(
+                                        "Confirm BUY holding for %s %s after ambiguous submit",
+                                        order_exchange,
+                                        stock_code,
+                                    )
+                                    continue
+                                if reconcile_state == "unknown":
+                                    if buy_cooldown is not None:
+                                        buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                                    logger.warning(
+                                        "Skip BUY rollback for %s %s: "
+                                        "resubmit submit status unknown",
+                                        order_exchange,
+                                        stock_code,
+                                    )
+                                    continue
+                                if buy_cooldown is not None:
+                                    buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
                                 logger.warning(
-                                    "Skip BUY rollback for %s %s: resubmit submit status unknown",
+                                    "Rollback BUY for %s %s after broker confirms no replacement",
                                     order_exchange,
                                     stock_code,
                                 )
-                                continue
+                            else:
+                                if buy_cooldown is not None:
+                                    buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                            if _is_ambiguous_submit_error(exc):
+                                # Reaching here means broker reconciliation confirmed absence.
+                                logger.warning(
+                                    "Rollback BUY for %s %s after broker confirms no replacement",
+                                    order_exchange,
+                                    stock_code,
+                                )
                             _rollback_pending_position(
                                 rollback_open_position=rollback_open_position,
                                 market_code=market_code,
@@ -633,6 +916,7 @@ async def handle_overseas_pending_orders(
                                 stock_code,
                                 exc,
                             )
+                            reconciled_qty: int | None = None
                             try:
                                 await telegram.notify_unfilled_order(
                                     stock_code=stock_code,
@@ -644,18 +928,51 @@ async def handle_overseas_pending_orders(
                             except Exception as notify_exc:
                                 logger.warning("notify_unfilled_order failed: %s", notify_exc)
                             if _is_ambiguous_submit_error(exc):
-                                logger.warning(
-                                    "Skip SELL rollback for %s %s: resubmit submit status unknown",
-                                    order_exchange,
-                                    stock_code,
-                                )
-                                continue
+                                reconcile_state, reconciled_qty = (
+                                    await _reconcile_overseas_ambiguous_submit(
+                                    overseas_broker,
+                                    stock_code=stock_code,
+                                    action="SELL",
+                                    exchange_code=order_exchange,
+                                ))
+                                if reconcile_state == "pending":
+                                    sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
+                                    logger.warning(
+                                        "Restore SELL position for %s %s: "
+                                        "broker confirms pending replacement",
+                                        order_exchange,
+                                        stock_code,
+                                    )
+                                elif reconcile_state == "held":
+                                    logger.warning(
+                                        "Restore SELL position for %s %s: "
+                                        "broker still reports holdings",
+                                        order_exchange,
+                                        stock_code,
+                                    )
+                                elif reconcile_state == "absent":
+                                    logger.warning(
+                                        "Keep SELL position closed for %s %s: "
+                                        "broker confirms no holding",
+                                        order_exchange,
+                                        stock_code,
+                                    )
+                                    continue
+                                else:
+                                    logger.warning(
+                                        "Skip SELL rollback for %s %s: "
+                                        "resubmit submit status unknown",
+                                        order_exchange,
+                                        stock_code,
+                                    )
+                                    continue
                             _rollback_pending_position(
                                 rollback_open_position=rollback_open_position,
                                 market_code=market_code,
                                 exchange_code=order_exchange,
                                 stock_code=stock_code,
                                 action="SELL",
+                                quantity=reconciled_qty,
                             )
 
             except Exception as exc:

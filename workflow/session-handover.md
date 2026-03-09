@@ -225,3 +225,11 @@
 - next_ticket: #465
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: PR 리뷰 후 pending-order resubmit network ambiguity는 롤백 금지로 보수화하고, 브로커 제출 상태 재조정은 별도 이슈로 추적한다.
+
+### 2026-03-09 | session=codex-issue469-start
+- branch: feature/issue-469-ambiguous-pending-reconcile
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #469, PR #468 review follow-up
+- next_ticket: #469
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: pending-order resubmit의 ambiguous submit은 broker pending orders와 holdings를 재조회해 BUY rollback/SELL restore를 broker 확인 후에만 수행한다. PR 본문은 governance validator 통과 후 생성한다.
