@@ -281,3 +281,11 @@
 - next_ticket: OOR-809
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: Rework attempt resets the stale workpad/branch context, reruns bootstrap plus publish/review preflight first, and only proceeds past kickoff if unattended remote delivery is actually available in this sandbox.
+
+### 2026-03-11 | session=codex-issue809-rework-v2
+- branch: feature/issue-809-harness-engineering-rework-v2
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-809 full issue body, linked article, stale bootstrap failure, GitHub preflight evidence
+- next_ticket: OOR-809
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Fresh rework branch cut from origin/main; replay only the harness migration commits, then revalidate bootstrap, docs sync, governance assets, and unattended GitHub publish path before recreating the PR.
