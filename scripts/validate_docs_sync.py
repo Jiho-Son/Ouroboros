@@ -11,7 +11,11 @@ REPO_ROOT = Path(".")
 REQUIRED_FILES = {
     "README.md": REPO_ROOT / "README.md",
     "CLAUDE.md": REPO_ROOT / "CLAUDE.md",
+    "AGENTS.md": REPO_ROOT / "AGENTS.md",
+    "agent_constraints": REPO_ROOT / "docs" / "agent-constraints.md",
     "commands": REPO_ROOT / "docs" / "commands.md",
+    "pr_template": REPO_ROOT / ".github" / "pull_request_template.md",
+    "push_skill": REPO_ROOT / ".codex" / "skills" / "push" / "SKILL.md",
     "testing": REPO_ROOT / "docs" / "testing.md",
     "workflow": REPO_ROOT / "docs" / "workflow.md",
 }
@@ -52,6 +56,13 @@ def validate_summary_docs_reference_core_docs(errors: list[str]) -> None:
     required_links = {
         "README.md": ("docs/workflow.md", "docs/commands.md", "docs/testing.md"),
         "CLAUDE.md": ("docs/workflow.md", "docs/commands.md"),
+        "AGENTS.md": (
+            "docs/workflow.md",
+            "docs/commands.md",
+            "docs/agent-constraints.md",
+            "docs/README.md",
+            ".codex/worktree_init.sh",
+        ),
     }
     for file_name, links in required_links.items():
         doc_path = REQUIRED_FILES[file_name]
@@ -111,6 +122,52 @@ def validate_pr_body_postcheck_guidance(errors: list[str]) -> None:
                 errors.append(f"{path}: missing PR body post-check guidance token -> {token}")
 
 
+def validate_github_harness_guidance(errors: list[str]) -> None:
+    required_tokens = {
+        "commands": ("GitHub 기준", "gh auth status", "gh pr status"),
+        "workflow": (
+            "## Agent GitHub Preflight (Mandatory)",
+            "gh auth status",
+            "gh pr status",
+        ),
+        "agent_constraints": (
+            "GitHub issue/PR/comment operation",
+            "Use `gh` for GitHub operations.",
+        ),
+        "push_skill": (
+            ".github/pull_request_template.md",
+            "gh pr create",
+            "python3 scripts/validate_pr_body.py",
+            "pytest -v --cov=src --cov-report=term-missing",
+        ),
+    }
+    forbidden_tokens = {
+        "commands": (
+            "이 저장소의 티켓/PR/코멘트 작업은 Gitea 기준으로 수행한다.",
+            "`gh`(GitHub CLI) 명령 사용은 금지한다.",
+        ),
+        "workflow": (
+            "## Agent Gitea Preflight (Mandatory)",
+            "`gh issue`, `gh pr` 등 GitHub CLI 명령은 사용 금지다.",
+        ),
+        "agent_constraints": (
+            "Use `tea` for Gitea operations; do not use GitHub CLI (`gh`) "
+            "in this repository workflow.",
+        ),
+        "push_skill": ("mix pr_body.check", "make -C elixir all"),
+    }
+
+    for key, tokens in required_tokens.items():
+        path = REQUIRED_FILES[key]
+        text = _read(path)
+        for token in tokens:
+            if token not in text:
+                errors.append(f"{path}: missing GitHub harness guidance token -> {token}")
+        for token in forbidden_tokens[key]:
+            if token in text:
+                errors.append(f"{path}: stale harness guidance token present -> {token}")
+
+
 def main() -> int:
     errors: list[str] = []
 
@@ -123,8 +180,10 @@ def main() -> int:
 
     readme_text = _read(REQUIRED_FILES["README.md"])
     claude_text = _read(REQUIRED_FILES["CLAUDE.md"])
+    agents_text = _read(REQUIRED_FILES["AGENTS.md"])
     validate_links_resolve(REQUIRED_FILES["README.md"], readme_text, errors)
     validate_links_resolve(REQUIRED_FILES["CLAUDE.md"], claude_text, errors)
+    validate_links_resolve(REQUIRED_FILES["AGENTS.md"], agents_text, errors)
     validate_links_resolve(
         REQUIRED_FILES["commands"], _read(REQUIRED_FILES["commands"]), errors
     )
@@ -137,6 +196,7 @@ def main() -> int:
     validate_commands_endpoint_duplicates(errors)
     validate_testing_doc_has_dynamic_count_guidance(errors)
     validate_pr_body_postcheck_guidance(errors)
+    validate_github_harness_guidance(errors)
 
     if errors:
         print("[FAIL] docs sync validation failed")
@@ -149,6 +209,7 @@ def main() -> int:
     print("[OK] commands endpoint rows have no duplicates")
     print("[OK] testing doc includes dynamic count guidance")
     print("[OK] PR body post-check guidance exists in commands/workflow docs")
+    print("[OK] GitHub harness guidance matches current unattended workflow")
     return 0
 
 

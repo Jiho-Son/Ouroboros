@@ -13,7 +13,18 @@ STAMP="$(date -u +%Y%m%d_%H%M%S)"
 LOG_FILE="$LOG_DIR/backtest_gate_${STAMP}.log"
 
 log() {
-  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" | tee -a "$LOG_FILE"
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" | tee -a "$LOG_FILE" >&2
+}
+
+has_backtest_sensitive_changes() {
+  local pattern
+  pattern='^(src/analysis/|src/strategy/|src/strategies/|src/main.py|src/markets/|src/broker/|tests/test_backtest_|tests/test_triple_barrier.py|tests/test_walk_forward_split.py|tests/test_main.py|docs/ouroboros/)'
+
+  if command -v rg >/dev/null 2>&1; then
+    printf '%s\n' "$1" | rg -q "$pattern"
+  else
+    printf '%s\n' "$1" | grep -Eq "$pattern"
+  fi
 }
 
 run_cmd() {
@@ -46,9 +57,7 @@ resolve_mode_from_changes() {
   done <<< "$changed_files"
 
   # Backtest-sensitive areas: analysis/strategy/runtime execution semantics.
-  if printf '%s\n' "$changed_files" | rg -q \
-    '^(src/analysis/|src/strategy/|src/strategies/|src/main.py|src/markets/|src/broker/|tests/test_backtest_|tests/test_triple_barrier.py|tests/test_walk_forward_split.py|tests/test_main.py|docs/ouroboros/)'
-  then
+  if has_backtest_sensitive_changes "$changed_files"; then
     echo "full"
   else
     echo "skip"

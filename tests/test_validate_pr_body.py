@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -123,17 +122,16 @@ def test_validate_pr_body_text_rejects_governance_ids_in_code_block_only() -> No
     assert any("TEST-ID" in err for err in errors)
 
 
-def test_fetch_pr_body_reads_body_from_tea_api(monkeypatch) -> None:
+def test_fetch_pr_body_reads_body_from_gh_cli(monkeypatch) -> None:
     module = _load_module()
 
     def fake_run(cmd, check, capture_output, text):  # noqa: ANN001
-        assert cmd[0] == "/tmp/tea-bin"
+        assert cmd == ["gh", "pr", "view", "391", "--json", "body", "-q", ".body"]
         assert check is True
         assert capture_output is True
         assert text is True
-        return SimpleNamespace(stdout=json.dumps({"body": "## Summary\n- item"}))
+        return SimpleNamespace(stdout="## Summary\n- item\n")
 
-    monkeypatch.setattr(module, "resolve_tea_binary", lambda: "/tmp/tea-bin")
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     assert module.fetch_pr_body(391) == "## Summary\n- item"
 
@@ -142,34 +140,8 @@ def test_fetch_pr_body_rejects_non_string_body(monkeypatch) -> None:
     module = _load_module()
 
     def fake_run(cmd, check, capture_output, text):  # noqa: ANN001
-        return SimpleNamespace(stdout=json.dumps({"body": 123}))
+        return SimpleNamespace(stdout=123)
 
-    monkeypatch.setattr(module, "resolve_tea_binary", lambda: "/tmp/tea-bin")
     monkeypatch.setattr(module.subprocess, "run", fake_run)
     with pytest.raises(RuntimeError):
         module.fetch_pr_body(391)
-
-
-def test_resolve_tea_binary_falls_back_to_home_bin(monkeypatch, tmp_path) -> None:
-    module = _load_module()
-    tea_home = tmp_path / "bin" / "tea"
-    tea_home.parent.mkdir(parents=True)
-    tea_home.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
-    tea_home.chmod(0o755)
-
-    monkeypatch.setattr(module.shutil, "which", lambda _: None)
-    monkeypatch.setattr(module.Path, "home", lambda: tmp_path)
-    assert module.resolve_tea_binary() == str(tea_home)
-
-
-def test_resolve_tea_binary_rejects_non_executable_home_bin(monkeypatch, tmp_path) -> None:
-    module = _load_module()
-    tea_home = tmp_path / "bin" / "tea"
-    tea_home.parent.mkdir(parents=True)
-    tea_home.write_text("not executable\n", encoding="utf-8")
-    tea_home.chmod(0o644)
-
-    monkeypatch.setattr(module.shutil, "which", lambda _: None)
-    monkeypatch.setattr(module.Path, "home", lambda: tmp_path)
-    with pytest.raises(RuntimeError):
-        module.resolve_tea_binary()

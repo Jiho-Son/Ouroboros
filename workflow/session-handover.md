@@ -233,3 +233,11 @@
 - next_ticket: #469
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: pending-order resubmit의 ambiguous submit은 broker pending orders와 holdings를 재조회해 BUY rollback/SELL restore를 broker 확인 후에만 수행한다. PR 본문은 governance validator 통과 후 생성한다.
+
+### 2026-03-11 | session=codex-issue809-rework-v3
+- branch: feature/issue-809-harness-engineering-rework-v3
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-809 current Rework state, existing workpad, attached PR #806, rework comments
+- next_ticket: OOR-809
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Rework flow requires a fresh reset again from the current attached PR and workpad; verify handover, close stale PR #806, delete the old workpad, cut a new branch from origin/main, then rerun bootstrap and GitHub publish preflight before deciding whether any code changes remain.
