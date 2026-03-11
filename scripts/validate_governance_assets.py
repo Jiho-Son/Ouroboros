@@ -235,7 +235,7 @@ def main() -> int:
     warnings: list[str] = []
     changed_files = load_changed_files(sys.argv[1:], errors)
 
-    pr_template = Path(".gitea/PULL_REQUEST_TEMPLATE.md")
+    pr_template = Path(".github/pull_request_template.md")
     issue_template = Path(".gitea/ISSUE_TEMPLATE/runtime_verification.md")
     workflow_doc = Path("docs/workflow.md")
     commands_doc = Path("docs/commands.md")
@@ -245,19 +245,11 @@ def main() -> int:
     must_contain(
         pr_template,
         [
-            "Closes #N",
-            "Main -> Verifier Directive Contract",
-            "Coverage Matrix",
-            "NOT_OBSERVED",
-            "tea",
-            "gh",
-            "Session Handover Gate",
-            "session_handover_check.py --strict",
-            "READ-ONLY Approval",
-            "Touched READ-ONLY files",
-            "Human approval",
-            "Test suite 1",
-            "Test suite 2",
+            "## Linked Issue",
+            "## Scope",
+            "## Summary",
+            "## Validation",
+            "## Risks",
         ],
         errors,
     )
@@ -276,7 +268,8 @@ def main() -> int:
         [
             "Session Handover Gate (Mandatory)",
             "session_handover_check.py --strict",
-            "scripts/tea_comment.sh",
+            "Agent GitHub Preflight (Mandatory)",
+            "gh auth status",
         ],
         errors,
     )
@@ -285,8 +278,9 @@ def main() -> int:
         [
             "Session Handover Preflight (Mandatory)",
             "session_handover_check.py --strict",
-            "Comment Newline Escaping",
-            "scripts/tea_comment.sh",
+            "GitHub CLI",
+            "gh auth status",
+            "gh pr status",
         ],
         errors,
     )

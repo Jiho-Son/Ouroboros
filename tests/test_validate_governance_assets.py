@@ -214,7 +214,7 @@ def test_validate_read_only_approval_skips_when_no_readonly_file_changed() -> No
     assert warnings == []
 
 
-def test_must_contain_enforces_workflow_newline_helper_tokens(tmp_path) -> None:
+def test_must_contain_enforces_workflow_github_tokens(tmp_path) -> None:
     module = _load_module()
     workflow_doc = tmp_path / "workflow.md"
     workflow_doc.write_text(
@@ -222,7 +222,8 @@ def test_must_contain_enforces_workflow_newline_helper_tokens(tmp_path) -> None:
             [
                 "Session Handover Gate (Mandatory)",
                 "python3 scripts/session_handover_check.py --strict",
-                "scripts/tea_comment.sh",
+                "Agent GitHub Preflight (Mandatory)",
+                "gh auth status",
             ]
         ),
         encoding="utf-8",
@@ -233,14 +234,15 @@ def test_must_contain_enforces_workflow_newline_helper_tokens(tmp_path) -> None:
         [
             "Session Handover Gate (Mandatory)",
             "session_handover_check.py --strict",
-            "scripts/tea_comment.sh",
+            "Agent GitHub Preflight (Mandatory)",
+            "gh auth status",
         ],
         errors,
     )
     assert errors == []
 
 
-def test_must_contain_fails_when_workflow_missing_newline_helper_token(tmp_path) -> None:
+def test_must_contain_fails_when_workflow_missing_github_token(tmp_path) -> None:
     module = _load_module()
     workflow_doc = tmp_path / "workflow.md"
     workflow_doc.write_text(
@@ -255,13 +257,13 @@ def test_must_contain_fails_when_workflow_missing_newline_helper_token(tmp_path)
     errors: list[str] = []
     module.must_contain(
         workflow_doc,
-        ["scripts/tea_comment.sh"],
+        ["gh auth status"],
         errors,
     )
-    assert any("scripts/tea_comment.sh" in err for err in errors)
+    assert any("gh auth status" in err for err in errors)
 
 
-def test_must_contain_enforces_commands_newline_section_tokens(tmp_path) -> None:
+def test_must_contain_enforces_commands_github_tokens(tmp_path) -> None:
     module = _load_module()
     commands_doc = tmp_path / "commands.md"
     commands_doc.write_text(
@@ -269,8 +271,9 @@ def test_must_contain_enforces_commands_newline_section_tokens(tmp_path) -> None
             [
                 "Session Handover Preflight (Mandatory)",
                 "python3 scripts/session_handover_check.py --strict",
-                "Comment Newline Escaping",
-                "scripts/tea_comment.sh",
+                "GitHub CLI",
+                "gh auth status",
+                "gh pr status",
             ]
         ),
         encoding="utf-8",
@@ -281,15 +284,16 @@ def test_must_contain_enforces_commands_newline_section_tokens(tmp_path) -> None
         [
             "Session Handover Preflight (Mandatory)",
             "session_handover_check.py --strict",
-            "Comment Newline Escaping",
-            "scripts/tea_comment.sh",
+            "GitHub CLI",
+            "gh auth status",
+            "gh pr status",
         ],
         errors,
     )
     assert errors == []
 
 
-def test_must_contain_fails_when_commands_missing_newline_section_token(tmp_path) -> None:
+def test_must_contain_fails_when_commands_missing_github_token(tmp_path) -> None:
     module = _load_module()
     commands_doc = tmp_path / "commands.md"
     commands_doc.write_text(
@@ -297,7 +301,7 @@ def test_must_contain_fails_when_commands_missing_newline_section_token(tmp_path
             [
                 "Session Handover Preflight (Mandatory)",
                 "python3 scripts/session_handover_check.py --strict",
-                "scripts/tea_comment.sh",
+                "gh auth status",
             ]
         ),
         encoding="utf-8",
@@ -305,10 +309,10 @@ def test_must_contain_fails_when_commands_missing_newline_section_token(tmp_path
     errors: list[str] = []
     module.must_contain(
         commands_doc,
-        ["Comment Newline Escaping"],
+        ["gh pr status"],
         errors,
     )
-    assert any("Comment Newline Escaping" in err for err in errors)
+    assert any("gh pr status" in err for err in errors)
 
 
 def test_validate_task_test_pairing_reports_missing_test_reference(tmp_path) -> None:
