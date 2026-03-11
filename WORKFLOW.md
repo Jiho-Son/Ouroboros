@@ -20,11 +20,9 @@ workspace:
 hooks:
   after_create: |
     git clone git@github.com:Jiho-Son/Ouroboros.git .
-    if command -v mise >/dev/null 2>&1; then
-      cd elixir && mise trust && mise exec -- mix deps.get
-    fi
+    bash .codex/worktree_init.sh --dry-run
   before_remove: |
-    cd elixir && mise exec -- mix workspace.before_remove
+    true
 agent:
   max_concurrent_agents: 10
   max_turns: 20

@@ -59,6 +59,10 @@ def test_validate_summary_docs_reference_core_docs(monkeypatch) -> None:
             "docs/workflow.md docs/commands.md docs/testing.md"
         ),
         str(module.REQUIRED_FILES["CLAUDE.md"]): "docs/workflow.md docs/commands.md",
+        str(module.REQUIRED_FILES["AGENTS.md"]): (
+            "docs/workflow.md docs/commands.md docs/agent-constraints.md "
+            "docs/README.md .codex/worktree_init.sh"
+        ),
     }
 
     def fake_read(path: Path) -> str:
@@ -77,6 +81,7 @@ def test_validate_summary_docs_reference_core_docs_reports_missing_links(
     fake_docs = {
         str(module.REQUIRED_FILES["README.md"]): "docs/workflow.md",
         str(module.REQUIRED_FILES["CLAUDE.md"]): "docs/workflow.md",
+        str(module.REQUIRED_FILES["AGENTS.md"]): "docs/workflow.md",
     }
 
     def fake_read(path: Path) -> str:
@@ -88,6 +93,8 @@ def test_validate_summary_docs_reference_core_docs_reports_missing_links(
     assert any("README.md" in err and "docs/commands.md" in err for err in errors)
     assert any("README.md" in err and "docs/testing.md" in err for err in errors)
     assert any("CLAUDE.md" in err and "docs/commands.md" in err for err in errors)
+    assert any("AGENTS.md" in err and "docs/commands.md" in err for err in errors)
+    assert any("AGENTS.md" in err and ".codex/worktree_init.sh" in err for err in errors)
 
 
 def test_validate_commands_endpoint_duplicates_reports_duplicates(monkeypatch) -> None:
@@ -162,3 +169,63 @@ def test_validate_pr_body_postcheck_guidance_reports_missing_tokens(
     module.validate_pr_body_postcheck_guidance(errors)
     assert any("commands.md" in err for err in errors)
     assert any("workflow.md" in err for err in errors)
+
+
+def test_validate_github_harness_guidance_passes(monkeypatch) -> None:
+    module = _load_module()
+    errors: list[str] = []
+    fake_docs = {
+        str(module.REQUIRED_FILES["commands"]): (
+            "GitHub 기준\n"
+            "gh auth status\n"
+            "gh pr status\n"
+        ),
+        str(module.REQUIRED_FILES["workflow"]): (
+            "## Agent GitHub Preflight (Mandatory)\n"
+            "gh auth status\n"
+            "gh pr status\n"
+        ),
+        str(module.REQUIRED_FILES["agent_constraints"]): (
+            "GitHub issue/PR/comment operation\n"
+            "Use `gh` for GitHub operations.\n"
+        ),
+        str(module.REQUIRED_FILES["push_skill"]): (
+            ".github/pull_request_template.md\n"
+            "gh pr create\n"
+            "python3 scripts/validate_pr_body.py\n"
+            "pytest -v --cov=src --cov-report=term-missing\n"
+        ),
+    }
+
+    def fake_read(path: Path) -> str:
+        return fake_docs[str(path)]
+
+    monkeypatch.setattr(module, "_read", fake_read)
+    module.validate_github_harness_guidance(errors)
+    assert errors == []
+
+
+def test_validate_github_harness_guidance_reports_stale_gitea_tokens(
+    monkeypatch,
+) -> None:
+    module = _load_module()
+    errors: list[str] = []
+    fake_docs = {
+        str(module.REQUIRED_FILES["commands"]): "tea Gitea",
+        str(module.REQUIRED_FILES["workflow"]): "## Agent Gitea Preflight (Mandatory)",
+        str(module.REQUIRED_FILES["agent_constraints"]): (
+            "Use `tea` for Gitea operations; do not use GitHub CLI (`gh`) "
+            "in this repository workflow."
+        ),
+        str(module.REQUIRED_FILES["push_skill"]): "mix pr_body.check\nmake -C elixir all",
+    }
+
+    def fake_read(path: Path) -> str:
+        return fake_docs[str(path)]
+
+    monkeypatch.setattr(module, "_read", fake_read)
+    module.validate_github_harness_guidance(errors)
+    assert any("commands.md" in err for err in errors)
+    assert any("workflow.md" in err for err in errors)
+    assert any("agent-constraints.md" in err for err in errors)
+    assert any("SKILL.md" in err for err in errors)

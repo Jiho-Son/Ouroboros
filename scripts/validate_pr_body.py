@@ -4,9 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
-import shutil
 import re
 import subprocess
 import sys
@@ -24,18 +21,6 @@ TEST_ID_PATTERN = re.compile(r"\bTEST-[A-Z0-9-]+-\d{3}\b")
 def _strip_code_segments(text: str) -> str:
     without_fences = FENCED_CODE_PATTERN.sub("", text)
     return INLINE_CODE_PATTERN.sub("", without_fences)
-
-
-def resolve_tea_binary() -> str:
-    tea_from_path = shutil.which("tea")
-    if tea_from_path:
-        return tea_from_path
-
-    tea_home = Path.home() / "bin" / "tea"
-    if tea_home.exists() and tea_home.is_file() and os.access(tea_home, os.X_OK):
-        return str(tea_home)
-
-    raise RuntimeError("tea binary not found (checked PATH and ~/bin/tea)")
 
 
 def validate_pr_body_text(text: str, *, check_governance: bool = True) -> list[str]:
@@ -62,16 +47,9 @@ def validate_pr_body_text(text: str, *, check_governance: bool = True) -> list[s
 
 
 def fetch_pr_body(pr_number: int) -> str:
-    tea_binary = resolve_tea_binary()
     try:
         completed = subprocess.run(
-            [
-                tea_binary,
-                "api",
-                "-R",
-                "origin",
-                f"repos/{{owner}}/{{repo}}/pulls/{pr_number}",
-            ],
+            ["gh", "pr", "view", str(pr_number), "--json", "body", "-q", ".body"],
             check=True,
             capture_output=True,
             text=True,
@@ -79,23 +57,22 @@ def fetch_pr_body(pr_number: int) -> str:
     except (subprocess.CalledProcessError, FileNotFoundError, PermissionError) as exc:
         raise RuntimeError(f"failed to fetch PR #{pr_number}: {exc}") from exc
 
-    try:
-        payload = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"failed to parse PR payload for #{pr_number}: {exc}") from exc
-
-    body = payload.get("body", "")
-    if not isinstance(body, str):
-        raise RuntimeError(f"unexpected PR body type for #{pr_number}: {type(body).__name__}")
-    return body
+    if not isinstance(completed.stdout, str):
+        raise RuntimeError(
+            f"unexpected PR body type for #{pr_number}: {type(completed.stdout).__name__}"
+        )
+    return completed.stdout.rstrip("\n")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate PR body markdown formatting, escaped-newline artifacts, and governance traceability."
+        description=(
+            "Validate PR body markdown formatting, escaped-newline artifacts, "
+            "and governance traceability."
+        )
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--pr", type=int, help="PR number to fetch via `tea api`")
+    group.add_argument("--pr", type=int, help="PR number to fetch via `gh pr view`")
     group.add_argument("--body-file", type=Path, help="Path to markdown body file")
     parser.add_argument(
         "--no-governance",
