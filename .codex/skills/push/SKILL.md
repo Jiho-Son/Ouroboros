@@ -9,8 +9,8 @@ description:
 
 ## Prerequisites
 
-- `gh` CLI is installed and available in `PATH`.
-- `gh auth status` succeeds for GitHub operations in this repo.
+- `GH_TOKEN` is exported for GitHub operations in this repo.
+- `python3 scripts/github_pr.py current` succeeds once a PR exists for the branch.
 
 ## Goals
 
@@ -26,7 +26,7 @@ description:
 ## Steps
 
 1. Identify current branch and confirm remote state.
-2. Run local validation (`make -C elixir all`) before pushing.
+2. Run local validation for the touched surface before pushing.
 3. Push branch to `origin` with upstream tracking if needed, using whatever
    remote URL is already configured.
 4. If push is not clean/rejected:
@@ -44,16 +44,15 @@ description:
    - Write a proper PR title that clearly describes the change outcome
    - For branch updates, explicitly reconsider whether current PR title still
      matches the latest scope; update it if it no longer does.
-6. Write/update PR body explicitly using `.github/pull_request_template.md`:
-   - Fill every section with concrete content for this change.
-   - Replace all placeholder comments (`<!-- ... -->`).
-   - Keep bullets/checkboxes where template expects them.
+6. Write/update PR body explicitly in `/tmp/pr_body.md`:
+   - Include concrete `## Summary`, `## Why`, and `## Validation` sections for this change.
+   - Keep REQ/TASK/TEST traceability IDs in narrative text so `scripts/validate_pr_body.py` can see them.
    - If PR already exists, refresh body content so it reflects the total PR
      scope (all intended work on the branch), not just the newest commits,
      including newly added work, removed work, or changed approach.
    - Do not reuse stale description text from earlier iterations.
-7. Validate PR body with `mix pr_body.check` and fix all reported issues.
-8. Reply with the PR URL from `gh pr view`.
+7. Validate PR body with `python3 scripts/validate_pr_body.py --body-file /tmp/pr_body.md` and fix all reported issues.
+8. Reply with the PR URL from `python3 scripts/github_pr.py field --field html_url`.
 
 ## Commands
 
@@ -62,7 +61,8 @@ description:
 branch=$(git branch --show-current)
 
 # Minimal validation gate
-make -C elixir all
+pytest -v --cov=src --cov-report=term-missing
+ruff check src/ tests/
 
 # Initial push: respect the current origin remote.
 git push -u origin HEAD
@@ -78,8 +78,8 @@ git push -u origin HEAD
 git push --force-with-lease origin HEAD
 
 # Ensure a PR exists (create only if missing)
-pr_state=$(gh pr view --json state -q .state 2>/dev/null || true)
-if [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
+pr_state=$(python3 scripts/github_pr.py field --field state 2>/dev/null || true)
+if [ "$pr_state" = "closed" ]; then
   echo "Current branch is tied to a closed PR; create a new branch + PR." >&2
   exit 1
 fi
@@ -87,25 +87,22 @@ fi
 # Write a clear, human-friendly title that summarizes the shipped change.
 pr_title="<clear PR title written for this change>"
 if [ -z "$pr_state" ]; then
-  gh pr create --title "$pr_title"
+  python3 scripts/github_pr.py create --title "$pr_title" --body-file /tmp/pr_body.md --base main
 else
   # Reconsider title on every branch update; edit if scope shifted.
-  gh pr edit --title "$pr_title"
+  pr_number=$(python3 scripts/github_pr.py field --field number)
+  python3 scripts/github_pr.py edit --pr "$pr_number" --title "$pr_title" --body-file /tmp/pr_body.md
 fi
 
-# Write/edit PR body to match .github/pull_request_template.md before validation.
+# Write/edit PR body in /tmp/pr_body.md before validation.
 # Example workflow:
-# 1) open the template and draft body content for this PR
-# 2) gh pr edit --body-file /tmp/pr_body.md
-# 3) for branch updates, re-check that title/body still match current diff
-
-tmp_pr_body=$(mktemp)
-gh pr view --json body -q .body > "$tmp_pr_body"
-(cd elixir && mix pr_body.check --file "$tmp_pr_body")
-rm -f "$tmp_pr_body"
+# 1) draft body content for this PR in /tmp/pr_body.md
+# 2) python3 scripts/validate_pr_body.py --body-file /tmp/pr_body.md
+# 3) python3 scripts/github_pr.py edit --pr <number> --body-file /tmp/pr_body.md
+# 4) python3 scripts/validate_pr_body.py --pr <number>
 
 # Show PR URL for the reply
-gh pr view --json url -q .url
+python3 scripts/github_pr.py field --field html_url
 ```
 
 ## Notes

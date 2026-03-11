@@ -20,20 +20,26 @@ workspace:
 hooks:
   after_create: |
     git clone git@github.com:Jiho-Son/Ouroboros.git .
-    if command -v mise >/dev/null 2>&1; then
-      cd elixir && mise trust && mise exec -- mix deps.get
+    if [ -f .codex/worktree_init.sh ]; then
+      bash .codex/worktree_init.sh
     fi
   before_remove: |
-    cd elixir && mise exec -- mix workspace.before_remove
+    if [ -f .codex/worktree_cleanup.sh ]; then
+      bash .codex/worktree_cleanup.sh
+    fi
 agent:
   max_concurrent_agents: 10
   max_turns: 20
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
+  command: >-
+    bash -lc 'source ~/.config/symphony/generate-token.sh &&
+    exec codex --config shell_environment_policy.inherit=all --config
+    sandbox_workspace_write.network_access=true
+    --config model_reasoning_effort=medium --model gpt-5.4 app-server'
   approval_policy: never
-  thread_sandbox: workspace-write
+  thread_sandbox: danger-full-access
   turn_sandbox_policy:
-    type: workspaceWrite
+    type: dangerFullAccess
 ---
 
 You are working on a Linear ticket `{{ issue.identifier }}`
@@ -83,6 +89,7 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - Treat a single persistent Linear comment as the source of truth for progress.
 - Use that single workpad comment for all progress and handoff notes; do not post separate "done"/summary comments.
 - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input: mirror it in the workpad and execute it before considering the work complete.
+- Treat repo-root hidden paths (for example `.codex/`) as in-scope project files when they exist under the checked-out workspace root.
 - When meaningful out-of-scope improvements are discovered during execution,
   file a separate Linear issue instead of expanding scope. The follow-up issue
   must include a clear title, description, and acceptance criteria, be placed in
@@ -125,14 +132,23 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
    - `Merging` -> on entry, open and follow `.codex/skills/land/SKILL.md`; do not call `gh pr merge` directly.
    - `Rework` -> run rework flow.
    - `Done` -> do nothing and shut down.
-4. Check whether a PR already exists for the current branch and whether it is closed.
+4. Run repo bootstrap preflight before implementation.
+   - If `.codex/worktree_init.sh` exists in the repo root, treat it as the canonical bootstrap entrypoint and execute it before implementation or verification work.
+   - If no repo-local bootstrap entrypoint exists, record that gap in the workpad and continue only when the repository has a clearly documented alternative.
+5. Run GitHub publish/review preflight before implementation.
+   - Verify `github.com` DNS resolution works from the current environment.
+   - Verify the branch can communicate with `origin` for fetch/push using a machine-usable auth path.
+   - Verify at least one machine-usable PR path is available for this session: local `gh`, an orchestrator-managed publisher, or another documented non-interactive bridge.
+   - Record the exact preflight result in the workpad `Notes`.
+   - If publish/review preflight fails and no machine-usable fallback exists, treat it as a true blocker immediately rather than deferring the failure to the end of implementation.
+6. Check whether a PR already exists for the current branch and whether it is closed.
    - If a branch PR exists and is `CLOSED` or `MERGED`, treat prior branch work as non-reusable for this run.
    - Create a fresh branch from `origin/main` and restart execution flow as a new attempt.
-5. For `Todo` tickets, do startup sequencing in this exact order:
+7. For `Todo` tickets, do startup sequencing in this exact order:
    - `update_issue(..., state: "In Progress")`
    - find/create `## Codex Workpad` bootstrap comment
    - only then begin analysis/planning/implementation work.
-6. Add a short comment if state and issue content are inconsistent, then proceed with the safest flow.
+8. Add a short comment if state and issue content are inconsistent, then proceed with the safest flow.
 
 ## Step 1: Start/continue execution (Todo or In Progress)
 
@@ -171,9 +187,9 @@ When a ticket has an attached PR, run this protocol before moving to `Human Revi
 
 1. Identify the PR number from issue links/attachments.
 2. Gather feedback from all channels:
-   - Top-level PR comments (`gh pr view --comments`).
-   - Inline review comments (`gh api repos/<owner>/<repo>/pulls/<pr>/comments`).
-   - Review summaries/states (`gh pr view --json reviews`).
+   - Top-level PR comments via the available machine PR client.
+   - Inline review comments via the available machine PR client or provider API bridge.
+   - Review summaries/states via the available machine PR client or provider API bridge.
 3. Treat every actionable reviewer comment (human or bot), including inline review comments, as blocking until one of these is true:
    - code/test/docs updated to address it, or
    - explicit, justified pushback reply is posted on that thread.
@@ -185,12 +201,14 @@ When a ticket has an attached PR, run this protocol before moving to `Human Revi
 
 Use this only when completion is blocked by missing required tools or missing auth/permissions that cannot be resolved in-session.
 
-- GitHub is **not** a valid blocker by default. Always try fallback strategies first (alternate remote/auth mode, then continue publish/review flow).
-- Do not move to `Human Review` for GitHub access/auth until all fallback strategies have been attempted and documented in the workpad.
-- If a non-GitHub required tool is missing, or required non-GitHub auth is unavailable, move the ticket to `Human Review` with a short blocker brief in the workpad that includes:
+- GitHub access is not a valid blocker until the Step 0 publish/review preflight fails and every documented machine-usable fallback has been attempted.
+- If `github.com` DNS, remote fetch/push, or PR create/read APIs are unavailable from the current environment and no machine-usable publisher bridge exists, treat GitHub as a true blocker and stop early.
+- Do not continue implementation once publish/review preflight has failed; surface the blocker immediately so unattended runs fail fast.
+- If a required tool/auth path is missing, move the ticket to `Human Review` with a short blocker brief in the workpad that includes:
   - what is missing,
+  - which fallback paths were attempted,
   - why it blocks required acceptance/validation,
-  - exact human action needed to unblock.
+  - exact infrastructure or credential change needed to unblock unattended publish/review.
 - Keep the brief concise and action-oriented; do not add extra top-level comments outside the workpad.
 
 ## Step 2: Execution phase (Todo -> In Progress -> Human Review)
@@ -232,7 +250,7 @@ Use this only when completion is blocked by missing required tools or missing au
     - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
     - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
 12. Only then move issue to `Human Review`.
-    - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `Human Review` with the blocker brief and explicit unblock actions.
+    - Exception: if blocked by missing required tools/auth per the blocked-access escape hatch, move to `Human Review` with the blocker brief and explicit unblock actions.
 13. For `Todo` tickets that already had a PR attached at kickoff:
     - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
     - Ensure branch was pushed with any required updates.
@@ -276,6 +294,7 @@ Use this only when completion is blocked by missing required tools or missing au
 - If issue state is `Backlog`, do not modify it; wait for human to move to `Todo`.
 - Do not edit the issue body/description for planning or progress tracking.
 - Use exactly one persistent workpad comment (`## Codex Workpad`) per issue.
+- Treat repo-root hidden directories and files as editable project content when they live under the checked-out workspace root.
 - If comment editing is unavailable in-session, use the update script. Only report blocked if both MCP editing and script-based editing are unavailable.
 - Temporary proof edits are allowed only for local verification and must be reverted before commit.
 - If out-of-scope improvements are found, create a separate Backlog issue rather

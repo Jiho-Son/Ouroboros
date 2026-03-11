@@ -6,10 +6,10 @@
 
 ## Repository VCS Rule (Mandatory)
 
-- 이 저장소의 티켓/PR/코멘트 작업은 Gitea 기준으로 수행한다.
-- `gh`(GitHub CLI) 명령 사용은 금지한다.
-- 기본 도구는 `tea`이며, `tea` 미지원 케이스만 Gitea API를 fallback으로 사용한다.
-- 실행 전 `docs/workflow.md`의 `Gitea CLI Formatting Troubleshooting`을 반드시 확인한다.
+- 이 저장소의 티켓/PR/코멘트 작업은 GitHub 기준으로 수행한다.
+- 인증/읽기 preflight 는 `gh auth status` 와 `gh pr status` 로 확인한다.
+- unattended PR 생성/수정/조회 기본 도구는 `python3 scripts/github_pr.py` 다.
+- 실행 전 `docs/workflow.md`의 GitHub preflight / PR body troubleshooting 섹션을 반드시 확인한다.
 
 ## Session Handover Preflight (Mandatory)
 
@@ -36,30 +36,43 @@ python3 scripts/validate_docs_sync.py
   - `duplicated API endpoint row`: `docs/commands.md` API endpoint 표 중복 행
   - `missing dynamic test count guidance`: `docs/testing.md`에 `pytest --collect-only -q` 가이드 누락
 
-### tea CLI (Gitea Command Line Tool)
+### GitHub Helper + CLI
 
-#### ❌ Comment Newline Escaping (`\n` rendered literally)
+#### Required publish preflight
 ```bash
-YES="" ~/bin/tea comment 374 "line1\nline2"
-# Web UI shows "\n" as text instead of line breaks
-```
-**💡 Reason:** Inline string escaping is interpreted literally before comment submission.
-
-**✅ Solution:** Use file-based helper to preserve multiline text
-```bash
-cat > /tmp/comment.md <<'EOF'
-line1
-line2
-EOF
-
-scripts/tea_comment.sh 374 /tmp/comment.md
+gh auth status
+git ls-remote origin HEAD
+python3 scripts/github_pr.py current
 ```
 
 **📝 Notes:**
-- `scripts/tea_comment.sh` accepts stdin with `-` as body source.
-- The helper fails fast when body looks like escaped-newline text only.
+- 현재 브랜치에 PR 이 없으면 `python3 scripts/github_pr.py current` 는 non-zero 로 끝날 수 있다.
+- 그 경우에도 helper 자체가 실행 가능하면 create/edit 경로는 사용 가능하다.
 
-#### PR Body Governance Preflight (Mandatory before `tea pulls create`)
+#### ❌ PR body stored with stale or escaped-newline text
+```bash
+python3 scripts/github_pr.py edit --pr 374 --body-file /tmp/pr_body.md
+# Body still fails validate_pr_body because draft text contains literal \n or stale content
+```
+**💡 Reason:** Draft body text was prepared incorrectly or not revalidated after edits.
+
+**✅ Solution:** Validate the file before and after upload
+```bash
+cat > /tmp/pr_body.md <<'EOF'
+## Summary
+- REQ-OPS-001 / TASK-OPS-001 / TEST-OPS-001
+EOF
+
+python3 scripts/validate_pr_body.py --body-file /tmp/pr_body.md
+python3 scripts/github_pr.py edit --pr 374 --body-file /tmp/pr_body.md
+python3 scripts/validate_pr_body.py --pr 374
+```
+
+**📝 Notes:**
+- `scripts/github_pr.py create`/`edit` reads the file contents exactly once.
+- Always re-run the post-check against the live PR after updating the body.
+
+#### PR Body Governance Preflight (Mandatory before `python3 scripts/github_pr.py create`)
 
 PR 본문 파일 준비 후, **생성 전에** 아래 명령으로 형식 + 거버넌스 traceability를 검증한다.
 
@@ -70,7 +83,7 @@ python3 scripts/validate_pr_body.py --body-file /tmp/pr_body.md
 검증 항목: `\n` 이스케이프, 마크다운 헤더, 리스트, **REQ-ID, TASK-ID, TEST-ID** 포함.
 
 검증 실패 시:
-- PR 본문에 실제 REQ-ID/TASK-ID/TEST-ID를 채운 뒤 재검증 통과 후에만 `tea pulls create` 실행
+- PR 본문에 실제 REQ-ID/TASK-ID/TEST-ID를 채운 뒤 재검증 통과 후에만 `python3 scripts/github_pr.py create` 실행
 - placeholder(`REQ-...`, `TASK-...`, `TEST-...`) 형태는 CI에서 실패 처리됨
 
 #### PR Body Post-Check (Mandatory)
@@ -85,57 +98,22 @@ python3 scripts/validate_pr_body.py --pr <PR_NUMBER>
 - PR 본문을 API patch 또는 파일 기반 본문으로 즉시 수정
 - 같은 명령으로 재검증 통과 후에만 리뷰/머지 진행
 
-#### ❌ TTY Error - Interactive Confirmation Fails
+#### ❌ Missing GitHub token for helper
 ```bash
-~/bin/tea issues create --repo X --title "Y" --description "Z"
-# Error: huh: could not open a new TTY: open /dev/tty: no such device or address
+python3 scripts/github_pr.py current
+# RuntimeError: GH_TOKEN or GITHUB_TOKEN is required
 ```
-**💡 Reason:** tea tries to open `/dev/tty` for interactive confirmation prompts, which is unavailable in non-interactive environments.
+**💡 Reason:** The unattended helper uses GitHub API auth from `GH_TOKEN`/`GITHUB_TOKEN`.
 
-**✅ Solution:** Use `YES=""` environment variable to bypass confirmation
+**✅ Solution:** Ensure the session exports a machine-usable GitHub token, then rerun preflight
 ```bash
-YES="" ~/bin/tea issues create --repo jihoson/The-Ouroboros --title "Title" --description "Body"
-YES="" ~/bin/tea issues edit <number> --repo jihoson/The-Ouroboros --description "Updated body"
-YES="" ~/bin/tea pulls create --repo jihoson/The-Ouroboros --head feature-branch --base main --title "Title" --description "Body"
-```
-
-**📝 Notes:**
-- Always set default login: `~/bin/tea login default local`
-- Use `--repo jihoson/The-Ouroboros` when outside repo directory
-- tea is preferred over direct Gitea API calls for consistency
-
-#### ❌ Wrong Parameter Name
-```bash
-tea issues create --body "text"
-# Error: flag provided but not defined: -body
-```
-**💡 Reason:** Parameter is `--description`, not `--body`.
-
-**✅ Solution:** Use correct parameter name
-```bash
-YES="" ~/bin/tea issues create --description "text"
-```
-
-### Gitea API (Direct HTTP Calls)
-
-#### ❌ Wrong Hostname
-```bash
-curl http://gitea.local:3000/api/v1/...
-# Error: Could not resolve host: gitea.local
-```
-**💡 Reason:** Gitea instance runs on `localhost:3000`, not `gitea.local`.
-
-**✅ Solution:** Use correct hostname (but prefer tea CLI)
-```bash
-curl http://localhost:3000/api/v1/repos/jihoson/The-Ouroboros/issues \
-  -H "Authorization: token $GITEA_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"title":"...", "body":"..."}'
+gh auth status
+python3 scripts/github_pr.py current
 ```
 
 **📝 Notes:**
-- Prefer `tea` CLI over direct API calls
-- Only use curl for operations tea doesn't support
+- `gh auth status` proves CLI auth, but unattended create/edit should still use `python3 scripts/github_pr.py`.
+- The helper infers owner/repo from `origin`, so it must be run inside the repo checkout.
 
 ### Git Commands
 

@@ -4,7 +4,7 @@
 
 **CRITICAL: All code changes MUST follow this workflow. Direct pushes to `main` are ABSOLUTELY PROHIBITED.**
 
-1. **Create Gitea Issue First** — All features, bug fixes, and policy changes require a Gitea issue before any code is written
+1. **Create Tracking Issue First** — All features, bug fixes, and policy changes require an active tracker item (for example a Linear ticket) before any code is written
 2. **Create Program Feature Branch** — Branch from `main` for the whole development stream
    - Format: `feature/{epic-or-stream-name}`
 3. **Create Ticket Temp Branch** — Branch from the program feature branch per ticket
@@ -16,23 +16,23 @@
 
 **Never commit directly to `main`.** This policy applies to all changes, no exceptions.
 
-## Agent Gitea Preflight (Mandatory)
+## Agent GitHub Preflight (Mandatory)
 
-Gitea 이슈/PR/코멘트 작업 전에 모든 에이전트는 아래를 먼저 확인해야 한다.
+GitHub PR/코멘트 작업 전에 모든 에이전트는 아래를 먼저 확인해야 한다.
 
-1. `docs/commands.md`의 `tea CLI` 실패 사례/해결 패턴 확인
-2. 본 문서의 `Gitea CLI Formatting Troubleshooting` 확인
-3. 명령 실행 전 `gh`(GitHub CLI) 사용 금지 확인
+1. `docs/commands.md`의 GitHub helper/CLI 실패 사례 확인
+2. 현재 세션에서 `gh auth status`가 통과하는지 확인
+3. `python3 scripts/github_pr.py current` 또는 `python3 scripts/github_pr.py field --field state` 로 머신 사용 가능한 PR 경로를 확인
 
 강제 규칙:
-- 이 저장소 협업 명령은 `tea`를 기본으로 사용한다.
-- `gh issue`, `gh pr` 등 GitHub CLI 명령은 사용 금지다.
-- `tea` 실패 시 동일 명령 재시도 전에 원인/수정사항을 PR 코멘트에 남긴다.
-- 필요한 경우에만 Gitea API(`localhost:3000`)를 fallback으로 사용한다.
+- 이 저장소 협업 명령은 GitHub 기준으로 수행한다.
+- unattended PR 생성/수정은 `python3 scripts/github_pr.py` 를 기본 경로로 사용한다.
+- `gh` 는 인증 상태 확인과 읽기성 점검에 사용할 수 있다.
+- GitHub 명령 실패 시 동일 명령 재시도 전에 원인/수정사항을 workpad/PR에 남긴다.
 
-## PR Governance Preflight (Mandatory before `tea pr create`)
+## PR Governance Preflight (Mandatory before `python3 scripts/github_pr.py create`)
 
-`tea pulls create` 실행 전에 아래 명령으로 PR 본문을 검증해야 한다.
+PR 생성 전에 아래 명령으로 PR 본문을 검증해야 한다.
 
 ```bash
 # PR 본문을 파일로 저장한 뒤 검증
@@ -87,11 +87,11 @@ python3 scripts/validate_pr_body.py --body-file /tmp/pr_body.md
 - 스케줄 게이트 실패 시 이슈 등록 후 원인/복구 계획 기록
 - `python` 대신 `python3` 기준으로 실행한다
 
-## Gitea CLI Formatting Troubleshooting
+## GitHub PR Body Troubleshooting
 
-Issue/PR 본문 작성 시 줄바꿈(`\n`)이 문자열 그대로 저장되는 문제가 반복될 수 있다. 원인은 `-d "...\n..."` 형태에서 쉘/CLI가 이스케이프를 실제 개행으로 해석하지 않기 때문이다.
+PR 본문 작성 시 줄바꿈(`\n`)이 문자열 그대로 저장되거나 본문이 오래된 상태로 유지되는 문제가 반복될 수 있다. 원인은 인라인 문자열 재사용 또는 수정 후 재검증 누락이다.
 
-코멘트도 동일한 문제가 자주 발생하므로, 코멘트는 파일 기반 래퍼를 표준으로 사용한다.
+본문/코멘트는 파일 기반 입력과 helper 재검증을 표준으로 사용한다.
 
 ```bash
 # 권장: 파일/STDIN 기반 코멘트 등록 (줄바꿈 보존)
@@ -102,15 +102,13 @@ cat > /tmp/review.md <<'EOF'
 - 항목 2
 EOF
 
-scripts/tea_comment.sh 374 /tmp/review.md
-# 또는
-cat /tmp/review.md | scripts/tea_comment.sh 374 -
+python3 scripts/github_pr.py edit --pr 374 --body-file /tmp/review.md
 ```
 
 권장 패턴:
 
 ```bash
-ISSUE_BODY=$(cat <<'EOF'
+PR_BODY=$(cat <<'EOF'
 ## Summary
 - 변경 내용 1
 - 변경 내용 2
@@ -125,28 +123,11 @@ ISSUE_BODY=$(cat <<'EOF'
 EOF
 )
 
-tea issues create \
-  -t "docs: 제목" \
-  -d "$ISSUE_BODY"
-```
-
-PR도 동일하게 적용:
-
-```bash
-PR_BODY=$(cat <<'EOF'
-## Summary
-- ...
-
-## Validation
-- python3 scripts/validate_ouroboros_docs.py
-EOF
-)
-
-tea pr create \
+python3 scripts/github_pr.py create \
   --base main \
   --head feature/issue-N-something \
-  --title "docs: ... (#N)" \
-  --description "$PR_BODY"
+  --title "docs: 제목" \
+  --body-file /tmp/pr_body.md
 ```
 
 PR 생성 직후 본문 무결성 검증(필수):
@@ -161,8 +142,8 @@ python3 scripts/validate_pr_body.py --pr <PR_NUMBER>
 
 금지 패턴:
 
-- `-d "line1\nline2"` (웹 UI에 `\n` 문자 그대로 노출될 수 있음)
-- 본문에 백틱/괄호를 인라인로 넣고 적절한 quoting 없이 즉시 실행
+- `python3 scripts/github_pr.py create --title "..." --body-file <missing>`
+- 본문을 수정한 뒤 `python3 scripts/validate_pr_body.py --pr <PR_NUMBER>` 재검증 생략
 
 ## Agent Workflow
 
@@ -182,7 +163,7 @@ Use **git worktree** or **subagents** (via the Task tool) to handle multiple req
 Deploy task-specific agents as needed instead of handling everything in the main conversation:
 
 - **Conversational Agent** (main) — Interface with user, coordinate other agents
-- **Ticket Management Agent** — Create/update Gitea issues, track task status
+- **Ticket Management Agent** — Create/update tracker items and GitHub PR state
 - **Design Agent** — Architectural planning, RFC documents, API design
 - **Code Writing Agent** — Implementation following specs
 - **Testing Agent** — Write tests, verify coverage, run test suites
