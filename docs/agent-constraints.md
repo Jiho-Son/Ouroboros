@@ -12,9 +12,9 @@ It is distinct from `docs/requirements-log.md`, which records **project/product 
 
 1. **Workflow enforcement**
    - Follow `docs/workflow.md` for all changes.
-   - Before any Gitea issue/PR/comment operation, read `docs/commands.md` and `docs/workflow.md` troubleshooting section.
-   - Use `tea` for Gitea operations; do not use GitHub CLI (`gh`) in this repository workflow.
-   - Create a Gitea issue before any code or documentation change.
+   - Before any GitHub issue/PR/comment operation, read `docs/commands.md` and `docs/workflow.md` troubleshooting section.
+   - Use `python3 scripts/github_pr.py` for unattended PR operations; use `gh` for auth/read-only preflight when helpful.
+   - Create or confirm a tracking issue before any code or documentation change.
    - Work on a feature branch `feature/issue-{N}-{short-description}` and open a PR.
    - Never commit directly to `main`.
 
@@ -61,6 +61,10 @@ It is distinct from `docs/requirements-log.md`, which records **project/product 
 - All agents must pre-read `docs/commands.md` and `docs/workflow.md` troubleshooting before running Gitea issue/PR/comment commands.
 - `gh` CLI is prohibited for repository ticket/PR operations; use `tea` (or documented Gitea API fallback only).
 - Session start must pass `python3 scripts/session_handover_check.py --strict`, with branch-matched entry in `workflow/session-handover.md`.
+
+### 2026-03-11
+
+- Repository collaboration is now GitHub-based for unattended runs; use `python3 scripts/github_pr.py` for PR create/edit/read and `gh auth status` for auth preflight.
 
 ### 2026-02-27
 

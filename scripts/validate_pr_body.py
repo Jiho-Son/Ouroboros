@@ -4,9 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
-import os
-import shutil
 import re
 import subprocess
 import sys
@@ -26,16 +23,21 @@ def _strip_code_segments(text: str) -> str:
     return INLINE_CODE_PATTERN.sub("", without_fences)
 
 
-def resolve_tea_binary() -> str:
-    tea_from_path = shutil.which("tea")
-    if tea_from_path:
-        return tea_from_path
-
-    tea_home = Path.home() / "bin" / "tea"
-    if tea_home.exists() and tea_home.is_file() and os.access(tea_home, os.X_OK):
-        return str(tea_home)
-
-    raise RuntimeError("tea binary not found (checked PATH and ~/bin/tea)")
+def _repo_from_origin() -> tuple[str, str]:
+    remote = subprocess.run(
+        ["git", "remote", "get-url", "origin"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if remote.startswith("git@github.com:"):
+        slug = remote.removeprefix("git@github.com:")
+    elif remote.startswith("https://github.com/"):
+        slug = remote.removeprefix("https://github.com/")
+    else:
+        raise RuntimeError(f"unsupported origin remote for GitHub PR lookup: {remote}")
+    owner, repo = slug.removesuffix(".git").split("/", 1)
+    return owner, repo
 
 
 def validate_pr_body_text(text: str, *, check_governance: bool = True) -> list[str]:
@@ -62,40 +64,36 @@ def validate_pr_body_text(text: str, *, check_governance: bool = True) -> list[s
 
 
 def fetch_pr_body(pr_number: int) -> str:
-    tea_binary = resolve_tea_binary()
+    owner, repo = _repo_from_origin()
     try:
         completed = subprocess.run(
             [
-                tea_binary,
-                "api",
-                "-R",
-                "origin",
-                f"repos/{{owner}}/{{repo}}/pulls/{pr_number}",
+                "python3",
+                "scripts/github_pr.py",
+                "field",
+                "--pr",
+                str(pr_number),
+                "--field",
+                "body",
             ],
             check=True,
             capture_output=True,
             text=True,
         )
     except (subprocess.CalledProcessError, FileNotFoundError, PermissionError) as exc:
-        raise RuntimeError(f"failed to fetch PR #{pr_number}: {exc}") from exc
-
-    try:
-        payload = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"failed to parse PR payload for #{pr_number}: {exc}") from exc
-
-    body = payload.get("body", "")
-    if not isinstance(body, str):
-        raise RuntimeError(f"unexpected PR body type for #{pr_number}: {type(body).__name__}")
-    return body
+        raise RuntimeError(f"failed to fetch PR #{pr_number} for {owner}/{repo}: {exc}") from exc
+    return completed.stdout.strip()
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Validate PR body markdown formatting, escaped-newline artifacts, and governance traceability."
+        description=(
+            "Validate PR body markdown formatting, escaped-newline artifacts, "
+            "and governance traceability."
+        )
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--pr", type=int, help="PR number to fetch via `tea api`")
+    group.add_argument("--pr", type=int, help="PR number to fetch via GitHub API helper")
     group.add_argument("--body-file", type=Path, help="Path to markdown body file")
     parser.add_argument(
         "--no-governance",

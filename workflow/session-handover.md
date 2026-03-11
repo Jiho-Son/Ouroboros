@@ -233,3 +233,51 @@
 - next_ticket: #469
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: pending-order resubmit의 ambiguous submit은 broker pending orders와 holdings를 재조회해 BUY rollback/SELL restore를 broker 확인 후에만 수행한다. PR 본문은 governance validator 통과 후 생성한다.
+
+### 2026-03-11 | session=codex-issue809-start
+- branch: feature/issue-809-harness-engineering-setup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-809
+
+### 2026-03-11 | session=codex-issue809-rework-pass
+- branch: feature/issue-809-harness-engineering-rework
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-809
+- next_ticket: OOR-809
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Rework attempt resumes after remote publish blockers were cleared; worktree already contains local harness/doc updates plus unrelated user edits, so validation and delivery must preserve existing changes.
+- next_ticket: OOR-809
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: origin fetch DNS resolution failed in the sandbox, so kickoff sync used the local `origin/main` ref at `92b783f` before branching.
+
+### 2026-03-11 | session=codex-issue809-workflow-policy-followup
+- branch: feature/issue-809-harness-engineering-setup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-809 blocker brief, Symphony workflow policy
+- next_ticket: OOR-809
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Symphony unattended flow currently conflicts with repo bootstrap and GitHub publish requirements, so workflow policy is being updated to require repo-local bootstrap, GitHub publish preflight, and repo-root hidden-path edit support.
+
+### 2026-03-11 | session=codex-issue809-resume-after-workflow-update
+- branch: feature/issue-809-harness-engineering-setup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-809 existing workpad, branch diff, workflow update note
+- next_ticket: OOR-809
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Resume from an inconsistent Todo state with an existing workpad and local changes; rerun strict handover, bootstrap, and publish/review preflight before deciding whether this run can proceed past validation.
+
+### 2026-03-11 | session=codex-issue809-workflow-recheck
+- branch: feature/issue-809-harness-engineering-setup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-809 live workpad, resumed branch diff, updated workflow template
+- next_ticket: OOR-809
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Revalidate bootstrap plus publish/review preflight after the workflow update so the issue can either finish cleanly or be re-blocked with current evidence.
+
+### 2026-03-11 | session=codex-issue809-rework-reset
+- branch: feature/issue-809-harness-engineering-rework
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-809 full issue body, prior workpad history, rework comments about missing PR evidence
+- next_ticket: OOR-809
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Rework attempt resets the stale workpad/branch context, reruns bootstrap plus publish/review preflight first, and only proceeds past kickoff if unattended remote delivery is actually available in this sandbox.
