@@ -216,7 +216,8 @@ async def _sync_realtime_hard_stop_monitor(
 
     if not open_position:
         logger.info(
-            "Realtime hard-stop monitor sync action=remove reason=no_open_position market=%s stock=%s",
+            "Realtime hard-stop monitor sync action=remove "
+            "reason=no_open_position market=%s stock=%s",
             market.code,
             stock_code,
         )
@@ -227,7 +228,8 @@ async def _sync_realtime_hard_stop_monitor(
 
     if decision_action != "HOLD":
         logger.info(
-            "Realtime hard-stop monitor sync action=remove reason=decision_not_hold market=%s stock=%s decision_action=%s",
+            "Realtime hard-stop monitor sync action=remove "
+            "reason=decision_not_hold market=%s stock=%s decision_action=%s",
             market.code,
             stock_code,
             decision_action,
@@ -240,7 +242,8 @@ async def _sync_realtime_hard_stop_monitor(
     raw_evidence = market_data.get("_staged_exit_evidence")
     if not isinstance(raw_evidence, dict):
         logger.info(
-            "Realtime hard-stop monitor sync action=remove reason=missing_staged_exit_evidence market=%s stock=%s",
+            "Realtime hard-stop monitor sync action=remove "
+            "reason=missing_staged_exit_evidence market=%s stock=%s",
             market.code,
             stock_code,
         )
@@ -254,7 +257,9 @@ async def _sync_realtime_hard_stop_monitor(
     quantity = int(open_position.get("quantity") or 0)
     if stop_loss_pct >= 0 or entry_price <= 0 or quantity <= 0:
         logger.info(
-            "Realtime hard-stop monitor sync action=remove reason=invalid_tracking_inputs market=%s stock=%s stop_loss_pct=%.4f entry_price=%.4f quantity=%d",
+            "Realtime hard-stop monitor sync action=remove "
+            "reason=invalid_tracking_inputs market=%s stock=%s "
+            "stop_loss_pct=%.4f entry_price=%.4f quantity=%d",
             market.code,
             stock_code,
             stop_loss_pct,
@@ -267,7 +272,8 @@ async def _sync_realtime_hard_stop_monitor(
         return
 
     logger.info(
-        "Realtime hard-stop monitor sync action=register market=%s stock=%s stop_loss_pct=%.4f quantity=%d",
+        "Realtime hard-stop monitor sync action=register market=%s "
+        "stock=%s stop_loss_pct=%.4f quantity=%d",
         market.code,
         stock_code,
         stop_loss_pct,
@@ -327,7 +333,8 @@ async def _handle_realtime_hard_stop_trigger(
     runtime_session_id = get_session_info(market).session_id
     current_price = float(trigger.last_price)
     logger.info(
-        "Realtime hard-stop trigger handling started market=%s stock=%s last_price=%.4f hard_stop_price=%.4f source=websocket_hard_stop",
+        "Realtime hard-stop trigger handling started market=%s stock=%s "
+        "last_price=%.4f hard_stop_price=%.4f source=websocket_hard_stop",
         trigger.market_code,
         trigger.stock_code,
         current_price,
@@ -540,7 +547,8 @@ async def _handle_realtime_hard_stop_trigger(
             mode=settings.MODE if settings else "paper",
         )
         logger.info(
-            "Realtime hard-stop action=persisted market=%s stock=%s quantity=%d source=websocket_hard_stop decision_id=%s",
+            "Realtime hard-stop action=persisted market=%s stock=%s "
+            "quantity=%d source=websocket_hard_stop decision_id=%s",
             market.code,
             trigger.stock_code,
             quantity,
@@ -611,7 +619,8 @@ async def _handle_realtime_price_event(
 
     trigger = evaluation.trigger
     logger.info(
-        "Realtime price event action=dispatch_trigger market=%s stock=%s last_price=%.4f hard_stop_price=%.4f",
+        "Realtime price event action=dispatch_trigger market=%s stock=%s "
+        "last_price=%.4f hard_stop_price=%.4f",
         trigger.market_code,
         trigger.stock_code,
         float(trigger.last_price),
