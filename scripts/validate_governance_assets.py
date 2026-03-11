@@ -276,7 +276,8 @@ def main() -> int:
         [
             "Session Handover Gate (Mandatory)",
             "session_handover_check.py --strict",
-            "scripts/tea_comment.sh",
+            "Agent GitHub Preflight (Mandatory)",
+            "scripts/github_pr.py",
         ],
         errors,
     )
@@ -285,8 +286,9 @@ def main() -> int:
         [
             "Session Handover Preflight (Mandatory)",
             "session_handover_check.py --strict",
-            "Comment Newline Escaping",
-            "scripts/tea_comment.sh",
+            "GitHub Helper + CLI",
+            "gh auth status",
+            "scripts/github_pr.py",
         ],
         errors,
     )
