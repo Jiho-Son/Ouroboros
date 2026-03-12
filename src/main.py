@@ -470,6 +470,14 @@ async def _handle_realtime_hard_stop_trigger(
                 "source": "websocket_hard_stop",
             },
         )
+        if not market.is_domestic:
+            logger.info(
+                "Realtime hard-stop action=decision_logged market=%s stock=%s "
+                "source=websocket_hard_stop decision_id=%s",
+                market.code,
+                trigger.stock_code,
+                decision_id,
+            )
 
         try:
             await telegram.notify_trade_execution(
@@ -546,6 +554,15 @@ async def _handle_realtime_hard_stop_trigger(
             decision_id=decision_id,
             mode=settings.MODE if settings else "paper",
         )
+        if not market.is_domestic:
+            logger.info(
+                "Realtime hard-stop action=trade_logged market=%s stock=%s "
+                "quantity=%d source=websocket_hard_stop decision_id=%s",
+                market.code,
+                trigger.stock_code,
+                quantity,
+                decision_id,
+            )
         logger.info(
             "Realtime hard-stop action=persisted market=%s stock=%s "
             "quantity=%d source=websocket_hard_stop decision_id=%s",
@@ -588,13 +605,23 @@ async def _handle_realtime_price_event(
     websocket_client: KISWebSocketClient | None,
 ) -> None:
     """Apply favorable-exit peak hints before evaluating realtime hard-stop triggers."""
-    logger.debug(
-        "Realtime price event received market=%s stock=%s price=%.4f tr_id=%s",
-        event.market_code,
-        event.stock_code,
-        float(event.price),
-        event.tr_id,
-    )
+    if event.market_code.startswith("US_"):
+        logger.info(
+            "Realtime price event action=received_us_event market=%s "
+            "stock=%s price=%.4f tr_id=%s",
+            event.market_code,
+            event.stock_code,
+            float(event.price),
+            event.tr_id,
+        )
+    else:
+        logger.debug(
+            "Realtime price event received market=%s stock=%s price=%.4f tr_id=%s",
+            event.market_code,
+            event.stock_code,
+            float(event.price),
+            event.tr_id,
+        )
     tracked = monitor.get(event.market_code, event.stock_code)
     if tracked is not None:
         update_runtime_exit_peak(
@@ -608,13 +635,23 @@ async def _handle_realtime_price_event(
 
     evaluation = monitor.evaluate_price_diagnostic(event.market_code, event.stock_code, event.price)
     if evaluation.trigger is None:
-        logger.debug(
-            "Realtime price event action=no_trigger market=%s stock=%s reason=%s price=%.4f",
-            event.market_code,
-            event.stock_code,
-            evaluation.reason,
-            float(event.price),
-        )
+        if event.market_code.startswith("US_"):
+            logger.info(
+                "Realtime price event action=no_trigger market=%s stock=%s "
+                "reason=%s price=%.4f",
+                event.market_code,
+                event.stock_code,
+                evaluation.reason,
+                float(event.price),
+            )
+        else:
+            logger.debug(
+                "Realtime price event action=no_trigger market=%s stock=%s reason=%s price=%.4f",
+                event.market_code,
+                event.stock_code,
+                evaluation.reason,
+                float(event.price),
+            )
         return
 
     trigger = evaluation.trigger

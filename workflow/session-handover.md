@@ -249,3 +249,11 @@
 - next_ticket: OOR-810
 - process_gate_checked: process_ticket=OOR-810 merged_to_feature_branch=n/a
 - risks_or_notes: Restart the rework from fresh origin/main@8784453 after the workflow hook fix; preserve the user's unstaged WORKFLOW.md change while re-running reproduction, validation, and publish preflight in this sandbox.
+
+### 2026-03-12 | session=codex-issue408-start
+- branch: feature/issue-408-us-websocket-hard-stop-diagnostics
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #408, #461, #464
+- next_ticket: #408
+- process_gate_checked: process_ticket=#810 merged_to_feature_branch=yes
+- risks_or_notes: US websocket hard-stop 경로는 실제 운영 증적이 비어 있으므로 staged-exit 정책은 유지한 채 단계별 진단 로그/DB source 기록 경로만 강화하고 재시작 후 검증 기준까지 문서화한다.
