@@ -549,6 +549,36 @@ class TestGetCurrentPrice:
         assert params.get("FID_COND_MRKT_DIV_CODE") == "NX"
 
     @pytest.mark.asyncio
+    async def test_get_current_price_with_output_returns_raw_quote_payload(
+        self, broker: KISBroker
+    ) -> None:
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={
+                "rt_cd": "0",
+                "output": {
+                    "stck_prpr": "188600",
+                    "prdy_ctrt": "3.97",
+                    "frgn_ntby_qty": "12345",
+                    "stck_hgpr": "189500",
+                },
+            }
+        )
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.get", return_value=mock_resp):
+            price, change_pct, foreigner, output = await broker.get_current_price_with_output(
+                "005930"
+            )
+
+        assert price == 188600.0
+        assert change_pct == 3.97
+        assert foreigner == 12345.0
+        assert output["stck_hgpr"] == "189500"
+
+    @pytest.mark.asyncio
     async def test_http_error_raises_connection_error(self, broker: KISBroker) -> None:
         mock_resp = AsyncMock()
         mock_resp.status = 500

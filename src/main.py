@@ -72,6 +72,7 @@ from src.core.order_helpers import (
     _resolve_buy_suppression_position,
     _resolve_domestic_quote_market_div_code,
     _resolve_sell_qty_for_pnl,
+    _should_block_buy_chasing_session_high,
     _should_block_overseas_buy_for_fx_buffer,
     _should_force_exit_for_overnight,
 )
@@ -722,6 +723,33 @@ def safe_float(value: str | float | None, default: float = 0.0) -> float:
         return default
 
 
+def _extract_session_high_price(price_output: dict[str, Any]) -> float:
+    return safe_float(
+        price_output.get("high") or price_output.get("ovrs_hgpr") or price_output.get("stck_hgpr")
+    )
+
+
+async def _get_domestic_current_price_snapshot(
+    broker: KISBroker,
+    stock_code: str,
+    *,
+    market_div_code: str,
+) -> tuple[float, float, float, dict[str, Any]]:
+    method = getattr(broker, "get_current_price_with_output", None)
+    if method is not None:
+        maybe_coro = method(
+            stock_code,
+            market_div_code=market_div_code,
+        )
+        if asyncio.iscoroutine(maybe_coro):
+            return await maybe_coro
+    current_price, price_change_pct, foreigner_net = await broker.get_current_price(
+        stock_code,
+        market_div_code=market_div_code,
+    )
+    return current_price, price_change_pct, foreigner_net, {}
+
+
 TRADE_INTERVAL_SECONDS = 60
 SCAN_INTERVAL_SECONDS = 60  # Scan markets every 60 seconds
 MAX_CONNECTION_RETRIES = 3
@@ -912,9 +940,12 @@ async def _collect_trading_cycle_market_snapshot(
     price_output: dict[str, Any] = {}
     if market.is_domestic:
         quote_market_div_code = _resolve_domestic_quote_market_div_code(runtime_session_id)
-        current_price, price_change_pct, foreigner_net = await broker.get_current_price(
-            stock_code,
-            market_div_code=quote_market_div_code,
+        current_price, price_change_pct, foreigner_net, price_output = (
+            await _get_domestic_current_price_snapshot(
+                broker,
+                stock_code,
+                market_div_code=quote_market_div_code,
+            )
         )
         balance_data = await broker.get_balance()
 
@@ -990,9 +1021,7 @@ async def _collect_trading_cycle_market_snapshot(
         "foreigner_net": foreigner_net,
         "price_change_pct": price_change_pct,
     }
-    session_high_price = safe_float(
-        price_output.get("high") or price_output.get("ovrs_hgpr") or price_output.get("stck_hgpr")
-    )
+    session_high_price = _extract_session_high_price(price_output)
     if session_high_price > 0:
         market_data["session_high_price"] = session_high_price
 
@@ -1265,6 +1294,36 @@ async def _evaluate_trading_cycle_decision(
                     stock_code,
                     market.name,
                     remaining,
+                )
+        if decision.action == "BUY":
+            blocked, pullback_pct, min_gain_pct, max_pullback_pct = (
+                _should_block_buy_chasing_session_high(
+                    market=market,
+                    action=decision.action,
+                    current_price=current_price,
+                    session_high_price=safe_float(market_data.get("session_high_price"), 0.0),
+                    price_change_pct=price_change_pct,
+                    settings=settings,
+                )
+            )
+            if blocked:
+                decision = TradeDecision(
+                    action="HOLD",
+                    confidence=decision.confidence,
+                    rationale=(
+                        "Session high chase guard blocked BUY "
+                        f"(gain={price_change_pct:.2f}%, "
+                        f"pullback_from_high={pullback_pct:.2f}%, "
+                        f"thresholds={min_gain_pct:.2f}%/{max_pullback_pct:.2f}%)"
+                    ),
+                )
+                logger.info(
+                    "BUY suppressed for %s (%s): session high chase guard "
+                    "(gain=%.2f%% pullback=%.2f%%)",
+                    stock_code,
+                    market.name,
+                    price_change_pct,
+                    pullback_pct,
                 )
 
     if decision.action == "HOLD":
@@ -2074,12 +2133,16 @@ async def _collect_daily_session_market_data(
 
     for stock_code in [candidate.stock_code for candidate in candidates_list]:
         try:
+            price_output: dict[str, Any] = {}
             if market.is_domestic:
-                current_price, price_change_pct, foreigner_net = await _retry_connection(
-                    broker.get_current_price,
-                    stock_code,
-                    market_div_code=domestic_quote_market_div_code,
-                    label=stock_code,
+                current_price, price_change_pct, foreigner_net, price_output = (
+                    await _retry_connection(
+                        _get_domestic_current_price_snapshot,
+                        broker,
+                        stock_code,
+                        market_div_code=domestic_quote_market_div_code,
+                        label=stock_code,
+                    )
                 )
             else:
                 price_data = await _retry_connection(
@@ -2109,6 +2172,7 @@ async def _collect_daily_session_market_data(
                             stock_code,
                             current_price,
                         )
+                price_output = price_data.get("output", {})
 
             stock_data: dict[str, Any] = {
                 "stock_code": stock_code,
@@ -2117,14 +2181,9 @@ async def _collect_daily_session_market_data(
                 "foreigner_net": foreigner_net,
                 "price_change_pct": price_change_pct,
             }
-            if not market.is_domestic:
-                session_high_price = safe_float(
-                    price_data.get("output", {}).get("high")
-                    or price_data.get("output", {}).get("ovrs_hgpr")
-                    or price_data.get("output", {}).get("stck_hgpr")
-                )
-                if session_high_price > 0:
-                    stock_data["session_high_price"] = session_high_price
+            session_high_price = _extract_session_high_price(price_output)
+            if session_high_price > 0:
+                stock_data["session_high_price"] = session_high_price
             cand = candidate_map.get(stock_code)
             if cand:
                 stock_data["rsi"] = cand.rsi
@@ -2302,6 +2361,36 @@ async def _process_daily_session_stock(
                     stock_code,
                     market.name,
                     remaining,
+                )
+        if decision.action == "BUY":
+            blocked, pullback_pct, min_gain_pct, max_pullback_pct = (
+                _should_block_buy_chasing_session_high(
+                    market=market,
+                    action=decision.action,
+                    current_price=stock_data["current_price"],
+                    session_high_price=safe_float(stock_data.get("session_high_price"), 0.0),
+                    price_change_pct=stock_data["price_change_pct"],
+                    settings=settings,
+                )
+            )
+            if blocked:
+                decision = TradeDecision(
+                    action="HOLD",
+                    confidence=decision.confidence,
+                    rationale=(
+                        "Session high chase guard blocked BUY "
+                        f"(gain={stock_data['price_change_pct']:.2f}%, "
+                        f"pullback_from_high={pullback_pct:.2f}%, "
+                        f"thresholds={min_gain_pct:.2f}%/{max_pullback_pct:.2f}%)"
+                    ),
+                )
+                logger.info(
+                    "BUY suppressed for %s (%s): session high chase guard "
+                    "(gain=%.2f%% pullback=%.2f%%)",
+                    stock_code,
+                    market.name,
+                    stock_data["price_change_pct"],
+                    pullback_pct,
                 )
 
     if decision.action == "HOLD":

@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     CIRCUIT_BREAKER_PCT: float = Field(default=-3.0, le=0.0)
     FAT_FINGER_PCT: float = Field(default=30.0, gt=0.0, le=100.0)
     CONFIDENCE_THRESHOLD: int = Field(default=80, ge=0, le=100)
+    BUY_CHASE_MIN_INTRADAY_GAIN_PCT: float = Field(default=4.0, ge=0.0, le=100.0)
+    BUY_CHASE_MAX_PULLBACK_FROM_HIGH_PCT: float = Field(default=0.5, ge=0.0, le=20.0)
 
     # Smart Scanner Configuration
     RSI_OVERSOLD_THRESHOLD: int = Field(default=30, ge=0, le=50)
