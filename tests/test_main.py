@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import math
 from contextlib import ExitStack
 from datetime import UTC, date, datetime
@@ -125,6 +126,19 @@ def _make_settings(**overrides: Any) -> Settings:
     return Settings(**base)
 
 
+def test_log_realtime_hard_stop_monitor_start_includes_enabled_market_coverage(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _make_settings(TRADE_MODE="realtime", ENABLED_MARKETS="US")
+
+    with caplog.at_level(logging.INFO):
+        main_module._log_realtime_hard_stop_monitor_start(settings)
+
+    assert "Realtime hard-stop websocket monitor started" in caplog.text
+    assert "enabled_markets=US_NASDAQ,US_NYSE,US_AMEX" in caplog.text
+    assert "source=websocket_hard_stop" in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_sync_realtime_hard_stop_monitor_registers_hold_position() -> None:
     monitor = RealtimeHardStopMonitor()
@@ -185,6 +199,39 @@ async def test_sync_realtime_hard_stop_monitor_registers_us_hold_position() -> N
     assert tracked.hard_stop_price == pytest.approx(96.5)
     assert tracked.quantity == 7
     websocket_client.subscribe.assert_awaited_once_with("US_NASDAQ", "AAPL")
+
+
+@pytest.mark.asyncio
+async def test_sync_realtime_hard_stop_monitor_logs_websocket_subscription_source(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monitor = RealtimeHardStopMonitor()
+    market = MARKETS["US_NASDAQ"]
+    market_data = {"_staged_exit_evidence": {"stop_loss_threshold": -3.5}}
+    websocket_client = MagicMock()
+    websocket_client.subscribe = AsyncMock()
+    websocket_client.unsubscribe = AsyncMock()
+
+    with caplog.at_level(logging.INFO):
+        await _sync_realtime_hard_stop_monitor(
+            monitor=monitor,
+            websocket_client=websocket_client,
+            market=market,
+            stock_code="AAPL",
+            decision_action="HOLD",
+            open_position={
+                "price": 100.0,
+                "quantity": 7,
+                "decision_id": "buy-dec",
+                "timestamp": "2026-03-09T00:00:00+00:00",
+            },
+            market_data=market_data,
+        )
+
+    assert (
+        "Realtime hard-stop monitor sync action=subscribe market=US_NASDAQ "
+        "stock=AAPL source=websocket_hard_stop"
+    ) in caplog.text
 
 
 def test_update_runtime_exit_peak_only_raises_cached_peak() -> None:

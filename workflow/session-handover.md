@@ -249,3 +249,11 @@
 - next_ticket: OOR-810
 - process_gate_checked: process_ticket=OOR-810 merged_to_feature_branch=n/a
 - risks_or_notes: Restart the rework from fresh origin/main@8784453 after the workflow hook fix; preserve the user's unstaged WORKFLOW.md change while re-running reproduction, validation, and publish preflight in this sandbox.
+
+### 2026-03-12 | session=codex-oor-403-start
+- branch: feature/issue-403-us-realtime-hard-stop-runtime-evidence
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-403, GitHub issue #399, migrated runtime evidence notes from original issue #464
+- next_ticket: OOR-403
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: Reproduce the missing US websocket hard-stop runtime evidence after restart, then tighten startup/trigger observability and acceptance criteria without weakening the hard-stop path.

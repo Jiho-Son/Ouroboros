@@ -123,6 +123,29 @@ logger = logging.getLogger(__name__)
 _SESSION_CLOSE_WINDOWS = {"NXT_AFTER", "US_AFTER"}
 
 
+def _format_realtime_hard_stop_enabled_markets(settings: Settings | None) -> str:
+    if settings is None:
+        return "none"
+
+    enabled_markets: list[str] = []
+    for market_code in settings.enabled_market_list:
+        if not supports_realtime_price_market(market_code):
+            continue
+        if market_code in enabled_markets:
+            continue
+        enabled_markets.append(market_code)
+    return ",".join(enabled_markets) if enabled_markets else "none"
+
+
+def _log_realtime_hard_stop_monitor_start(settings: Settings) -> None:
+    logger.info(
+        "Realtime hard-stop websocket monitor started enabled_markets=%s "
+        "ws_url=%s source=websocket_hard_stop",
+        _format_realtime_hard_stop_enabled_markets(settings),
+        f"{settings.kis_ws_url.rstrip('/')}{settings.KIS_WS_PATH}",
+    )
+
+
 def _ensure_runtime_mode_allowed(mode: str) -> None:
     """Reject runtime execution modes that are banned by policy."""
     if mode == "paper":
@@ -290,6 +313,12 @@ async def _sync_realtime_hard_stop_monitor(
     )
     if websocket_client is not None:
         await websocket_client.subscribe(market.code, stock_code)
+        logger.info(
+            "Realtime hard-stop monitor sync action=subscribe market=%s "
+            "stock=%s source=websocket_hard_stop",
+            market.code,
+            stock_code,
+        )
 
 
 async def _clear_realtime_hard_stop_tracking(
@@ -3290,7 +3319,7 @@ async def run(settings: Settings) -> None:
             max_retries=settings.REALTIME_HARD_STOP_MAX_RETRIES,
         )
         realtime_hard_stop_task = asyncio.create_task(realtime_hard_stop_client.run())
-        logger.info("Realtime hard-stop websocket monitor started")
+        _log_realtime_hard_stop_monitor_start(settings)
 
     # Initialize Telegram command handler
     command_handler = TelegramCommandHandler(telegram)
