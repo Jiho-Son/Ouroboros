@@ -1,0 +1,150 @@
+name: Canonical Runtime Restart
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "main commit SHA to restart on the canonical host (defaults to the triggering SHA)"
+        required: false
+        default: ""
+      dry_run:
+        description: "skip stop/start on the canonical host and print the planned restart paths"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  canonical-runtime-restart:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: canonical-runtime-restart-main
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve restart request
+        id: request
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          target_sha="${{ github.sha }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.target_sha }}" ]; then
+            target_sha="${{ inputs.target_sha }}"
+          fi
+
+          dry_run="false"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            dry_run="true"
+          fi
+
+          echo "target_sha=$target_sha" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
+
+      - name: Local dry-run proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          OVERNIGHT_STATE_ROOT="$RUNNER_TEMP/canonical-runtime" \
+          RUNTIME_BRANCH_NAME=main \
+          bash scripts/restart_canonical_main_runtime.sh \
+            --target-sha "${{ steps.request.outputs.target_sha }}" \
+            --dry-run
+
+      - name: Check remote restart configuration
+        id: config
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.CANONICAL_RUNTIME_SSH_HOST }}
+          SSH_USER: ${{ secrets.CANONICAL_RUNTIME_SSH_USER }}
+          SSH_KEY: ${{ secrets.CANONICAL_RUNTIME_SSH_KEY }}
+          CHECKOUT_PATH: ${{ secrets.CANONICAL_RUNTIME_CHECKOUT }}
+        run: |
+          set -euo pipefail
+
+          missing=()
+          [ -z "$SSH_HOST" ] && missing+=("CANONICAL_RUNTIME_SSH_HOST")
+          [ -z "$SSH_USER" ] && missing+=("CANONICAL_RUNTIME_SSH_USER")
+          [ -z "$SSH_KEY" ] && missing+=("CANONICAL_RUNTIME_SSH_KEY")
+          [ -z "$CHECKOUT_PATH" ] && missing+=("CANONICAL_RUNTIME_CHECKOUT")
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "missing=${missing[*]}" >> "$GITHUB_OUTPUT"
+            {
+              echo "Canonical host restart skipped."
+              echo ""
+              echo "Missing secrets: ${missing[*]}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+
+      - name: Start SSH agent
+        if: steps.config.outputs.configured == 'true'
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.CANONICAL_RUNTIME_SSH_KEY }}
+
+      - name: Configure SSH known_hosts
+        if: steps.config.outputs.configured == 'true'
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.CANONICAL_RUNTIME_SSH_HOST }}
+          SSH_KNOWN_HOSTS: ${{ secrets.CANONICAL_RUNTIME_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          if [ -n "${SSH_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$SSH_KNOWN_HOSTS" >> ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Pull canonical checkout and restart runtime
+        if: steps.config.outputs.configured == 'true'
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.CANONICAL_RUNTIME_SSH_HOST }}
+          SSH_USER: ${{ secrets.CANONICAL_RUNTIME_SSH_USER }}
+          SSH_PORT: ${{ secrets.CANONICAL_RUNTIME_SSH_PORT }}
+          CHECKOUT_PATH: ${{ secrets.CANONICAL_RUNTIME_CHECKOUT }}
+          TARGET_SHA: ${{ steps.request.outputs.target_sha }}
+          DRY_RUN: ${{ steps.request.outputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          port="${SSH_PORT:-22}"
+
+          ssh -o BatchMode=yes -p "$port" "$SSH_USER@$SSH_HOST" \
+            bash -s -- "$CHECKOUT_PATH" "$TARGET_SHA" "$DRY_RUN" <<'EOF'
+          set -euo pipefail
+
+          checkout_path="$1"
+          target_sha="$2"
+          dry_run="$3"
+
+          cd "$checkout_path"
+          git fetch origin
+          git checkout main
+          git pull --ff-only origin main
+
+          current_sha="$(git rev-parse HEAD)"
+          if [ "$current_sha" != "$target_sha" ]; then
+            echo "canonical checkout HEAD mismatch after pull: expected $target_sha got $current_sha" >&2
+            exit 1
+          fi
+
+          args=(--target-sha "$target_sha")
+          if [ "$dry_run" = "true" ]; then
+            args+=(--dry-run)
+          fi
+
+          bash scripts/restart_canonical_main_runtime.sh "${args[@]}"
+          EOF

@@ -38,6 +38,7 @@ Updated: 2026-03-02
 - `REQ-OPS-002`: 문서의 수치 정책은 원장에서만 변경한다.
 - `REQ-OPS-003`: 구현 태스크는 반드시 테스트 태스크를 동반한다.
 - `REQ-OPS-004`: 원본 계획 문서(`v2`, `v3`)는 `docs/ouroboros/source/` 경로를 단일 기준으로 사용한다.
+- `REQ-OPS-005`: `main` merge 이후 canonical 운영 프로세스 재시작은 자동화되어야 하며, 동일 merge SHA에 대해 정확히 한 번만 canonical `main` checkout 에서 실행되어야 한다.
 
 ## 변경 이력
 

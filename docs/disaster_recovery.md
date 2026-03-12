@@ -205,6 +205,34 @@ Maximum acceptable data loss:
 - Daily backups ensure ≤ 24-hour data loss
 - For critical periods, run backups more frequently
 
+## Canonical Runtime Recovery
+
+If a PR has already merged to `main` but the canonical 운영 프로세스 did not
+restart, use the repo-owned restart path instead of ad-hoc host commands.
+
+### Local Dry-Run Proof
+
+```bash
+OVERNIGHT_STATE_ROOT=/tmp/ouroboros-canonical-runtime \
+RUNTIME_BRANCH_NAME=main \
+bash scripts/restart_canonical_main_runtime.sh --target-sha <merge-sha> --dry-run
+```
+
+### Canonical Host Recovery
+
+Run these commands only from the canonical `main` checkout on the host:
+
+```bash
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+bash scripts/restart_canonical_main_runtime.sh --target-sha <merge-sha>
+```
+
+The restart script records the last processed SHA in
+`data/overnight/canonical_restart.last_sha`, so retrying the same merge SHA is a
+safe no-op.
+
 ## Testing Recovery
 
 ### Quarterly Recovery Test

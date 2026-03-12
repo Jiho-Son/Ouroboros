@@ -52,6 +52,7 @@ Updated: 2026-02-26
 - `TASK-OPS-002` (`REQ-OPS-002`,`TEST-ACC-008`): 정책 수치 변경 시 `01_requirements_registry.md` 선수정 CI 체크 추가
 - `TASK-OPS-003` (`REQ-OPS-003`,`TEST-ACC-009`): `TASK-*` 없는 `REQ-*` 또는 `TEST-*` 없는 `REQ-*`를 차단하는 문서 검증 게이트 유지
 - `TASK-OPS-004` (`REQ-OPS-004`,`TEST-ACC-019`): v2/v3 원본 계획 문서 위치를 `docs/ouroboros/source/`로 표준화하고 링크 일관성 검증
+- `TASK-OPS-005` (`REQ-OPS-005`,`TEST-ACC-020`): `push` to `main` 기반 canonical restart workflow, host-side restart script, SHA dedupe, 운영 문서/복구 경로를 추가
 
 ## 커밋 규칙
 

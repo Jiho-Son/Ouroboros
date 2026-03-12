@@ -249,3 +249,11 @@
 - next_ticket: OOR-810
 - process_gate_checked: process_ticket=OOR-810 merged_to_feature_branch=n/a
 - risks_or_notes: Restart the rework from fresh origin/main@8784453 after the workflow hook fix; preserve the user's unstaged WORKFLOW.md change while re-running reproduction, validation, and publish preflight in this sandbox.
+
+### 2026-03-12 | session=codex-issue811-start
+- branch: feature/issue-811-main-merge-canonical-restart
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-811 current In Progress state, issue description, bootstrap workpad, no attached PR metadata
+- next_ticket: OOR-811
+- process_gate_checked: process_ticket=OOR-811 merged_to_feature_branch=n/a
+- risks_or_notes: Define merge-to-main restart automation without touching non-main worktree runtimes; keep canonical restart idempotent and preserve branch-scoped lock/log/port boundaries.

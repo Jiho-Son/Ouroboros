@@ -224,6 +224,21 @@ Operational policy:
   scripts auto-isolate `LOG_DIR`, `LIVE_RUNTIME_LOCK_PATH`, `DASHBOARD_PORT`, and
   `TMUX_SESSION_PREFIX` per branch unless you override them explicitly.
 
+Automation path:
+- `.github/workflows/canonical-runtime-restart.yml` listens to `push` on `main`
+  and `workflow_dispatch`.
+- The workflow always runs a local dry-run proof with
+  `scripts/restart_canonical_main_runtime.sh`.
+- When `CANONICAL_RUNTIME_SSH_HOST`, `CANONICAL_RUNTIME_SSH_USER`,
+  `CANONICAL_RUNTIME_SSH_KEY`, and `CANONICAL_RUNTIME_CHECKOUT` are configured
+  as GitHub Actions secrets (optional: `CANONICAL_RUNTIME_SSH_PORT`,
+  `CANONICAL_RUNTIME_SSH_KNOWN_HOSTS`), the workflow SSHes to the canonical host
+  checkout, pulls `origin/main`, and runs the restart script with the merged SHA.
+- `scripts/restart_canonical_main_runtime.sh` only runs on the canonical `main`
+  checkout, records the last processed SHA in
+  `data/overnight/canonical_restart.last_sha`, and skips duplicate restart
+  requests for the same merge.
+
 Examples:
 
 ```bash
@@ -235,6 +250,13 @@ tail -f data/overnight/runtime_verify_*.log
 # Non-main worktree: same commands auto-scope to data/overnight/<branch-slug>
 bash scripts/run_overnight.sh
 bash scripts/runtime_verify_monitor.sh
+```
+
+```bash
+# Local dry-run proof for the canonical restart path
+OVERNIGHT_STATE_ROOT=/tmp/ouroboros-canonical-runtime \
+RUNTIME_BRANCH_NAME=main \
+bash scripts/restart_canonical_main_runtime.sh --target-sha test-sha --dry-run
 ```
 
 Override knobs when you need a custom location or port:

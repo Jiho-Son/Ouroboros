@@ -12,6 +12,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RUN_OVERNIGHT = REPO_ROOT / "scripts" / "run_overnight.sh"
 RUNTIME_MONITOR = REPO_ROOT / "scripts" / "runtime_verify_monitor.sh"
 RUNTIME_INSTANCE_ENV = REPO_ROOT / "scripts" / "runtime_instance_env.sh"
+RESTART_CANONICAL_MAIN_RUNTIME = (
+    REPO_ROOT / "scripts" / "restart_canonical_main_runtime.sh"
+)
 
 
 def _latest_runtime_log(log_dir: Path) -> str:
@@ -49,6 +52,45 @@ def _resolve_runtime_defaults(*, state_root: Path, branch: str) -> dict[str, str
     return {key: value for key, value in pairs}
 
 
+def _run_restart_canonical_main_runtime(
+    *,
+    tmp_path: Path,
+    branch: str,
+    target_sha: str,
+    dry_run: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
+    state_root = tmp_path / "overnight"
+    hooks_log = tmp_path / "restart-hooks.log"
+    marker_path = state_root / "canonical_restart.last_sha"
+    env = os.environ.copy()
+    env.update(
+        {
+            "OVERNIGHT_STATE_ROOT": str(state_root),
+            "RUNTIME_BRANCH_NAME": branch,
+            "CANONICAL_RESTART_STOP_CMD": f"printf 'stop\\n' >> '{hooks_log}'",
+            "CANONICAL_RESTART_START_CMD": f"printf 'start\\n' >> '{hooks_log}'",
+        }
+    )
+    args = [
+        "bash",
+        str(RESTART_CANONICAL_MAIN_RUNTIME),
+        "--target-sha",
+        target_sha,
+    ]
+    if dry_run:
+        args.append("--dry-run")
+
+    completed = subprocess.run(
+        args,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed, state_root, hooks_log, marker_path
+
+
 def test_runtime_instance_defaults_keep_main_canonical(tmp_path: Path) -> None:
     state_root = tmp_path / "overnight"
     defaults = _resolve_runtime_defaults(state_root=state_root, branch="main")
@@ -58,6 +100,68 @@ def test_runtime_instance_defaults_keep_main_canonical(tmp_path: Path) -> None:
     assert defaults["DASHBOARD_PORT"] == "8080"
     assert defaults["TMUX_SESSION_PREFIX"] == "ouroboros_overnight"
     assert defaults["LIVE_RUNTIME_LOCK_PATH"] == str(state_root / "live_runtime.lock")
+
+
+def test_restart_canonical_main_runtime_rejects_non_main_branch(
+    tmp_path: Path,
+) -> None:
+    completed, _, hooks_log, marker_path = _run_restart_canonical_main_runtime(
+        tmp_path=tmp_path,
+        branch="feature/worktree-runtime",
+        target_sha="merge-sha-1",
+    )
+
+    assert completed.returncode != 0
+    output = f"{completed.stdout}\n{completed.stderr}"
+    assert "canonical restart only runs from the main checkout" in output
+    assert not hooks_log.exists()
+    assert not marker_path.exists()
+
+
+def test_restart_canonical_main_runtime_records_and_skips_duplicate_sha(
+    tmp_path: Path,
+) -> None:
+    first, state_root, hooks_log, marker_path = _run_restart_canonical_main_runtime(
+        tmp_path=tmp_path,
+        branch="main",
+        target_sha="merge-sha-1",
+    )
+
+    assert first.returncode == 0, f"{first.stdout}\n{first.stderr}"
+    assert hooks_log.read_text(encoding="utf-8").splitlines() == ["stop", "start"]
+    assert marker_path.read_text(encoding="utf-8").strip() == "merge-sha-1"
+    assert state_root.exists()
+
+    second, _, _, _ = _run_restart_canonical_main_runtime(
+        tmp_path=tmp_path,
+        branch="main",
+        target_sha="merge-sha-1",
+    )
+
+    assert second.returncode == 0, f"{second.stdout}\n{second.stderr}"
+    output = f"{second.stdout}\n{second.stderr}"
+    assert "already processed" in output
+    assert hooks_log.read_text(encoding="utf-8").splitlines() == ["stop", "start"]
+    assert marker_path.read_text(encoding="utf-8").strip() == "merge-sha-1"
+
+
+def test_restart_canonical_main_runtime_dry_run_does_not_mutate_state(
+    tmp_path: Path,
+) -> None:
+    completed, state_root, hooks_log, marker_path = _run_restart_canonical_main_runtime(
+        tmp_path=tmp_path,
+        branch="main",
+        target_sha="merge-sha-2",
+        dry_run=True,
+    )
+
+    assert completed.returncode == 0, f"{completed.stdout}\n{completed.stderr}"
+    output = f"{completed.stdout}\n{completed.stderr}"
+    assert "dry-run" in output
+    assert str(state_root) in output
+    assert str(marker_path) in output
+    assert not hooks_log.exists()
+    assert not marker_path.exists()
 
 
 def test_runtime_instance_defaults_isolate_non_main_branch(tmp_path: Path) -> None:

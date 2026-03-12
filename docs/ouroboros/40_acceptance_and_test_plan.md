@@ -30,6 +30,7 @@ Updated: 2026-02-26
 - `TEST-ACC-008` (`REQ-OPS-002`): 정책 수치 변경이 원장 미반영이면 검증 실패한다.
 - `TEST-ACC-009` (`REQ-OPS-003`): `REQ-*`가 `TASK-*`/`TEST-*` 매핑 없이 존재하면 검증 실패한다.
 - `TEST-ACC-019` (`REQ-OPS-004`): v2/v3 원본 계획 문서 링크는 `docs/ouroboros/source/` 경로 기준으로만 통과한다.
+- `TEST-ACC-020` (`REQ-OPS-005`): canonical restart automation은 non-`main` checkout 을 거부하고, merge SHA dedupe를 유지하며, `push` to `main` workflow 에서 host-side restart path를 호출한다.
 
 ## 테스트 계층
 
