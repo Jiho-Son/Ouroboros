@@ -1055,6 +1055,21 @@ def test_live_runtime_lock_can_be_reacquired_after_release(tmp_path, monkeypatch
     _release_live_runtime_lock(second_lock)
 
 
+def test_live_runtime_lock_uses_configured_path(tmp_path) -> None:
+    lock_path = tmp_path / "runtime-state" / "feature.lock"
+    settings = _make_settings(
+        MODE="live",
+        LIVE_RUNTIME_LOCK_PATH=str(lock_path),
+    )
+
+    lock_file = _acquire_live_runtime_lock(settings)
+    try:
+        assert lock_path.exists()
+        assert lock_path.read_text(encoding="utf-8").strip().isdigit()
+    finally:
+        _release_live_runtime_lock(lock_file)
+
+
 def _make_buy_match(stock_code: str = "005930") -> ScenarioMatch:
     """Create a ScenarioMatch that returns BUY."""
     return ScenarioMatch(

@@ -668,7 +668,7 @@ def _acquire_live_runtime_lock(settings: Settings) -> Any:
     if settings.MODE != "live":
         return None
 
-    lock_path = Path("data/overnight/live_runtime.lock")
+    lock_path = Path(settings.LIVE_RUNTIME_LOCK_PATH)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     lock_file = open(lock_path, "a+", encoding="utf-8")
     try:

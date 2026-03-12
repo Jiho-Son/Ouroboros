@@ -241,3 +241,11 @@
 - next_ticket: OOR-809
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: Rework flow requires a fresh reset again from the current attached PR and workpad; verify handover, close stale PR #806, delete the old workpad, cut a new branch from origin/main, then rerun bootstrap and GitHub publish preflight before deciding whether any code changes remain.
+
+### 2026-03-12 | session=codex-issue810-rework-r8
+- branch: feature/issue-810-operations-process-requirements-r8
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-810 current Rework state, issue description, Jiho Son comments, no attached PR metadata, no matching GitHub PRs
+- next_ticket: OOR-810
+- process_gate_checked: process_ticket=OOR-810 merged_to_feature_branch=n/a
+- risks_or_notes: Restart the rework from fresh origin/main@8784453 after the workflow hook fix; preserve the user's unstaged WORKFLOW.md change while re-running reproduction, validation, and publish preflight in this sandbox.

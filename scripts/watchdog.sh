@@ -3,8 +3,14 @@
 
 set -euo pipefail
 
-PID_FILE="${PID_FILE:-data/overnight/app.pid}"
-LOG_FILE="${LOG_FILE:-data/overnight/watchdog.log}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/runtime_instance_env.sh
+source "$SCRIPT_DIR/runtime_instance_env.sh"
+runtime_resolve_defaults
+cd "$ROOT_DIR"
+
+PID_FILE="${PID_FILE:-$LOG_DIR/app.pid}"
+LOG_FILE="${LOG_FILE:-$LOG_DIR/watchdog.log}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
 STATUS_EVERY="${STATUS_EVERY:-10}"
 

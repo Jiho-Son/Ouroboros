@@ -92,6 +92,13 @@ python -m src.main --mode=live
 python -m src.main --mode=live --dashboard
 ```
 
+### 3-2-1. 운영 프로세스 규칙
+- [ ] 상시 유지하는 canonical 운영 프로세스는 `main` 브랜치 checkout에서만 실행한다.
+- [ ] canonical 운영 프로세스 재실행은 PR이 `main`에 merge된 직후에만 수행한다.
+- [ ] 별도 worktree에서 검증용 런타임을 띄울 때는 동일 명령을 그대로 사용하되, 스크립트가 branch별 `LOG_DIR` / `DASHBOARD_PORT` / `LIVE_RUNTIME_LOCK_PATH` 를 자동 분리한다는 점을 확인한다.
+- [ ] `main` checkout에서는 기본 런타임 경로가 `data/overnight`, 기본 dashboard 포트가 `8080` 인지 확인한다.
+- [ ] non-`main` worktree에서는 `scripts/run_overnight.sh` 와 `scripts/runtime_verify_monitor.sh` 가 `data/overnight/<branch-slug>` 를 사용하고 `8080` 이외 포트를 자동 선택하는지 확인한다.
+
 ### 3-3. 실전 시작 직후 확인 사항
 - [ ] 로그에 `MODE=live` 출력 확인
 - [ ] 첫 잔고 조회 성공 (ConnectionError 없음)
