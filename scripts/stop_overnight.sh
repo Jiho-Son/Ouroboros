@@ -3,10 +3,14 @@
 
 set -euo pipefail
 
-LOG_DIR="${LOG_DIR:-data/overnight}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/runtime_instance_env.sh
+source "$SCRIPT_DIR/runtime_instance_env.sh"
+runtime_resolve_defaults
+cd "$ROOT_DIR"
+
 PID_FILE="$LOG_DIR/app.pid"
 WATCHDOG_PID_FILE="$LOG_DIR/watchdog.pid"
-TMUX_SESSION_PREFIX="${TMUX_SESSION_PREFIX:-ouroboros_overnight}"
 KILL_TIMEOUT="${KILL_TIMEOUT:-5}"
 
 stop_pid() {

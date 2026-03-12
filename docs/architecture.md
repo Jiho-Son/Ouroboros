@@ -276,6 +276,9 @@ High-frequency trading with individual stock analysis:
 
 - Runs as daemon thread when enabled (`--dashboard` CLI flag or `DASHBOARD_ENABLED=true`)
 - Configurable host/port (`DASHBOARD_HOST`, `DASHBOARD_PORT`, default `127.0.0.1:8080`)
+- Live runtime lock path is configurable via `LIVE_RUNTIME_LOCK_PATH`, and
+  non-`main` worktrees should use the shared runtime scripts so `LOG_DIR`,
+  dashboard port, tmux session prefix, and lock path auto-scope per branch.
 - Serves static HTML frontend
 
 **10 API Endpoints:**
@@ -675,6 +678,7 @@ SCANNER_TOP_N=3               # Max qualified candidates per scan
 DASHBOARD_ENABLED=false       # Enable FastAPI dashboard
 DASHBOARD_HOST=127.0.0.1      # Dashboard bind address
 DASHBOARD_PORT=8080           # Dashboard port (1-65535)
+LIVE_RUNTIME_LOCK_PATH=data/overnight/live_runtime.lock
 
 # Optional — Telegram
 TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz

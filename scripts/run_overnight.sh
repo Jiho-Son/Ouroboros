@@ -3,13 +3,17 @@
 
 set -euo pipefail
 
-LOG_DIR="${LOG_DIR:-data/overnight}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/runtime_instance_env.sh
+source "$SCRIPT_DIR/runtime_instance_env.sh"
+runtime_resolve_defaults
+cd "$ROOT_DIR"
+
 CHECK_INTERVAL="${CHECK_INTERVAL:-30}"
 TMUX_AUTO="${TMUX_AUTO:-true}"
 TMUX_ATTACH="${TMUX_ATTACH:-true}"
-TMUX_SESSION_PREFIX="${TMUX_SESSION_PREFIX:-ouroboros_overnight}"
 STARTUP_GRACE_SEC="${STARTUP_GRACE_SEC:-3}"
-dashboard_port="${DASHBOARD_PORT:-8080}"
+dashboard_port="${DASHBOARD_PORT}"
 APP_CMD_BIN="${APP_CMD_BIN:-}"
 APP_CMD_ARGS="${APP_CMD_ARGS:-}"
 RUNS_DASHBOARD="false"
@@ -97,21 +101,21 @@ fi
 
 if [ "$USE_DEFAULT_APP_CMD" = "true" ]; then
     # Default path avoids shell word-splitting on executable paths.
-    nohup env DASHBOARD_PORT="$dashboard_port" "$PYTHON_BIN" -m src.main --mode=live --dashboard >>"$RUN_LOG" 2>&1 &
+    nohup env DASHBOARD_PORT="$dashboard_port" LIVE_RUNTIME_LOCK_PATH="$LIVE_RUNTIME_LOCK_PATH" "$PYTHON_BIN" -m src.main --mode=live --dashboard >>"$RUN_LOG" 2>&1 &
 elif [ "$USE_SAFE_CUSTOM_APP_CMD" = "true" ]; then
     # Safer custom path: executable path is handled as a single token.
     if [ -n "$APP_CMD_ARGS" ]; then
         # shellcheck disable=SC2206
         app_args=( $APP_CMD_ARGS )
-        nohup env DASHBOARD_PORT="$dashboard_port" "$APP_CMD_BIN" "${app_args[@]}" >>"$RUN_LOG" 2>&1 &
+        nohup env DASHBOARD_PORT="$dashboard_port" LIVE_RUNTIME_LOCK_PATH="$LIVE_RUNTIME_LOCK_PATH" "$APP_CMD_BIN" "${app_args[@]}" >>"$RUN_LOG" 2>&1 &
     else
-        nohup env DASHBOARD_PORT="$dashboard_port" "$APP_CMD_BIN" >>"$RUN_LOG" 2>&1 &
+        nohup env DASHBOARD_PORT="$dashboard_port" LIVE_RUNTIME_LOCK_PATH="$LIVE_RUNTIME_LOCK_PATH" "$APP_CMD_BIN" >>"$RUN_LOG" 2>&1 &
     fi
 else
     # Custom APP_CMD is treated as a shell command string.
     # If executable paths include spaces, they must be quoted inside APP_CMD.
     # Legacy compatibility path: caller owns quoting and env var injection.
-    nohup bash -lc "exec env $APP_CMD" >>"$RUN_LOG" 2>&1 &
+    nohup bash -lc "exec env LIVE_RUNTIME_LOCK_PATH='$LIVE_RUNTIME_LOCK_PATH' $APP_CMD" >>"$RUN_LOG" 2>&1 &
 fi
 app_pid=$!
 echo "$app_pid" > "$PID_FILE"
@@ -141,6 +145,10 @@ cat <<EOF
 시작 완료
 - app pid: $app_pid
 - watchdog pid: $watchdog_pid
+- root dir: $ROOT_DIR
+- log dir: $LOG_DIR
+- dashboard port: $dashboard_port
+- runtime lock: $LIVE_RUNTIME_LOCK_PATH
 - app log: $RUN_LOG
 - watchdog log: $WATCHDOG_LOG
 

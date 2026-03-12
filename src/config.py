@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     DASHBOARD_ENABLED: bool = False
     DASHBOARD_HOST: str = "127.0.0.1"
     DASHBOARD_PORT: int = Field(default=8080, ge=1, le=65535)
+    LIVE_RUNTIME_LOCK_PATH: str = "data/overnight/live_runtime.lock"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

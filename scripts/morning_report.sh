@@ -3,7 +3,11 @@
 
 set -euo pipefail
 
-LOG_DIR="${LOG_DIR:-data/overnight}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/runtime_instance_env.sh
+source "$SCRIPT_DIR/runtime_instance_env.sh"
+runtime_resolve_defaults
+cd "$ROOT_DIR"
 
 if [ ! -d "$LOG_DIR" ]; then
     echo "로그 디렉터리가 없습니다: $LOG_DIR"

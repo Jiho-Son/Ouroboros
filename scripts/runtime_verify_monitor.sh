@@ -3,16 +3,19 @@
 
 set -euo pipefail
 
-ROOT_DIR="${ROOT_DIR:-/home/agentson/repos/The-Ouroboros}"
-LOG_DIR="${LOG_DIR:-$ROOT_DIR/data/overnight}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/runtime_instance_env.sh
+source "$SCRIPT_DIR/runtime_instance_env.sh"
+runtime_resolve_defaults
+cd "$ROOT_DIR"
+
 INTERVAL_SEC="${INTERVAL_SEC:-60}"
 MAX_HOURS="${MAX_HOURS:-24}"
 MAX_LOOPS="${MAX_LOOPS:-0}"
 POLICY_TZ="${POLICY_TZ:-Asia/Seoul}"
-DASHBOARD_PORT="${DASHBOARD_PORT:-8080}"
+DASHBOARD_PORT="${DASHBOARD_PORT}"
 
-cd "$ROOT_DIR"
-
+mkdir -p "$LOG_DIR"
 OUT_LOG="$LOG_DIR/runtime_verify_$(date +%Y%m%d_%H%M%S).log"
 END_TS=$(( $(date +%s) + MAX_HOURS*3600 ))
 loops=0

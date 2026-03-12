@@ -211,6 +211,34 @@ docker compose up -d ouroboros          # Run agent
 docker compose --profile test up test   # Run tests in container
 ```
 
+## Overnight Runtime Operations
+
+`scripts/run_overnight.sh`, `scripts/stop_overnight.sh`, `scripts/morning_report.sh`,
+and `scripts/runtime_verify_monitor.sh` now share the same runtime-instance defaults.
+
+Operational policy:
+- Keep the continuously running canonical 운영 프로세스 only in the checkout whose
+  git branch is `main`.
+- Restart that canonical process only after a PR has been merged into `main`.
+- Non-`main` worktrees may run the same scripts concurrently for validation; the
+  scripts auto-isolate `LOG_DIR`, `LIVE_RUNTIME_LOCK_PATH`, `DASHBOARD_PORT`, and
+  `TMUX_SESSION_PREFIX` per branch unless you override them explicitly.
+
+Examples:
+
+```bash
+# Canonical main checkout: stable state root and dashboard port 8080
+bash scripts/run_overnight.sh
+bash scripts/runtime_verify_monitor.sh
+tail -f data/overnight/runtime_verify_*.log
+
+# Non-main worktree: same commands auto-scope to data/overnight/<branch-slug>
+bash scripts/run_overnight.sh
+bash scripts/runtime_verify_monitor.sh
+```
+
+Override knobs when you need a custom location or port:
+
 ## Dashboard
 
 The FastAPI dashboard provides read-only monitoring of the trading system.
