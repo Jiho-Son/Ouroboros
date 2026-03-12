@@ -3048,12 +3048,12 @@ def _should_reuse_stored_playbook(*, market_code: str, session_id: str) -> bool:
 
     For KR regular session (`KRX_REG`), always generate a fresh playbook instead of
     reusing an earlier session's stored playbook (issue #419). For US regular
-    session (`US_DAY`), also generate a fresh playbook on session transition so
+    session (`US_REG`), also generate a fresh playbook on session transition so
     pre-market assumptions do not leak into regular session.
     """
     return not (
         (market_code == "KR" and session_id == "KRX_REG")
-        or (market_code.startswith("US") and session_id == "US_DAY")
+        or (market_code.startswith("US") and session_id == "US_REG")
     )
 
 
@@ -3872,7 +3872,7 @@ async def run(settings: Settings) -> None:
                     # Force KR/US regular-session playbook regeneration on session transition.
                     # Without this, an in-memory playbook created in pre-market sessions
                     # (e.g., NXT_PRE, US_PRE) can persist into regular sessions
-                    # (KRX_REG, US_DAY) and bypass the stored-playbook reuse gate.
+                    # (KRX_REG, US_REG) and bypass the stored-playbook reuse gate.
                     if _refresh_cached_playbook_on_session_transition(
                         playbooks=playbooks,
                         session_changed=session_changed,
