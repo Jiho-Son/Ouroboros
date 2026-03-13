@@ -3,6 +3,7 @@
 set -euo pipefail
 
 GIT_BIN="${CANONICAL_RESTART_GIT_BIN:-git}"
+GH_BIN="${CANONICAL_RESTART_GH_BIN:-gh}"
 CANONICAL_ROOT=""
 WORKSPACE_SHA=""
 DRY_RUN="false"
@@ -15,6 +16,10 @@ EOF
 
 run_git() {
     "$GIT_BIN" "$@"
+}
+
+run_gh() {
+    "$GH_BIN" "$@"
 }
 
 discover_canonical_root() {
@@ -49,6 +54,87 @@ resolve_state_root() {
 
 announce() {
     printf '%s\n' "$1"
+}
+
+github_repo_slug_from_remote() {
+    local remote_url="$1"
+    local slug=""
+
+    case "$remote_url" in
+        https://github.com/*)
+            slug="${remote_url#https://github.com/}"
+            ;;
+        ssh://git@github.com/*)
+            slug="${remote_url#ssh://git@github.com/}"
+            ;;
+        git@github.com:*)
+            slug="${remote_url#git@github.com:}"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    slug="${slug%.git}"
+    if [[ "$slug" != */* ]]; then
+        return 1
+    fi
+
+    printf '%s\n' "$slug"
+}
+
+github_confirms_merge() {
+    local repo_slug="$1"
+    local workspace_branch="$2"
+    local workspace_sha="$3"
+    local repo_owner=""
+    local response=""
+
+    if [ -z "$repo_slug" ] || ! command -v python3 >/dev/null 2>&1; then
+        return 1
+    fi
+
+    repo_owner="${repo_slug%%/*}"
+    if [ -z "$repo_owner" ]; then
+        return 1
+    fi
+
+    if ! response="$(
+        run_gh api -X GET \
+            "repos/$repo_slug/pulls?state=closed&base=main&head=$repo_owner:$workspace_branch&per_page=20" \
+            2>/dev/null
+    )"; then
+        return 1
+    fi
+
+    RESPONSE="$response" python3 -c '
+import json
+import os
+import sys
+
+branch, sha = sys.argv[1:]
+
+try:
+    payload = json.loads(os.environ["RESPONSE"])
+except (KeyError, json.JSONDecodeError):
+    raise SystemExit(1)
+
+if not isinstance(payload, list):
+    raise SystemExit(1)
+
+for pr in payload:
+    base = pr.get("base") or {}
+    head = pr.get("head") or {}
+    if (
+        pr.get("merged_at")
+        and base.get("ref") == "main"
+        and head.get("ref") == branch
+        and head.get("sha") == sha
+    ):
+        raise SystemExit(0)
+
+raise SystemExit(1)
+' "$workspace_branch" "$workspace_sha"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -92,6 +178,11 @@ if [ -z "$WORKSPACE_SHA" ]; then
     WORKSPACE_SHA="$(run_git rev-parse HEAD)"
 fi
 
+if [ "$workspace_branch" = "main" ]; then
+    announce "skip: before_remove invoked from a main worktree; canonical runtime left unchanged"
+    exit 0
+fi
+
 if [ -z "$CANONICAL_ROOT" ]; then
     CANONICAL_ROOT="$(discover_canonical_root || true)"
 fi
@@ -107,12 +198,19 @@ if [ "$canonical_branch" != "main" ]; then
     exit 1
 fi
 
+REMOTE_URL="$(run_git -C "$CANONICAL_ROOT" remote get-url origin 2>/dev/null || true)"
+REPO_SLUG="$(github_repo_slug_from_remote "$REMOTE_URL" || true)"
+
 run_git -C "$CANONICAL_ROOT" fetch origin
 TARGET_SHA="$(run_git -C "$CANONICAL_ROOT" rev-parse origin/main)"
 
 if ! run_git -C "$CANONICAL_ROOT" merge-base --is-ancestor "$WORKSPACE_SHA" "$TARGET_SHA"; then
-    announce "workspace branch=$workspace_branch sha=$WORKSPACE_SHA is not merged into origin/main target_sha=$TARGET_SHA canonical_root=$CANONICAL_ROOT"
-    exit 0
+    if github_confirms_merge "$REPO_SLUG" "$workspace_branch" "$WORKSPACE_SHA"; then
+        announce "github merge fallback matched workspace_branch=$workspace_branch sha=$WORKSPACE_SHA target_sha=$TARGET_SHA canonical_root=$CANONICAL_ROOT"
+    else
+        announce "workspace branch=$workspace_branch sha=$WORKSPACE_SHA is not merged into origin/main target_sha=$TARGET_SHA canonical_root=$CANONICAL_ROOT"
+        exit 0
+    fi
 fi
 
 STATE_ROOT="$(resolve_state_root "$CANONICAL_ROOT")"

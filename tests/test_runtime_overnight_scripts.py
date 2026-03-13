@@ -12,9 +12,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RUN_OVERNIGHT = REPO_ROOT / "scripts" / "run_overnight.sh"
 RUNTIME_MONITOR = REPO_ROOT / "scripts" / "runtime_verify_monitor.sh"
 RUNTIME_INSTANCE_ENV = REPO_ROOT / "scripts" / "runtime_instance_env.sh"
-RESTART_CANONICAL_MAIN_RUNTIME = (
-    REPO_ROOT / "scripts" / "restart_canonical_main_runtime.sh"
-)
 SYMPHONY_BEFORE_REMOVE_CANONICAL_RESTART = (
     REPO_ROOT / "scripts" / "symphony_before_remove_canonical_restart.sh"
 )
@@ -55,45 +52,6 @@ def _resolve_runtime_defaults(*, state_root: Path, branch: str) -> dict[str, str
     return {key: value for key, value in pairs}
 
 
-def _run_restart_canonical_main_runtime(
-    *,
-    tmp_path: Path,
-    branch: str,
-    target_sha: str,
-    dry_run: bool = False,
-) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
-    state_root = tmp_path / "overnight"
-    hooks_log = tmp_path / "restart-hooks.log"
-    marker_path = state_root / "canonical_restart.last_sha"
-    env = os.environ.copy()
-    env.update(
-        {
-            "OVERNIGHT_STATE_ROOT": str(state_root),
-            "RUNTIME_BRANCH_NAME": branch,
-            "CANONICAL_RESTART_STOP_CMD": f"printf 'stop\n' >> '{hooks_log}'",
-            "CANONICAL_RESTART_START_CMD": f"printf 'start\n' >> '{hooks_log}'",
-        }
-    )
-    args = [
-        "bash",
-        str(RESTART_CANONICAL_MAIN_RUNTIME),
-        "--target-sha",
-        target_sha,
-    ]
-    if dry_run:
-        args.append("--dry-run")
-
-    completed = subprocess.run(
-        args,
-        cwd=REPO_ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return completed, state_root, hooks_log, marker_path
-
-
 def _write_fake_git(*, tmp_path: Path) -> Path:
     fake_git = tmp_path / "fake_git.py"
     fake_git.write_text(
@@ -110,7 +68,7 @@ def log(message: str) -> None:
     path = Path(log_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
-        handle.write(message + "\n")
+        handle.write(message + "\\n")
 
 
 def parse(argv: list[str]) -> tuple[Path, list[str]]:
@@ -162,14 +120,14 @@ def main() -> int:
 
     if args == ["worktree", "list", "--porcelain"]:
         print(
-            f"worktree {workspace_root}\n"
-            f"HEAD {workspace_sha}\n"
-            f"branch refs/heads/{workspace_branch}\n"
+            f"worktree {workspace_root}\\n"
+            f"HEAD {workspace_sha}\\n"
+            f"branch refs/heads/{workspace_branch}\\n"
         )
         print(
-            f"worktree {canonical_root}\n"
-            f"HEAD {canonical_head}\n"
-            f"branch refs/heads/{canonical_branch}\n"
+            f"worktree {canonical_root}\\n"
+            f"HEAD {canonical_head}\\n"
+            f"branch refs/heads/{canonical_branch}\\n"
         )
         return 0
 
