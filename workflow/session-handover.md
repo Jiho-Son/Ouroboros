@@ -273,3 +273,11 @@
 - next_ticket: OOR-816
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: 재현 신호 확보 후 planner/scenario/runtime 중 가장 좁은 수정면을 택해 최근 고점 추격 매수를 억제하는 회귀 테스트와 문서를 함께 반영한다.
+
+### 2026-03-13 | session=codex-oor-811-rework-r2
+- branch: feature/issue-811-canonical-restart-before-remove
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-811 current Rework state, issue description, Jiho Son Linear/PR feedback, attached PR #811
+- next_ticket: OOR-811
+- process_gate_checked: process_ticket=OOR-811 merged_to_feature_branch=n/a
+- risks_or_notes: Rework resets the rejected GitHub workflow approach; close PR #811, delete the prior Linear workpad, reproduce the gap from fresh origin/main, and replace it with a host-side before_remove canonical restart path that only touches the canonical main checkout.
