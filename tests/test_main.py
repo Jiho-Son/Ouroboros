@@ -1232,11 +1232,11 @@ class TestRealtimeSessionStateHelpers:
     def test_should_reuse_stored_playbook_true_for_kr_non_regular_session(self) -> None:
         assert _should_reuse_stored_playbook(market_code="KR", session_id="NXT_PRE")
 
-    def test_should_reuse_stored_playbook_true_for_non_kr_market(self) -> None:
-        assert _should_reuse_stored_playbook(market_code="US_NASDAQ", session_id="US_REG")
+    def test_should_reuse_stored_playbook_true_for_us_premarket(self) -> None:
+        assert _should_reuse_stored_playbook(market_code="US_NASDAQ", session_id="US_PRE")
 
     def test_should_reuse_stored_playbook_false_for_us_regular_session(self) -> None:
-        assert not _should_reuse_stored_playbook(market_code="US_NASDAQ", session_id="US_DAY")
+        assert not _should_reuse_stored_playbook(market_code="US_NASDAQ", session_id="US_REG")
 
     def test_should_reuse_stored_playbook_true_for_non_kr_even_with_krx_reg_session_id(
         self,
@@ -1266,7 +1266,7 @@ class TestRealtimeSessionStateHelpers:
         assert _should_refresh_cached_playbook_on_session_transition(
             session_changed=True,
             market_code="US_NASDAQ",
-            session_id="US_DAY",
+            session_id="US_REG",
         )
 
     def test_refresh_cached_playbook_on_session_transition_drops_existing_kr_cache(self) -> None:
@@ -1325,7 +1325,7 @@ class TestRealtimeSessionStateHelpers:
             playbooks=playbooks,
             session_changed=True,
             market_code="US_NASDAQ",
-            session_id="US_DAY",
+            session_id="US_REG",
         )
         assert removed
         assert "US_NASDAQ" not in playbooks
@@ -10340,11 +10340,13 @@ async def test_run_restores_pre_refresh_playbook_when_mid_session_refresh_genera
     overseas_broker.get_overseas_balance = AsyncMock(return_value={"output1": []})
 
     playbook_store = MagicMock()
-    playbook_store.load_latest = MagicMock(side_effect=[original_playbook, None])
+    playbook_store.load_latest = MagicMock(return_value=None)
     playbook_store.load = MagicMock(return_value=None)
 
     pre_market_planner = MagicMock()
-    pre_market_planner.generate_playbook = AsyncMock(side_effect=RuntimeError("planner down"))
+    pre_market_planner.generate_playbook = AsyncMock(
+        side_effect=[original_playbook, RuntimeError("planner down")]
+    )
 
     smart_scanner = MagicMock()
     smart_scanner.scan = AsyncMock(return_value=[candidate])
@@ -10451,8 +10453,181 @@ async def test_run_restores_pre_refresh_playbook_when_mid_session_refresh_genera
     assert mock_trading_cycle.await_count == 2
     assert mock_trading_cycle.await_args_list[0].args[3] is original_playbook
     assert mock_trading_cycle.await_args_list[1].args[3] is original_playbook
-    pre_market_planner.generate_playbook.assert_awaited_once()
+    assert pre_market_planner.generate_playbook.await_count == 2
+    playbook_store.load_latest.assert_not_called()
     telegram.notify_playbook_failed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_regenerates_playbook_on_us_regular_session_transition() -> None:
+    from src.analysis.smart_scanner import ScanCandidate
+
+    class _FakeEvent:
+        def __init__(self) -> None:
+            self._flag = False
+
+        def is_set(self) -> bool:
+            return self._flag
+
+        def set(self) -> None:
+            self._flag = True
+
+        def clear(self) -> None:
+            self._flag = False
+
+        async def wait(self) -> None:
+            return None
+
+    settings = _make_settings(TRADE_MODE="realtime", ENABLED_MARKETS="US_NASDAQ")
+    premarket_playbook = _make_playbook("US_NASDAQ")
+    regular_playbook = _make_playbook("US_NASDAQ")
+
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+    market.name = "Nasdaq"
+    market.exchange_code = "NASD"
+    market.is_domestic = False
+    market.timezone = ZoneInfo("America/New_York")
+
+    candidate = ScanCandidate(
+        stock_code="AAPL",
+        name="Apple",
+        price=190.0,
+        volume=1_000_000.0,
+        volume_ratio=2.0,
+        rsi=55.0,
+        signal="momentum",
+        score=80.0,
+    )
+
+    shutdown_event = _FakeEvent()
+    pause_event = _FakeEvent()
+    pause_event.set()
+    cycle_count = {"count": 0}
+
+    broker = MagicMock()
+    broker.close = AsyncMock()
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_balance = AsyncMock(return_value={"output1": []})
+
+    playbook_store = MagicMock()
+    playbook_store.load_latest = MagicMock(return_value=None)
+    playbook_store.load = MagicMock(return_value=None)
+
+    pre_market_planner = MagicMock()
+    pre_market_planner.generate_playbook = AsyncMock(
+        side_effect=[premarket_playbook, regular_playbook]
+    )
+
+    smart_scanner = MagicMock()
+    smart_scanner.scan = AsyncMock(return_value=[candidate])
+    smart_scanner.get_stock_codes = MagicMock(return_value=["AAPL"])
+
+    telegram = MagicMock()
+    telegram.notify_system_start = AsyncMock()
+    telegram.notify_system_shutdown = AsyncMock()
+    telegram.notify_market_open = AsyncMock()
+    telegram.notify_playbook_failed = AsyncMock()
+    telegram.notify_playbook_generated = AsyncMock()
+    telegram.close = AsyncMock()
+
+    command_handler = MagicMock()
+    command_handler.register_command = MagicMock()
+    command_handler.register_command_with_args = MagicMock()
+    command_handler.start_polling = AsyncMock()
+    command_handler.stop_polling = AsyncMock()
+
+    async def _run_once(markets: list[Any], processor: Any) -> None:
+        for item in markets:
+            await processor(item)
+        cycle_count["count"] += 1
+        if cycle_count["count"] >= 2:
+            shutdown_event.set()
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("src.main.asyncio.Event", side_effect=[shutdown_event, pause_event])
+        )
+        stack.enter_context(
+            patch(
+                "src.main.asyncio.get_running_loop",
+                return_value=MagicMock(add_signal_handler=MagicMock()),
+            )
+        )
+        stack.enter_context(patch("src.main.KISBroker", return_value=broker))
+        stack.enter_context(patch("src.main.OverseasBroker", return_value=overseas_broker))
+        stack.enter_context(patch("src.main.GeminiClient", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.RiskManager", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.init_db", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DecisionLogger", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextAggregator", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextScheduler", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.EvolutionOptimizer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextSelector", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ScenarioEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PlaybookStore", return_value=playbook_store))
+        stack.enter_context(patch("src.main.DailyReviewer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PreMarketPlanner", return_value=pre_market_planner))
+        stack.enter_context(patch("src.main.NotificationFilter", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.TelegramClient", return_value=telegram))
+        stack.enter_context(
+            patch("src.main.TelegramCommandHandler", return_value=command_handler)
+        )
+        stack.enter_context(
+            patch("src.main.SmartVolatilityScanner", return_value=smart_scanner)
+        )
+        stack.enter_context(
+            patch("src.main.CriticalityAssessor", return_value=MagicMock())
+        )
+        stack.enter_context(
+            patch(
+                "src.main.PriorityTaskQueue",
+                return_value=MagicMock(
+                    get_metrics=AsyncMock(return_value=MagicMock(total_enqueued=0))
+                ),
+            )
+        )
+        stack.enter_context(patch("src.main._start_dashboard_server"))
+        stack.enter_context(patch("src.main.sync_positions_from_broker", new=AsyncMock()))
+        stack.enter_context(
+            patch("src.main.process_blackout_recovery_orders", new=AsyncMock())
+        )
+        stack.enter_context(
+            patch("src.main.handle_overseas_pending_orders", new=AsyncMock())
+        )
+        stack.enter_context(
+            patch("src.main.build_overseas_symbol_universe", new=AsyncMock(return_value=[]))
+        )
+        stack.enter_context(patch("src.main.get_open_markets", return_value=[market]))
+        stack.enter_context(
+            patch("src.main._acquire_live_runtime_lock", return_value=None)
+        )
+        stack.enter_context(
+            patch(
+                "src.main.get_session_info",
+                side_effect=[MagicMock(session_id="US_PRE"), MagicMock(session_id="US_REG")],
+            )
+        )
+        stack.enter_context(patch("src.main._should_mid_session_refresh", return_value=False))
+        stack.enter_context(patch("src.main._should_rescan_market", return_value=True))
+        stack.enter_context(
+            patch("src.main._has_market_session_transition", side_effect=[True, True])
+        )
+        stack.enter_context(
+            patch("src.main._run_markets_in_parallel", side_effect=_run_once)
+        )
+        mock_trading_cycle = stack.enter_context(
+            patch("src.main.trading_cycle", new=AsyncMock())
+        )
+
+        await main_module.run(settings)
+
+    assert mock_trading_cycle.await_count == 2
+    assert mock_trading_cycle.await_args_list[0].args[3] is premarket_playbook
+    assert mock_trading_cycle.await_args_list[1].args[3] is regular_playbook
+    assert pre_market_planner.generate_playbook.await_count == 2
+    assert telegram.notify_playbook_failed.await_count == 0
 
 
 @pytest.mark.asyncio
