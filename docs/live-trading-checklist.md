@@ -103,13 +103,23 @@ python -m src.main --mode=live --dashboard
 - [ ] 로그에 `MODE=live` 출력 확인
 - [ ] 첫 잔고 조회 성공 (ConnectionError 없음)
 - [ ] Telegram 알림 수신 확인 ("System started")
-- [ ] KR realtime 모드에서 `Realtime KR hard-stop websocket monitor started` 로그 확인
+- [ ] realtime hard-stop 모드에서 `Realtime hard-stop websocket monitor started enabled_markets=<...> source=websocket_hard_stop` 로그 확인
+- [ ] US 보유 포지션이 realtime hard-stop 추적 대상이면 `Realtime websocket action=connect` 와 해당 종목의 `Realtime websocket action=subscribe` 또는 `Realtime websocket action=resubscribe` 로그 확인
+- [ ] US 추적 종목에 대해 `Realtime websocket action=parsed_us_event` 또는 `Realtime websocket action=ignore_us_parse_failure` 또는 `Realtime price event action=no_trigger` 또는 `Realtime price event action=dispatch_trigger` 중 최소 1개가 관측되는지 확인
 - [ ] 첫 주문 후 KIS 앱에서 체결 내역 확인
 
 ### 3-4. 손절/익절 동작 차이 확인
-- [ ] KR 하드 스탑은 WebSocket 실시간 가격 이벤트 기준으로 감시됨
+- [ ] KR/US 하드 스탑은 WebSocket 실시간 가격 이벤트 기준으로 감시됨
 - [ ] 익절/ATR trailing/모델 보조 청산은 기존 polling loop 기준으로 유지됨
 - [ ] WebSocket 장애 시 polling 기반 staged-exit이 fallback으로 남아 있음
+
+### 3-5. US websocket hard-stop close criteria
+- [ ] 재시작 검증은 같은 worktree의 최신 `run_*.log` 와 `decision_logs`/`trades` DB 증적만 사용한다.
+- [ ] `Realtime websocket action=connect` 와 US 종목별 `action=subscribe` 또는 `action=resubscribe` 가 모두 관측되어야 한다.
+- [ ] US 이벤트 경로에서 `parsed_us_event`, `ignore_us_parse_failure`, `no_trigger`, `dispatch_trigger` 중 필요한 단계가 관측되어야 한다.
+- [ ] websocket hard-stop SELL 이 발생한 경우 `Realtime hard-stop action=decision_logged`, `Realtime hard-stop action=trade_logged`, `Realtime hard-stop action=persisted ... source=websocket_hard_stop` 가 모두 관측되어야 한다.
+- [ ] `decision_logs` 와 `trades` 양쪽에서 `source=websocket_hard_stop` 가 확인되어야 한다.
+- [ ] 필요한 단계 중 하나라도 미관측이면 `NOT_OBSERVED` 로 기록하고 close 하지 않는다.
 
 ---
 

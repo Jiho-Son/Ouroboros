@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -148,6 +149,26 @@ async def test_subscribe_sends_overseas_market_prefix_in_key() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subscribe_logs_us_subscription_action(caplog: pytest.LogCaptureFixture) -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    ws = _FakeWebSocket(messages=[])
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=lambda _url: _FakeConnect(ws),
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+    )
+    client._ws = ws
+    caplog.set_level(logging.INFO)
+
+    await client.subscribe("US_NASDAQ", "AAPL")
+
+    assert "action=subscribe" in caplog.text
+    assert "market=US_NASDAQ" in caplog.text
+    assert "stock=AAPL" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_subscribe_does_not_resend_duplicate_registration() -> None:
     broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
     ws = _FakeWebSocket(messages=[])
@@ -199,6 +220,27 @@ async def test_unsubscribe_removes_overseas_subscription_and_sends_unsubscribe()
     assert client._subscriptions == set()
     assert ws.sent_json[-1]["body"]["input"]["tr_key"] == "DNASAAPL"
     assert ws.sent_json[-1]["header"]["tr_type"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_logs_us_unsubscribe_action(caplog: pytest.LogCaptureFixture) -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    ws = _FakeWebSocket(messages=[])
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=lambda _url: _FakeConnect(ws),
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+    )
+    client._ws = ws
+    await client.subscribe("US_NASDAQ", "AAPL")
+    caplog.set_level(logging.INFO)
+
+    await client.unsubscribe("US_NASDAQ", "AAPL")
+
+    assert "action=unsubscribe" in caplog.text
+    assert "market=US_NASDAQ" in caplog.text
+    assert "stock=AAPL" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -267,6 +309,92 @@ async def test_run_reconnects_and_resubscribes_overseas_symbols_without_double_p
 
 
 @pytest.mark.asyncio
+async def test_run_logs_connect_action(caplog: pytest.LogCaptureFixture) -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    ws = _FakeWebSocket(messages=[])
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=lambda _url: _FakeConnect(ws),
+        ws_url="ws://example.test/custom-path",
+        retry_delay_seconds=0.0,
+        max_retries=1,
+    )
+    caplog.set_level(logging.INFO)
+
+    await client.run()
+
+    assert "action=connect" in caplog.text
+    assert "ws://example.test/custom-path" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_logs_us_resubscribe_action_per_symbol(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    first_ws = _FakeWebSocket(messages=[RuntimeError("boom")])
+    second_ws = _FakeWebSocket(messages=[])
+    queue = [_FakeConnect(first_ws), _FakeConnect(second_ws)]
+
+    def connect(_url: str) -> _FakeConnect:
+        return queue.pop(0)
+
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=connect,
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+        max_retries=2,
+    )
+    await client.subscribe("US_NASDAQ", "AAPL")
+    caplog.set_level(logging.INFO)
+
+    task = asyncio.create_task(client.run())
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    client.request_stop()
+    await task
+
+    assert "action=resubscribe" in caplog.text
+    assert "market=US_NASDAQ" in caplog.text
+    assert "stock=AAPL" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_reconnect_logs_resubscription_market_summary(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    first_ws = _FakeWebSocket(messages=[RuntimeError("boom")])
+    second_ws = _FakeWebSocket(messages=[])
+    queue = [_FakeConnect(first_ws), _FakeConnect(second_ws)]
+
+    def connect(_url: str) -> _FakeConnect:
+        return queue.pop(0)
+
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=connect,
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+        max_retries=2,
+    )
+    await client.subscribe("US_NASDAQ", "AAPL")
+
+    with caplog.at_level(logging.INFO):
+        task = asyncio.create_task(client.run())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        client.request_stop()
+        await task
+
+    assert (
+        "Resubscribing realtime websocket symbols count=1 "
+        "subscriptions=US_NASDAQ:AAPL"
+    ) in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_run_uses_exact_configured_ws_url() -> None:
     broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
     ws = _FakeWebSocket(messages=[])
@@ -287,6 +415,66 @@ async def test_run_uses_exact_configured_ws_url() -> None:
     await client.run()
 
     assert seen_urls == ["ws://example.test/custom-path"]
+
+
+@pytest.mark.asyncio
+async def test_run_logs_ignored_us_parse_failure_reason(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    malformed_us_payload = (
+        "0|HDFSCNT0|001|"
+        "XXXXAAPL^AAPL^4^20260309^20260309^093000^20260309^223000^"
+        "001500000^001510000^001490000^001480100"
+    )
+    ws = _FakeWebSocket(messages=[malformed_us_payload])
+    callback = AsyncMock()
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=lambda _url: _FakeConnect(ws),
+        ws_url="ws://example.test/custom-path",
+        retry_delay_seconds=0.0,
+        max_retries=1,
+        on_price=callback,
+    )
+    caplog.set_level(logging.INFO)
+
+    await client.run()
+
+    callback.assert_not_called()
+    assert "action=ignore_us_parse_failure" in caplog.text
+    assert "unknown overseas prefix=XXXX" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_logs_parsed_us_event_diagnostic(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    raw = (
+        "0|HDFSCNT0|001|"
+        "DNASAAPL^AAPL^4^20260309^20260309^093000^20260309^223000^"
+        "001500000^001510000^001490000^001480100^5^000019900^00136^"
+        "001480000^001481000^10^12^100^200^100000^30^70^120.0^1"
+    )
+    ws = _FakeWebSocket(messages=[raw])
+    callback = AsyncMock()
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=lambda _url: _FakeConnect(ws),
+        ws_url="ws://example.test/custom-path",
+        retry_delay_seconds=0.0,
+        max_retries=1,
+        on_price=callback,
+    )
+    caplog.set_level(logging.INFO)
+
+    await client.run()
+
+    callback.assert_awaited_once()
+    assert "action=parsed_us_event" in caplog.text
+    assert "market=US_NASDAQ" in caplog.text
+    assert "stock=AAPL" in caplog.text
 
 
 @pytest.mark.asyncio

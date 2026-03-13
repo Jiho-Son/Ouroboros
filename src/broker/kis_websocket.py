@@ -45,6 +45,10 @@ def supports_realtime_price_market(market_code: str) -> bool:
     return market_code in _SUPPORTED_MARKETS
 
 
+def _is_us_market_code(market_code: str) -> bool:
+    return market_code.startswith("US_")
+
+
 def resolve_realtime_price_subscription(*, market_code: str, stock_code: str) -> tuple[str, str]:
     """Return websocket TR metadata for a supported hard-stop market."""
     symbol = stock_code.strip().upper()
@@ -267,7 +271,7 @@ class KISWebSocketClient:
             try:
                 async with self._connect(self._ws_url) as ws:
                     self._ws = ws
-                    logger.info("Connected realtime websocket url=%s", self._ws_url)
+                    logger.info("Realtime websocket action=connect url=%s", self._ws_url)
                     await self._resubscribe_all(ws)
                     async for raw in ws:
                         if self._stop_requested:
@@ -279,15 +283,33 @@ class KISWebSocketClient:
                         if event is None:
                             reason = classify_price_event_parse_failure(text)
                             if reason is not None:
-                                logger.debug("Ignoring websocket payload with %s", reason)
+                                if _extract_tr_id(text) == _OVERSEAS_PRICE_TR_ID:
+                                    logger.info(
+                                        "Realtime websocket action=ignore_us_parse_failure "
+                                        "reason=%s",
+                                        reason,
+                                    )
+                                else:
+                                    logger.debug("Ignoring websocket payload with %s", reason)
                             continue
-                        logger.debug(
-                            "Parsed realtime websocket event market=%s stock=%s price=%s tr_id=%s",
-                            event.market_code,
-                            event.stock_code,
-                            event.price,
-                            event.tr_id,
-                        )
+                        if _is_us_market_code(event.market_code):
+                            logger.info(
+                                "Realtime websocket action=parsed_us_event "
+                                "market=%s stock=%s price=%.4f tr_id=%s",
+                                event.market_code,
+                                event.stock_code,
+                                float(event.price),
+                                event.tr_id,
+                            )
+                        else:
+                            logger.debug(
+                                "Parsed realtime websocket event market=%s "
+                                "stock=%s price=%s tr_id=%s",
+                                event.market_code,
+                                event.stock_code,
+                                event.price,
+                                event.tr_id,
+                            )
                         if event is not None and self._on_price is not None:
                             await self._on_price(event)
                 if self._stop_requested:
@@ -317,8 +339,22 @@ class KISWebSocketClient:
 
     async def _resubscribe_all(self, ws: Any) -> None:
         if self._subscriptions:
-            logger.info("Resubscribing %d realtime websocket symbols", len(self._subscriptions))
+            subscriptions = ",".join(
+                f"{market_code}:{stock_code}"
+                for market_code, stock_code in sorted(self._subscriptions)
+            )
+            logger.info(
+                "Resubscribing realtime websocket symbols count=%d subscriptions=%s",
+                len(self._subscriptions),
+                subscriptions,
+            )
         for market_code, stock_code in sorted(self._subscriptions):
+            if _is_us_market_code(market_code):
+                logger.info(
+                    "Realtime websocket action=resubscribe market=%s stock=%s",
+                    market_code,
+                    stock_code,
+                )
             await self._send_subscription(
                 ws,
                 market_code=market_code,
@@ -346,6 +382,16 @@ class KISWebSocketClient:
             tr_type=tr_type,
         )
         await ws.send_json(payload)
+        if _is_us_market_code(market_code):
+            action = "subscribe" if tr_type == "1" else "unsubscribe"
+            logger.info(
+                "Realtime websocket action=%s market=%s stock=%s tr_id=%s tr_key=%s",
+                action,
+                market_code,
+                stock_code.strip().upper(),
+                tr_id,
+                tr_key,
+            )
 
 
 def _parse_int(value: str | int | None, *, default: int) -> int:
@@ -360,6 +406,13 @@ def _resolve_overseas_market_code_from_rsym(rsym: str) -> str | None:
         if rsym.startswith(prefix):
             return _OVERSEAS_EVENT_PREFIXES[prefix]
     return None
+
+
+def _extract_tr_id(raw: str) -> str | None:
+    parts = raw.split("|", 3)
+    if len(parts) != 4:
+        return None
+    return parts[1]
 
 
 def _extract_ws_text(message: object) -> str | None:

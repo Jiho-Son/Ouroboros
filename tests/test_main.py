@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import math
 from contextlib import ExitStack
 from datetime import UTC, date, datetime
@@ -126,6 +127,19 @@ def _make_settings(**overrides: Any) -> Settings:
     return Settings(**base)
 
 
+def test_log_realtime_hard_stop_monitor_start_includes_enabled_market_coverage(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _make_settings(TRADE_MODE="realtime", ENABLED_MARKETS="US")
+
+    with caplog.at_level(logging.INFO):
+        main_module._log_realtime_hard_stop_monitor_start(settings)
+
+    assert "Realtime hard-stop websocket monitor started" in caplog.text
+    assert "enabled_markets=US_NASDAQ,US_NYSE,US_AMEX" in caplog.text
+    assert "source=websocket_hard_stop" in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_sync_realtime_hard_stop_monitor_registers_hold_position() -> None:
     monitor = RealtimeHardStopMonitor()
@@ -186,6 +200,39 @@ async def test_sync_realtime_hard_stop_monitor_registers_us_hold_position() -> N
     assert tracked.hard_stop_price == pytest.approx(96.5)
     assert tracked.quantity == 7
     websocket_client.subscribe.assert_awaited_once_with("US_NASDAQ", "AAPL")
+
+
+@pytest.mark.asyncio
+async def test_sync_realtime_hard_stop_monitor_logs_websocket_subscription_source(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monitor = RealtimeHardStopMonitor()
+    market = MARKETS["US_NASDAQ"]
+    market_data = {"_staged_exit_evidence": {"stop_loss_threshold": -3.5}}
+    websocket_client = MagicMock()
+    websocket_client.subscribe = AsyncMock()
+    websocket_client.unsubscribe = AsyncMock()
+
+    with caplog.at_level(logging.INFO):
+        await _sync_realtime_hard_stop_monitor(
+            monitor=monitor,
+            websocket_client=websocket_client,
+            market=market,
+            stock_code="AAPL",
+            decision_action="HOLD",
+            open_position={
+                "price": 100.0,
+                "quantity": 7,
+                "decision_id": "buy-dec",
+                "timestamp": "2026-03-09T00:00:00+00:00",
+            },
+            market_data=market_data,
+        )
+
+    assert (
+        "Realtime hard-stop monitor sync action=subscribe market=US_NASDAQ "
+        "stock=AAPL source=websocket_hard_stop"
+    ) in caplog.text
 
 
 def test_update_runtime_exit_peak_only_raises_cached_peak() -> None:
@@ -364,6 +411,87 @@ async def test_handle_realtime_price_event_updates_us_peak_before_hard_stop_eval
 
     assert _RUNTIME_EXIT_PEAKS["US_NASDAQ:AAPL:d1:t1"] == pytest.approx(110.25)
     mock_handle.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_realtime_price_event_logs_us_receive_and_no_trigger(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monitor = RealtimeHardStopMonitor()
+    monitor.register(
+        market_code="US_NASDAQ",
+        stock_code="AAPL",
+        entry_price=100.0,
+        quantity=1,
+        hard_stop_pct=-2.0,
+        decision_id="d1",
+        position_timestamp="t1",
+    )
+    caplog.set_level("INFO")
+
+    with patch("src.main._handle_realtime_hard_stop_trigger", new=AsyncMock()) as mock_handle:
+        await _handle_realtime_price_event(
+            event=KISWebSocketPriceEvent(
+                market_code="US_NASDAQ",
+                stock_code="AAPL",
+                price=110.25,
+                tr_id="HDFSCNT0",
+            ),
+            broker=MagicMock(),
+            overseas_broker=MagicMock(),
+            db_conn=MagicMock(),
+            decision_logger=MagicMock(),
+            telegram=MagicMock(),
+            settings=_make_settings(TRADE_MODE="realtime"),
+            monitor=monitor,
+            websocket_client=MagicMock(),
+        )
+
+    mock_handle.assert_not_awaited()
+    assert "action=received_us_event" in caplog.text
+    assert "action=no_trigger" in caplog.text
+    assert "reason=above_stop" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_handle_realtime_price_event_logs_us_dispatch_trigger(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monitor = RealtimeHardStopMonitor()
+    monitor.register(
+        market_code="US_NASDAQ",
+        stock_code="AAPL",
+        entry_price=100.0,
+        quantity=1,
+        hard_stop_pct=-2.0,
+        decision_id="d1",
+        position_timestamp="t1",
+    )
+    caplog.set_level("INFO")
+
+    with patch("src.main._handle_realtime_hard_stop_trigger", new=AsyncMock()) as mock_handle:
+        await _handle_realtime_price_event(
+            event=KISWebSocketPriceEvent(
+                market_code="US_NASDAQ",
+                stock_code="AAPL",
+                price=97.5,
+                tr_id="HDFSCNT0",
+            ),
+            broker=MagicMock(),
+            overseas_broker=MagicMock(),
+            db_conn=MagicMock(),
+            decision_logger=MagicMock(),
+            telegram=MagicMock(),
+            settings=_make_settings(TRADE_MODE="realtime"),
+            monitor=monitor,
+            websocket_client=MagicMock(),
+        )
+
+    mock_handle.assert_awaited_once()
+    assert "action=received_us_event" in caplog.text
+    assert "action=dispatch_trigger" in caplog.text
+    assert "market=US_NASDAQ" in caplog.text
+    assert "stock=AAPL" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -719,6 +847,80 @@ async def test_handle_realtime_hard_stop_trigger_submits_overseas_sell_and_logs_
     assert latest_sell[6] == pytest.approx(-62.16)
     assert latest_sell[7] == pytest.approx(35.0)
     assert monitor.get("US_NASDAQ", "AAPL") is None
+
+
+@pytest.mark.asyncio
+async def test_handle_realtime_hard_stop_trigger_logs_us_persistence_boundaries(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    db_conn = init_db(":memory:")
+    log_trade(
+        conn=db_conn,
+        stock_code="AAPL",
+        action="BUY",
+        confidence=87,
+        rationale="initial entry",
+        quantity=7,
+        price=100.0,
+        pnl=0.0,
+        market="US_NASDAQ",
+        exchange_code="NASD",
+        session_id="US_REG",
+        decision_id="buy-dec",
+        selection_context={"fx_rate": 1200.0},
+        mode="live",
+    )
+    decision_logger = MagicMock()
+    decision_logger.log_decision.return_value = "sell-dec"
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    monitor = RealtimeHardStopMonitor()
+    websocket_client = MagicMock()
+    websocket_client.unsubscribe = AsyncMock()
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_balance = AsyncMock(
+        return_value={
+            "output1": [{"ovrs_pdno": "AAPL", "ord_psbl_qty": "7", "ovrs_excg_cd": "NASD"}],
+            "output2": [{}],
+            "exchange_rate": "1260.0",
+        }
+    )
+    overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    monitor.register(
+        market_code="US_NASDAQ",
+        stock_code="AAPL",
+        entry_price=100.0,
+        quantity=7,
+        hard_stop_pct=-3.5,
+        decision_id="buy-dec",
+        position_timestamp="2026-03-09T00:00:00+00:00",
+    )
+    caplog.set_level("INFO")
+
+    ok = await _handle_realtime_hard_stop_trigger(
+        broker=MagicMock(),
+        overseas_broker=overseas_broker,
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        telegram=telegram,
+        settings=_make_settings(),
+        monitor=monitor,
+        websocket_client=websocket_client,
+        trigger=HardStopTrigger(
+            market_code="US_NASDAQ",
+            stock_code="AAPL",
+            last_price=96.12,
+            hard_stop_price=96.5,
+            quantity=7,
+            decision_id="buy-dec",
+            position_timestamp="2026-03-09T00:00:00+00:00",
+        ),
+    )
+
+    assert ok is True
+    assert "action=decision_logged" in caplog.text
+    assert "action=trade_logged" in caplog.text
+    assert "source=websocket_hard_stop" in caplog.text
 
 
 @pytest.mark.asyncio
