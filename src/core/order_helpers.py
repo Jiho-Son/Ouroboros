@@ -159,6 +159,44 @@ def _should_block_overseas_buy_for_fx_buffer(
     return remaining < required, remaining, required
 
 
+def _should_block_buy_chasing_session_high(
+    *,
+    market: MarketInfo,
+    action: str,
+    current_price: float,
+    session_high_price: float,
+    price_change_pct: float,
+    settings: Settings | None,
+) -> tuple[bool, float, float, float]:
+    """Block BUY when price is already extended and pinned near the session high."""
+    if action != "BUY" or settings is None:
+        return False, 0.0, 0.0, 0.0
+    if current_price <= 0 or session_high_price <= 0 or current_price > session_high_price:
+        return False, 0.0, 0.0, 0.0
+
+    from src.core.session_risk import _resolve_market_setting
+
+    min_gain_pct = float(
+        _resolve_market_setting(
+            market=market,
+            settings=settings,
+            key="BUY_CHASE_MIN_INTRADAY_GAIN_PCT",
+            default=4.0,
+        )
+    )
+    max_pullback_pct = float(
+        _resolve_market_setting(
+            market=market,
+            settings=settings,
+            key="BUY_CHASE_MAX_PULLBACK_FROM_HIGH_PCT",
+            default=0.5,
+        )
+    )
+    pullback_from_high_pct = ((session_high_price - current_price) / session_high_price) * 100.0
+    blocked = price_change_pct >= min_gain_pct and pullback_from_high_pct <= max_pullback_pct
+    return blocked, pullback_from_high_pct, min_gain_pct, max_pullback_pct
+
+
 def _should_force_exit_for_overnight(
     *,
     market: MarketInfo,
