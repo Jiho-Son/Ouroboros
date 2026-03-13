@@ -257,3 +257,11 @@
 - next_ticket: OOR-370
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: US session 전환(US_DAY/US_PRE/US_REG) 버그를 재현 우선으로 확인하고 세션 인지 상태추적, 강제 재스캔, 비거래 세션 차단을 테스트 우선으로 수정한다.
+
+### 2026-03-13 | session=codex-oor-408-rework-r2
+- branch: feature/issue-408-us-websocket-hard-stop-diagnostics-r2
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-408 Rework state, OOR-408 prior workpad + PR #813, OOR-403 overlap + PR #814
+- next_ticket: OOR-408
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: Rework reset closes stale PR #813 and rebuilds OOR-408 from origin/main@65983bd; OOR-403 is only a partial overlap, so this attempt should keep deeper parse/evaluate/persistence diagnostics in OOR-408 while avoiding unnecessary duplication of startup/subscription-only evidence.

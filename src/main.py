@@ -123,6 +123,29 @@ logger = logging.getLogger(__name__)
 _SESSION_CLOSE_WINDOWS = {"NXT_AFTER", "US_AFTER"}
 
 
+def _format_realtime_hard_stop_enabled_markets(settings: Settings | None) -> str:
+    if settings is None:
+        return "none"
+
+    enabled_markets: list[str] = []
+    for market_code in settings.enabled_market_list:
+        if not supports_realtime_price_market(market_code):
+            continue
+        if market_code in enabled_markets:
+            continue
+        enabled_markets.append(market_code)
+    return ",".join(enabled_markets) if enabled_markets else "none"
+
+
+def _log_realtime_hard_stop_monitor_start(settings: Settings) -> None:
+    logger.info(
+        "Realtime hard-stop websocket monitor started enabled_markets=%s "
+        "ws_url=%s source=websocket_hard_stop",
+        _format_realtime_hard_stop_enabled_markets(settings),
+        f"{settings.kis_ws_url.rstrip('/')}{settings.KIS_WS_PATH}",
+    )
+
+
 def _ensure_runtime_mode_allowed(mode: str) -> None:
     """Reject runtime execution modes that are banned by policy."""
     if mode == "paper":
@@ -290,6 +313,12 @@ async def _sync_realtime_hard_stop_monitor(
     )
     if websocket_client is not None:
         await websocket_client.subscribe(market.code, stock_code)
+        logger.info(
+            "Realtime hard-stop monitor sync action=subscribe market=%s "
+            "stock=%s source=websocket_hard_stop",
+            market.code,
+            stock_code,
+        )
 
 
 async def _clear_realtime_hard_stop_tracking(
@@ -470,6 +499,14 @@ async def _handle_realtime_hard_stop_trigger(
                 "source": "websocket_hard_stop",
             },
         )
+        if not market.is_domestic:
+            logger.info(
+                "Realtime hard-stop action=decision_logged market=%s stock=%s "
+                "source=websocket_hard_stop decision_id=%s",
+                market.code,
+                trigger.stock_code,
+                decision_id,
+            )
 
         try:
             await telegram.notify_trade_execution(
@@ -546,6 +583,15 @@ async def _handle_realtime_hard_stop_trigger(
             decision_id=decision_id,
             mode=settings.MODE if settings else "paper",
         )
+        if not market.is_domestic:
+            logger.info(
+                "Realtime hard-stop action=trade_logged market=%s stock=%s "
+                "quantity=%d source=websocket_hard_stop decision_id=%s",
+                market.code,
+                trigger.stock_code,
+                quantity,
+                decision_id,
+            )
         logger.info(
             "Realtime hard-stop action=persisted market=%s stock=%s "
             "quantity=%d source=websocket_hard_stop decision_id=%s",
@@ -588,13 +634,23 @@ async def _handle_realtime_price_event(
     websocket_client: KISWebSocketClient | None,
 ) -> None:
     """Apply favorable-exit peak hints before evaluating realtime hard-stop triggers."""
-    logger.debug(
-        "Realtime price event received market=%s stock=%s price=%.4f tr_id=%s",
-        event.market_code,
-        event.stock_code,
-        float(event.price),
-        event.tr_id,
-    )
+    if event.market_code.startswith("US_"):
+        logger.info(
+            "Realtime price event action=received_us_event market=%s "
+            "stock=%s price=%.4f tr_id=%s",
+            event.market_code,
+            event.stock_code,
+            float(event.price),
+            event.tr_id,
+        )
+    else:
+        logger.debug(
+            "Realtime price event received market=%s stock=%s price=%.4f tr_id=%s",
+            event.market_code,
+            event.stock_code,
+            float(event.price),
+            event.tr_id,
+        )
     tracked = monitor.get(event.market_code, event.stock_code)
     if tracked is not None:
         update_runtime_exit_peak(
@@ -608,13 +664,23 @@ async def _handle_realtime_price_event(
 
     evaluation = monitor.evaluate_price_diagnostic(event.market_code, event.stock_code, event.price)
     if evaluation.trigger is None:
-        logger.debug(
-            "Realtime price event action=no_trigger market=%s stock=%s reason=%s price=%.4f",
-            event.market_code,
-            event.stock_code,
-            evaluation.reason,
-            float(event.price),
-        )
+        if event.market_code.startswith("US_"):
+            logger.info(
+                "Realtime price event action=no_trigger market=%s stock=%s "
+                "reason=%s price=%.4f",
+                event.market_code,
+                event.stock_code,
+                evaluation.reason,
+                float(event.price),
+            )
+        else:
+            logger.debug(
+                "Realtime price event action=no_trigger market=%s stock=%s reason=%s price=%.4f",
+                event.market_code,
+                event.stock_code,
+                evaluation.reason,
+                float(event.price),
+            )
         return
 
     trigger = evaluation.trigger
@@ -3290,7 +3356,7 @@ async def run(settings: Settings) -> None:
             max_retries=settings.REALTIME_HARD_STOP_MAX_RETRIES,
         )
         realtime_hard_stop_task = asyncio.create_task(realtime_hard_stop_client.run())
-        logger.info("Realtime hard-stop websocket monitor started")
+        _log_realtime_hard_stop_monitor_start(settings)
 
     # Initialize Telegram command handler
     command_handler = TelegramCommandHandler(telegram)
