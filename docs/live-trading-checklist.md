@@ -103,13 +103,16 @@ python -m src.main --mode=live --dashboard
 - [ ] 로그에 `MODE=live` 출력 확인
 - [ ] 첫 잔고 조회 성공 (ConnectionError 없음)
 - [ ] Telegram 알림 수신 확인 ("System started")
-- [ ] KR realtime 모드에서 `Realtime KR hard-stop websocket monitor started` 로그 확인
+- [ ] realtime hard-stop 기동 로그에 `Realtime hard-stop websocket monitor started enabled_markets=<...> source=websocket_hard_stop` 가 출력되고, US 운영 시 `US_NASDAQ`/`US_NYSE`/`US_AMEX` 커버리지가 명시되는지 확인
+- [ ] `Realtime hard-stop monitor sync action=subscribe market=<market> stock=<symbol> source=websocket_hard_stop` 또는 `Resubscribing realtime websocket symbols count=<n> subscriptions=<market>:<symbol>` 로그로 실제 구독 대상이 남는지 확인
 - [ ] 첫 주문 후 KIS 앱에서 체결 내역 확인
 
 ### 3-4. 손절/익절 동작 차이 확인
-- [ ] KR 하드 스탑은 WebSocket 실시간 가격 이벤트 기준으로 감시됨
+- [ ] KR/US 하드 스탑은 WebSocket 실시간 가격 이벤트 기준으로 감시됨
 - [ ] 익절/ATR trailing/모델 보조 청산은 기존 polling loop 기준으로 유지됨
 - [ ] WebSocket 장애 시 polling 기반 staged-exit이 fallback으로 남아 있음
+- [ ] websocket hard-stop 트리거가 발생하면 `Realtime hard-stop trigger handling started ... source=websocket_hard_stop` 와 `Realtime hard-stop action=persisted ... source=websocket_hard_stop` 로그를 확인한다.
+- [ ] 관측 창에서 websocket hard-stop 트리거가 발생하지 않으면, 로그 구독 증적과 함께 `sqlite3 <runtime-db> "select count(*) ... source='websocket_hard_stop'"` 결과를 기록해 `trigger not observed` 로 명시한다.
 
 ---
 

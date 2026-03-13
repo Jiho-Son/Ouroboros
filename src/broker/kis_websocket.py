@@ -317,7 +317,15 @@ class KISWebSocketClient:
 
     async def _resubscribe_all(self, ws: Any) -> None:
         if self._subscriptions:
-            logger.info("Resubscribing %d realtime websocket symbols", len(self._subscriptions))
+            subscriptions = ",".join(
+                f"{market_code}:{stock_code}"
+                for market_code, stock_code in sorted(self._subscriptions)
+            )
+            logger.info(
+                "Resubscribing realtime websocket symbols count=%d subscriptions=%s",
+                len(self._subscriptions),
+                subscriptions,
+            )
         for market_code, stock_code in sorted(self._subscriptions):
             await self._send_subscription(
                 ws,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -264,6 +265,40 @@ async def test_run_reconnects_and_resubscribes_overseas_symbols_without_double_p
     assert client._subscriptions == {("US_NASDAQ", "AAPL")}
     assert first_ws.sent_json[0]["body"]["input"]["tr_key"] == "DNASAAPL"
     assert second_ws.sent_json[0]["body"]["input"]["tr_key"] == "DNASAAPL"
+
+
+@pytest.mark.asyncio
+async def test_run_reconnect_logs_resubscription_market_summary(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="approval-1"))
+    first_ws = _FakeWebSocket(messages=[RuntimeError("boom")])
+    second_ws = _FakeWebSocket(messages=[])
+    queue = [_FakeConnect(first_ws), _FakeConnect(second_ws)]
+
+    def connect(_url: str) -> _FakeConnect:
+        return queue.pop(0)
+
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=connect,
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+        max_retries=2,
+    )
+    await client.subscribe("US_NASDAQ", "AAPL")
+
+    with caplog.at_level(logging.INFO):
+        task = asyncio.create_task(client.run())
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        client.request_stop()
+        await task
+
+    assert (
+        "Resubscribing realtime websocket symbols count=1 "
+        "subscriptions=US_NASDAQ:AAPL"
+    ) in caplog.text
 
 
 @pytest.mark.asyncio

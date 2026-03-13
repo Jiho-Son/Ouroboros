@@ -257,3 +257,11 @@
 - next_ticket: OOR-370
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: US session 전환(US_DAY/US_PRE/US_REG) 버그를 재현 우선으로 확인하고 세션 인지 상태추적, 강제 재스캔, 비거래 세션 차단을 테스트 우선으로 수정한다.
+
+### 2026-03-13 | session=codex-oor-403-rework-r2
+- branch: feature/issue-403-us-realtime-hard-stop-runtime-evidence-r2
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-403 Rework state, attached PR #809 conflict state, issue comment "현재 상태에서 컨플릭만 해결해"
+- next_ticket: OOR-403
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: Closed stale PR #809 and deleted the old Linear workpad before restarting from origin/main on a fresh branch to resolve the remaining regression/conflict signal cleanly.
