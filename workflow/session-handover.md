@@ -273,3 +273,11 @@
 - next_ticket: OOR-816
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: 재현 신호 확보 후 planner/scenario/runtime 중 가장 좁은 수정면을 택해 최근 고점 추격 매수를 억제하는 회귀 테스트와 문서를 함께 반영한다.
+
+### 2026-03-13 | session=codex-oor-819-start
+- branch: feature/issue-819-realtime-mode-prep
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-819
+- next_ticket: OOR-819
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: LLM client 추상화와 Ollama provider 추가가 목표이며, 기존 Gemini 기본 경로를 유지하는 구성이 필요하다.

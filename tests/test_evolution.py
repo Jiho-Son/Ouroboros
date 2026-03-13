@@ -207,6 +207,43 @@ def test_identify_failure_patterns_empty(optimizer: EvolutionOptimizer) -> None:
     assert patterns["patterns"] == {}
 
 
+class _StubEvolutionLLMClient:
+    def __init__(self, response_text: str) -> None:
+        self._response_text = response_text
+        self.calls: list[dict[str, str]] = []
+        self.aio = Mock()
+        self.aio.models = Mock()
+        self.aio.models.generate_content = AsyncMock(side_effect=self._generate_content)
+
+    async def _generate_content(self, *, model: str, contents: str) -> Mock:
+        self.calls.append({"model": model, "contents": contents})
+        return Mock(text=self._response_text)
+
+
+@pytest.mark.asyncio
+async def test_generate_strategy_uses_injected_llm_provider(
+    settings: Settings,
+    tmp_path: Path,
+) -> None:
+    """EvolutionOptimizer should use the shared provider client for raw generation."""
+    llm_client = _StubEvolutionLLMClient(
+        'price = market_data.get("current_price", 0)\n'
+        'return {"action": "HOLD", "confidence": 50, "rationale": "stub"}\n'
+    )
+    optimizer = EvolutionOptimizer(settings, llm_client=llm_client)
+
+    failures = [{"decision_id": "1", "timestamp": "2024-01-15T09:30:00+00:00"}]
+
+    with patch("src.evolution.optimizer.STRATEGIES_DIR", tmp_path):
+        strategy_path = await optimizer.generate_strategy(failures)
+
+    assert strategy_path is not None
+    assert strategy_path.exists()
+    assert llm_client.calls
+    assert llm_client.calls[0]["model"] == settings.GEMINI_MODEL
+    assert "Failure Patterns" in llm_client.calls[0]["contents"]
+
+
 @pytest.mark.asyncio
 async def test_generate_strategy_creates_file(
     optimizer: EvolutionOptimizer, tmp_path: Path

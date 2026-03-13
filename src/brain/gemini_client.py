@@ -1,6 +1,6 @@
-"""Decision engine powered by Google Gemini.
+"""Decision engine backed by the configured LLM provider.
 
-Constructs prompts from market data, calls Gemini, and parses structured
+Constructs prompts from market data, calls the selected provider, and parses structured
 JSON responses into validated TradeDecision objects.
 
 Includes token efficiency optimizations:
@@ -23,9 +23,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from google import genai
-
 from src.brain.cache import DecisionCache
+from src.brain.llm_client import LLMClient, build_llm_client
 from src.brain.prompt_optimizer import PromptOptimizer
 from src.config import Settings
 from src.data.economic_calendar import EconomicCalendar
@@ -49,11 +48,12 @@ class TradeDecision:
 
 
 class GeminiClient:
-    """Wraps the Gemini API for trade decision-making."""
+    """Wraps provider-backed trade decision generation."""
 
     def __init__(
         self,
         settings: Settings,
+        llm_client: LLMClient | None = None,
         news_api: NewsAPI | None = None,
         economic_calendar: EconomicCalendar | None = None,
         market_data: MarketData | None = None,
@@ -62,8 +62,8 @@ class GeminiClient:
     ) -> None:
         self._settings = settings
         self._confidence_threshold = settings.CONFIDENCE_THRESHOLD
-        self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        self._model_name = settings.GEMINI_MODEL
+        self._client = llm_client or build_llm_client(settings)
+        self._model_name = settings.llm_model
 
         # External data sources (optional)
         self._news_api = news_api
@@ -209,7 +209,7 @@ class GeminiClient:
     ) -> str:
         """Build a structured prompt from market data and external sources.
 
-        The prompt instructs Gemini to return valid JSON with action,
+        The prompt instructs the LLM provider to return valid JSON with action,
         confidence, and rationale fields.
         """
         market_name = market_data.get("market_name", "Korean stock market")
@@ -306,7 +306,7 @@ class GeminiClient:
     # ------------------------------------------------------------------
 
     def parse_response(self, raw: str) -> TradeDecision:
-        """Parse a raw Gemini response into a TradeDecision.
+        """Parse a raw provider response into a TradeDecision.
 
         Handles: valid JSON, JSON wrapped in markdown code blocks,
         malformed JSON, missing fields, and invalid action values.
@@ -314,7 +314,7 @@ class GeminiClient:
         On any failure, returns a safe HOLD with confidence 0.
         """
         if not raw or not raw.strip():
-            logger.warning("Empty response from Gemini — defaulting to HOLD")
+            logger.warning("Empty response from LLM provider — defaulting to HOLD")
             return TradeDecision(action="HOLD", confidence=0, rationale="Empty response")
 
         # Strip markdown code fences if present
@@ -326,19 +326,19 @@ class GeminiClient:
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError:
-            logger.warning("Malformed JSON from Gemini — defaulting to HOLD")
+            logger.warning("Malformed JSON from LLM provider — defaulting to HOLD")
             return TradeDecision(action="HOLD", confidence=0, rationale="Malformed JSON response")
 
         # Validate required fields
         if not all(k in data for k in ("action", "confidence", "rationale")):
-            logger.warning("Missing fields in Gemini response — defaulting to HOLD")
+            logger.warning("Missing fields in LLM response — defaulting to HOLD")
             # Preserve raw text in rationale so prompt_override callers (e.g. pre_market_planner)
             # can extract their own JSON format from decision.rationale (#245)
             return TradeDecision(action="HOLD", confidence=0, rationale=raw)
 
         action = str(data["action"]).upper()
         if action not in VALID_ACTIONS:
-            logger.warning("Invalid action '%s' from Gemini — defaulting to HOLD", action)
+            logger.warning("Invalid action '%s' from LLM response — defaulting to HOLD", action)
             return TradeDecision(action="HOLD", confidence=0, rationale=f"Invalid action: {action}")
 
         confidence = int(data["confidence"])
@@ -362,7 +362,7 @@ class GeminiClient:
     async def decide(
         self, market_data: dict[str, Any], news_sentiment: NewsSentiment | None = None
     ) -> TradeDecision:
-        """Build prompt, call Gemini, and return a parsed decision.
+        """Build prompt, call the configured provider, and return a parsed decision.
 
         Args:
             market_data: Market data dictionary with price, orderbook, etc.
@@ -407,7 +407,7 @@ class GeminiClient:
         self._total_tokens_used += token_count
 
         logger.info(
-            "Requesting trade decision from Gemini",
+            "Requesting trade decision from configured LLM provider",
             extra={"estimated_tokens": token_count, "optimized": self._enable_optimization},
         )
 
@@ -418,7 +418,7 @@ class GeminiClient:
             )
             raw = response.text
         except Exception as exc:
-            logger.error("Gemini API error: %s", exc)
+            logger.error("LLM provider error: %s", exc)
             return TradeDecision(
                 action="HOLD", confidence=0, rationale=f"API error: {exc}", token_count=token_count
             )
@@ -427,7 +427,7 @@ class GeminiClient:
         # not a parsed TradeDecision. Skip parse_response to avoid spurious
         # "Missing fields" warnings and return the raw response directly. (#247)
         if "prompt_override" in market_data:
-            logger.info("Gemini raw response received (prompt_override, tokens=%d)", token_count)
+            logger.info("LLM raw response received (prompt_override, tokens=%d)", token_count)
             # Not a trade decision — don't inflate _total_decisions metrics
             return TradeDecision(
                 action="HOLD", confidence=0, rationale=raw, token_count=token_count
@@ -450,7 +450,7 @@ class GeminiClient:
             self._cache.set(market_data, decision)
 
         logger.info(
-            "Gemini decision",
+            "LLM decision",
             extra={
                 "action": decision.action,
                 "confidence": decision.confidence,
@@ -530,7 +530,7 @@ class GeminiClient:
         """Make decisions for multiple stocks in a single API call.
 
         This is designed for daily trading mode to minimize API usage
-        when working with Gemini Free tier (20 calls/day limit).
+        when working with cost-limited LLM providers.
 
         Args:
             stocks_data: List of market data dictionaries, each with:
@@ -590,7 +590,7 @@ class GeminiClient:
         self._total_tokens_used += token_count
 
         logger.info(
-            "Requesting batch decision for %d stocks from Gemini",
+            "Requesting batch decision for %d stocks from configured LLM provider",
             len(stocks_data),
             extra={"estimated_tokens": token_count},
         )
@@ -602,7 +602,7 @@ class GeminiClient:
             )
             raw = response.text
         except Exception as exc:
-            logger.error("Gemini API error in batch decision: %s", exc)
+            logger.error("LLM provider error in batch decision: %s", exc)
             # Return HOLD for all stocks on API error
             return {
                 stock["stock_code"]: TradeDecision(
@@ -624,7 +624,7 @@ class GeminiClient:
         """Parse batch response into a dictionary of decisions.
 
         Args:
-            raw: Raw response from Gemini
+            raw: Raw response from the configured LLM provider
             stocks_data: Original stock data list
             token_count: Token count for the request
 
@@ -632,7 +632,7 @@ class GeminiClient:
             Dictionary mapping stock_code to TradeDecision
         """
         if not raw or not raw.strip():
-            logger.warning("Empty batch response from Gemini — defaulting all to HOLD")
+            logger.warning("Empty batch response from LLM provider — defaulting all to HOLD")
             return {
                 stock["stock_code"]: TradeDecision(
                     action="HOLD",

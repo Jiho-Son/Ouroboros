@@ -418,3 +418,53 @@ class TestPromptOverride:
             )
             # Should contain stock code from build_prompt, not be a custom override
             assert "005930" in actual_prompt
+
+
+class _StubLLMClient:
+    def __init__(self, response_text: str) -> None:
+        self._response_text = response_text
+        self.calls: list[dict[str, str]] = []
+        self.aio = MagicMock()
+        self.aio.models = MagicMock()
+        self.aio.models.generate_content = AsyncMock(side_effect=self._generate_content)
+
+    async def _generate_content(self, *, model: str, contents: str) -> MagicMock:
+        self.calls.append({"model": model, "contents": contents})
+        return MagicMock(text=self._response_text)
+
+
+@pytest.mark.asyncio
+async def test_decide_uses_injected_llm_provider(settings):
+    """Decision generation should delegate raw prompt execution to the configured provider."""
+    llm_client = _StubLLMClient(
+        '{"action": "BUY", "confidence": 92, "rationale": "Local model approved"}'
+    )
+    client = GeminiClient(
+        settings,
+        llm_client=llm_client,
+        enable_cache=False,
+        enable_optimization=False,
+    )
+
+    decision = await client.decide(
+        {
+            "stock_code": "005930",
+            "current_price": 72000,
+            "orderbook": {"asks": [], "bids": []},
+        }
+    )
+
+    assert decision.action == "BUY"
+    assert decision.confidence == 92
+    assert llm_client.calls == [
+        {
+            "model": settings.GEMINI_MODEL,
+            "contents": client.build_prompt_sync(
+                {
+                    "stock_code": "005930",
+                    "current_price": 72000,
+                    "orderbook": {"asks": [], "bids": []},
+                }
+            ),
+        }
+    ]
