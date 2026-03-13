@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-03-12 | session=codex-oor-816-start
+- branch: feature/issue-816-buy-entry-timing
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-816
+- next_ticket: OOR-816
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: 매수 시점이 최근 고점 추격으로 치우치는지 재현부터 확인하고, planner/scenario/runtime 중 가장 좁은 수정면에 회귀 테스트를 추가한다.
+
 ### 2026-03-09 | session=codex-issue465-466-467-review-followup
 - branch: fix/issue-465-466-467-overseas-order-rejection
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -257,6 +265,14 @@
 - next_ticket: OOR-370
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: US session 전환(US_DAY/US_PRE/US_REG) 버그를 재현 우선으로 확인하고 세션 인지 상태추적, 강제 재스캔, 비거래 세션 차단을 테스트 우선으로 수정한다.
+
+### 2026-03-12 | session=codex-oor-816-start-r2
+- branch: feature/issue-816-buy-entry-timing
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-816 current In Progress state, issue description, no attachments, no prior workpad
+- next_ticket: OOR-816
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: 재현 신호 확보 후 planner/scenario/runtime 중 가장 좁은 수정면을 택해 최근 고점 추격 매수를 억제하는 회귀 테스트와 문서를 함께 반영한다.
 
 ### 2026-03-13 | session=codex-oor-811-rework-r2
 - branch: feature/issue-811-canonical-restart-before-remove

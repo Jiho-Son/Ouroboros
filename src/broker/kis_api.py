@@ -370,22 +370,23 @@ class KISBroker:
         )
         return is_dual_listed, spread_krx, spread_nxt, liquidity_krx, liquidity_nxt
 
-    async def get_current_price(
+    async def get_current_price_with_output(
         self,
         stock_code: str,
         *,
         market_div_code: str = "J",
-    ) -> tuple[float, float, float]:
-        """Fetch current price data for a domestic stock.
+    ) -> tuple[float, float, float, dict[str, Any]]:
+        """Fetch current price data plus the raw quote payload for a domestic stock.
 
         Uses the ``inquire-price`` API (FHKST01010100), which works in both
         real and VTS environments and returns the actual last-traded price.
 
         Returns:
-            (current_price, prdy_ctrt, frgn_ntby_qty)
+            (current_price, prdy_ctrt, frgn_ntby_qty, output)
             - current_price: Last traded price in KRW.
             - prdy_ctrt: Day change rate (%).
             - frgn_ntby_qty: Foreigner net buy quantity.
+            - output: Raw KIS quote payload for additional fields such as `stck_hgpr`.
         """
         await self._rate_limiter.acquire()
         session = self._get_session()
@@ -411,9 +412,23 @@ class KISBroker:
                     _f(out.get("stck_prpr")),
                     _f(out.get("prdy_ctrt")),
                     _f(out.get("frgn_ntby_qty")),
+                    cast(dict[str, Any], out if isinstance(out, dict) else {}),
                 )
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching current price: {exc}") from exc
+
+    async def get_current_price(
+        self,
+        stock_code: str,
+        *,
+        market_div_code: str = "J",
+    ) -> tuple[float, float, float]:
+        """Fetch current price data for a domestic stock."""
+        price, change_pct, foreigner_net, _ = await self.get_current_price_with_output(
+            stock_code,
+            market_div_code=market_div_code,
+        )
+        return price, change_pct, foreigner_net
 
     async def get_balance(self) -> dict[str, Any]:
         """Fetch current account balance and holdings."""
