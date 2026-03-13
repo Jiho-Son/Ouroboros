@@ -257,3 +257,11 @@
 - next_ticket: OOR-370
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: US session 전환(US_DAY/US_PRE/US_REG) 버그를 재현 우선으로 확인하고 세션 인지 상태추적, 강제 재스캔, 비거래 세션 차단을 테스트 우선으로 수정한다.
+
+### 2026-03-13 | session=codex-oor-811-rework-r2
+- branch: feature/issue-811-canonical-restart-before-remove
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-811 current Rework state, issue description, Jiho Son Linear/PR feedback, attached PR #811
+- next_ticket: OOR-811
+- process_gate_checked: process_ticket=OOR-811 merged_to_feature_branch=n/a
+- risks_or_notes: Rework resets the rejected GitHub workflow approach; close PR #811, delete the prior Linear workpad, reproduce the gap from fresh origin/main, and replace it with a host-side before_remove canonical restart path that only touches the canonical main checkout.
