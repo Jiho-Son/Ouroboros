@@ -200,6 +200,10 @@ bash scripts/runtime_verify_monitor.sh
 # Runtime monitor with explicit policy timezone (example: KST)
 POLICY_TZ=Asia/Seoul bash scripts/runtime_verify_monitor.sh
 
+# After a restart, inspect US websocket hard-stop diagnostics in the latest run log
+latest_run="$(ls -t data/overnight/run_*.log | head -n1)"
+rg -n "Realtime hard-stop websocket monitor started|Realtime websocket action=connect|Realtime websocket action=(resubscribe|subscribe|unsubscribe)|Realtime websocket action=(parsed_us_event|ignore_us_parse_failure)|Realtime hard-stop evaluate action=(enter|result)|Realtime price event action=(received_us_event|no_trigger|dispatch_trigger)|Realtime hard-stop action=(decision_logged|trade_logged|persisted)" "$latest_run"
+
 # Session handover gate (must pass before implementation)
 python3 scripts/session_handover_check.py --strict
 
@@ -236,6 +240,15 @@ tail -f data/overnight/runtime_verify_*.log
 bash scripts/run_overnight.sh
 bash scripts/runtime_verify_monitor.sh
 ```
+
+US websocket hard-stop restart validation:
+
+- Use the latest `run_*.log` from the same `LOG_DIR`; do not mix logs across worktrees.
+- Required startup evidence: `Realtime hard-stop websocket monitor started` and `Realtime websocket action=connect`.
+- Required tracked-symbol evidence for US holdings under realtime monitoring: at least one `Realtime websocket action=subscribe` or `Realtime websocket action=resubscribe` line for the tracked symbol.
+- Required event-path evidence: at least one of `Realtime websocket action=parsed_us_event`, `Realtime websocket action=ignore_us_parse_failure`, `Realtime price event action=no_trigger`, or `Realtime price event action=dispatch_trigger`.
+- If a websocket hard-stop SELL fires, require all of `Realtime hard-stop action=decision_logged`, `Realtime hard-stop action=trade_logged`, and `Realtime hard-stop action=persisted ... source=websocket_hard_stop`.
+- If any required row stays unobserved during the validation window, record it as `NOT_OBSERVED` and treat the runtime verification as failed.
 
 Override knobs when you need a custom location or port:
 

@@ -8,6 +8,10 @@ from dataclasses import dataclass, replace
 logger = logging.getLogger(__name__)
 
 
+def _is_us_market_code(market_code: str) -> bool:
+    return market_code.startswith("US_")
+
+
 @dataclass(frozen=True, slots=True)
 class TrackedHardStop:
     market_code: str
@@ -113,34 +117,88 @@ class RealtimeHardStopMonitor:
     ) -> HardStopEvaluation:
         key = (market_code, stock_code)
         tracked = self._tracked.get(key)
+        is_us_market = _is_us_market_code(market_code)
+        if is_us_market:
+            if tracked is None:
+                logger.info(
+                    "Realtime hard-stop evaluate action=enter "
+                    "market=%s stock=%s last_price=%.4f tracked=no",
+                    market_code,
+                    stock_code,
+                    last_price,
+                )
+            else:
+                logger.info(
+                    "Realtime hard-stop evaluate action=enter "
+                    "market=%s stock=%s last_price=%.4f hard_stop_price=%.4f "
+                    "in_flight=%s",
+                    market_code,
+                    stock_code,
+                    last_price,
+                    tracked.hard_stop_price,
+                    tracked.in_flight,
+                )
         if tracked is None:
-            logger.debug(
-                "Realtime hard-stop evaluate skipped market=%s stock=%s "
-                "reason=untracked last_price=%.4f",
-                market_code,
-                stock_code,
-                last_price,
-            )
+            if is_us_market:
+                logger.info(
+                    "Realtime hard-stop evaluate action=result "
+                    "reason=untracked market=%s stock=%s last_price=%.4f",
+                    market_code,
+                    stock_code,
+                    last_price,
+                )
+            else:
+                logger.debug(
+                    "Realtime hard-stop evaluate skipped market=%s stock=%s "
+                    "reason=untracked last_price=%.4f",
+                    market_code,
+                    stock_code,
+                    last_price,
+                )
             return HardStopEvaluation(reason="untracked")
         if tracked.in_flight:
-            logger.debug(
-                "Realtime hard-stop evaluate skipped market=%s stock=%s "
-                "reason=in_flight last_price=%.4f hard_stop_price=%.4f",
-                market_code,
-                stock_code,
-                last_price,
-                tracked.hard_stop_price,
-            )
+            if is_us_market:
+                logger.info(
+                    "Realtime hard-stop evaluate action=result "
+                    "reason=in_flight market=%s stock=%s last_price=%.4f "
+                    "hard_stop_price=%.4f in_flight=%s",
+                    market_code,
+                    stock_code,
+                    last_price,
+                    tracked.hard_stop_price,
+                    tracked.in_flight,
+                )
+            else:
+                logger.debug(
+                    "Realtime hard-stop evaluate skipped market=%s stock=%s "
+                    "reason=in_flight last_price=%.4f hard_stop_price=%.4f",
+                    market_code,
+                    stock_code,
+                    last_price,
+                    tracked.hard_stop_price,
+                )
             return HardStopEvaluation(reason="in_flight")
         if last_price > tracked.hard_stop_price:
-            logger.debug(
-                "Realtime hard-stop evaluate skipped market=%s stock=%s "
-                "reason=above_stop last_price=%.4f hard_stop_price=%.4f",
-                market_code,
-                stock_code,
-                last_price,
-                tracked.hard_stop_price,
-            )
+            if is_us_market:
+                logger.info(
+                    "Realtime hard-stop evaluate action=result "
+                    "reason=above_stop market=%s stock=%s last_price=%.4f "
+                    "hard_stop_price=%.4f in_flight=%s",
+                    market_code,
+                    stock_code,
+                    last_price,
+                    tracked.hard_stop_price,
+                    tracked.in_flight,
+                )
+            else:
+                logger.debug(
+                    "Realtime hard-stop evaluate skipped market=%s stock=%s "
+                    "reason=above_stop last_price=%.4f hard_stop_price=%.4f",
+                    market_code,
+                    stock_code,
+                    last_price,
+                    tracked.hard_stop_price,
+                )
             return HardStopEvaluation(reason="above_stop")
 
         self._tracked[key] = replace(tracked, in_flight=True)
@@ -153,14 +211,26 @@ class RealtimeHardStopMonitor:
             decision_id=tracked.decision_id,
             position_timestamp=tracked.position_timestamp,
         )
-        logger.info(
-            "Realtime hard-stop trigger fired market=%s stock=%s "
-            "last_price=%.4f hard_stop_price=%.4f",
-            market_code,
-            stock_code,
-            last_price,
-            tracked.hard_stop_price,
-        )
+        if is_us_market:
+            logger.info(
+                "Realtime hard-stop evaluate action=result "
+                "reason=triggered market=%s stock=%s last_price=%.4f "
+                "hard_stop_price=%.4f in_flight=%s",
+                market_code,
+                stock_code,
+                last_price,
+                tracked.hard_stop_price,
+                True,
+            )
+        else:
+            logger.info(
+                "Realtime hard-stop trigger fired market=%s stock=%s "
+                "last_price=%.4f hard_stop_price=%.4f",
+                market_code,
+                stock_code,
+                last_price,
+                tracked.hard_stop_price,
+            )
         return HardStopEvaluation(reason="triggered", trigger=trigger)
 
     def evaluate_price(

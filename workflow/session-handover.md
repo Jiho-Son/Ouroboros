@@ -274,6 +274,22 @@
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: 재현 신호 확보 후 planner/scenario/runtime 중 가장 좁은 수정면을 택해 최근 고점 추격 매수를 억제하는 회귀 테스트와 문서를 함께 반영한다.
 
+### 2026-03-13 | session=codex-oor-408-rework-r2
+- branch: feature/issue-408-us-websocket-hard-stop-diagnostics-r2
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-408 Rework state, OOR-408 prior workpad + PR #813, OOR-403 overlap + PR #814
+- next_ticket: OOR-408
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: Rework reset closes stale PR #813 and rebuilds OOR-408 from origin/main@65983bd; OOR-403 is only a partial overlap, so this attempt should keep deeper parse/evaluate/persistence diagnostics in OOR-408 while avoiding unnecessary duplication of startup/subscription-only evidence.
+
+### 2026-03-13 | session=codex-oor-408-merge-r3
+- branch: feature/issue-408-us-websocket-hard-stop-diagnostics-r2
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-408 Merging state, live workpad comment, attached PR #815, GitHub review/check state
+- next_ticket: OOR-408
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: Approved PR #815 is now conflicting with origin/main@979bb48 after main advanced to fix session-high buy blocking; this session is limited to merge-sync, revalidation, and landing without broadening OOR-408 scope.
+
 ### 2026-03-13 | session=codex-oor-819-start
 - branch: feature/issue-819-realtime-mode-prep
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
