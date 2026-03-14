@@ -329,7 +329,9 @@ Commands are only processed from the authorized `TELEGRAM_CHAT_ID`.
 cp .env.example .env
 
 # Edit .env with your credentials
-# Required: KIS_APP_KEY, KIS_APP_SECRET, KIS_ACCOUNT_NO, GEMINI_API_KEY
+# Required: KIS_APP_KEY, KIS_APP_SECRET, KIS_ACCOUNT_NO
+# If LLM_PROVIDER=gemini, also set GEMINI_API_KEY
+# If LLM_PROVIDER=ollama, ensure OLLAMA_BASE_URL / OLLAMA_MODEL are correct
 
 # Verify configuration
 python -c "from src.config import Settings; print(Settings())"

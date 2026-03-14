@@ -289,3 +289,11 @@
 - next_ticket: OOR-408
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: Approved PR #815 is now conflicting with origin/main@979bb48 after main advanced to fix session-high buy blocking; this session is limited to merge-sync, revalidation, and landing without broadening OOR-408 scope.
+
+### 2026-03-13 | session=codex-oor-819-start
+- branch: feature/issue-819-realtime-mode-prep
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-819
+- next_ticket: OOR-819
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: LLM client 추상화와 Ollama provider 추가가 목표이며, 기존 Gemini 기본 경로를 유지하는 구성이 필요하다.
