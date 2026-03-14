@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -17,9 +17,17 @@ class Settings(BaseSettings):
     KIS_WS_URL: str | None = None
     KIS_WS_PATH: str = "/tryitout"
 
+    # LLM provider
+    LLM_PROVIDER: str = Field(default="gemini", pattern="^(gemini|ollama)$")
+
     # Google Gemini
-    GEMINI_API_KEY: str
+    GEMINI_API_KEY: str | None = None
     GEMINI_MODEL: str = "gemini-2.0-flash"
+
+    # Ollama
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
+    OLLAMA_MODEL: str = "llama3.2"
+    OLLAMA_REQUEST_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0.0, le=600.0)
 
     # External Data APIs (optional — for data-driven decisions)
     NEWS_API_KEY: str | None = None
@@ -143,6 +151,12 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
+    @model_validator(mode="after")
+    def _validate_selected_llm_provider(self) -> Settings:
+        if self.LLM_PROVIDER == "gemini" and not self.GEMINI_API_KEY:
+            raise ValueError("GEMINI_API_KEY is required when LLM_PROVIDER=gemini")
+        return self
+
     @property
     def account_number(self) -> str:
         return self.KIS_ACCOUNT_NO.split("-")[0]
@@ -166,3 +180,10 @@ class Settings(BaseSettings):
 
         raw = [m.strip() for m in self.ENABLED_MARKETS.split(",") if m.strip()]
         return expand_market_codes(raw)
+
+    @property
+    def llm_model(self) -> str:
+        """Return the active model name for the configured LLM provider."""
+        if self.LLM_PROVIDER == "ollama":
+            return self.OLLAMA_MODEL
+        return self.GEMINI_MODEL

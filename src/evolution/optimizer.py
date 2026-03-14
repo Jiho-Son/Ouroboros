@@ -3,7 +3,7 @@
 This module:
 1. Uses DecisionLogger.get_losing_decisions() to identify failing patterns
 2. Analyzes failure patterns by time, market conditions, stock characteristics
-3. Asks Gemini to generate improved strategy recommendations
+3. Asks the configured LLM provider to generate improved strategy recommendations
 4. Generates new strategy classes with enhanced decision-making logic
 """
 
@@ -21,8 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from google import genai
-
+from src.brain.llm_client import LLMClient, build_llm_client
 from src.config import Settings
 from src.db import init_db
 from src.decision_logging.decision_logger import DecisionLogger
@@ -53,11 +52,11 @@ class {class_name}(BaseStrategy):
 class EvolutionOptimizer:
     """Analyzes trade history and evolves trading strategies."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, llm_client: LLMClient | None = None) -> None:
         self._settings = settings
         self._db_path = settings.DB_PATH
-        self._client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        self._model_name = settings.GEMINI_MODEL
+        self._client = llm_client or build_llm_client(settings)
+        self._model_name = settings.llm_model
         self._conn = init_db(self._db_path)
         self._decision_logger = DecisionLogger(self._conn)
 
@@ -184,7 +183,7 @@ class EvolutionOptimizer:
     # ------------------------------------------------------------------
 
     async def generate_strategy(self, failures: list[dict[str, Any]]) -> Path | None:
-        """Ask Gemini to generate a new strategy based on failure analysis.
+        """Ask the configured provider to generate a new strategy based on failure analysis.
 
         Integrates failure patterns and market conditions to create improved strategies.
         Returns the path to the generated strategy file, or None on failure.

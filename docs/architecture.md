@@ -4,7 +4,7 @@
 
 Self-evolving AI trading agent for global stock markets via KIS (Korea Investment & Securities) API. The main loop in `src/main.py` orchestrates components across multiple markets with two trading modes: daily (batch API calls) or realtime (per-stock decisions).
 
-**v2 Proactive Playbook Architecture**: The system uses a "plan once, execute locally" approach. Pre-market, the AI generates a playbook of scenarios (one Gemini API call per market per day). During trading hours, a local scenario engine matches live market data against these pre-computed scenarios — no additional AI calls needed. This dramatically reduces API costs and latency.
+**v2 Proactive Playbook Architecture**: The system uses a "plan once, execute locally" approach. Pre-market, the AI generates a playbook of scenarios (one LLM provider call per market per day). During trading hours, a local scenario engine matches live market data against these pre-computed scenarios — no additional AI calls needed. This dramatically reduces API costs and latency.
 
 ## Trading Modes
 
@@ -12,12 +12,12 @@ The system supports two trading frequency modes controlled by the `TRADE_MODE` e
 
 ### Daily Mode (default)
 
-Optimized for Gemini Free tier API limits (20 calls/day):
+Optimized for cost-sensitive/provider-limited deployments:
 
 - **Batch decisions**: 1 API call per market per session
 - **Fixed schedule**: 4 sessions per day at 6-hour intervals (configurable)
 - **API efficiency**: Processes all stocks in a market simultaneously
-- **Use case**: Free tier users, cost-conscious deployments
+- **Use case**: Cost-conscious deployments or providers with tighter rate/cost budgets
 - **Configuration**:
   ```bash
   TRADE_MODE=daily
@@ -33,13 +33,13 @@ High-frequency trading with individual stock analysis:
 
 - **Per-stock decisions**: 1 API call per stock per cycle
 - **60-second interval**: Continuous monitoring
-- **Use case**: Production deployments with Gemini paid tier
+- **Use case**: Production deployments with higher-throughput LLM capacity
 - **Configuration**:
   ```bash
   TRADE_MODE=realtime
   ```
 
-**Note**: Realtime mode requires Gemini API subscription due to high call volume.
+**Note**: Realtime mode requires an LLM provider that can tolerate higher call volume; local Ollama and paid hosted models are the intended options.
 
 ## Core Components
 
@@ -138,13 +138,19 @@ High-frequency trading with individual stock analysis:
 
 ### 3. Brain (`src/brain/`)
 
-**GeminiClient** (`gemini_client.py`) — AI decision engine powered by Google Gemini
+**GeminiClient** (`gemini_client.py`) — AI decision engine backed by the configured LLM provider
 
 - Constructs structured prompts from market data
 - Parses JSON responses into `TradeDecision` objects (`action`, `confidence`, `rationale`)
 - Forces HOLD when confidence < threshold (default 80)
 - Falls back to safe HOLD on any parse/API error
 - Handles markdown-wrapped JSON, malformed responses, invalid actions
+
+**Provider Selection** (`llm_client.py`) — low-level provider adapters
+
+- `LLM_PROVIDER=gemini|ollama` selects the raw prompt execution backend
+- `GeminiClient` and `EvolutionOptimizer` share the same provider factory
+- Ollama uses a local `/api/generate` call path while preserving the async client surface expected by higher-level code
 
 **PromptOptimizer** (`prompt_optimizer.py`) — Token efficiency optimization
 
@@ -328,7 +334,7 @@ High-frequency trading with individual stock analysis:
 **StrategyOptimizer** (`optimizer.py`) — Self-improvement loop
 
 - Analyzes high-confidence losing trades from SQLite
-- Asks Gemini to generate new `BaseStrategy` subclasses
+- Asks the configured LLM provider to generate new `BaseStrategy` subclasses
 - Validates generated strategies by running full pytest suite
 - Simulates PR creation for human review
 - Only activates strategies that pass all tests
@@ -620,7 +626,13 @@ Loaded from `.env` file:
 KIS_APP_KEY=your_app_key
 KIS_APP_SECRET=your_app_secret
 KIS_ACCOUNT_NO=XXXXXXXX-XX
-GEMINI_API_KEY=your_gemini_key
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your_gemini_key   # required when LLM_PROVIDER=gemini
+
+# Optional — LLM Provider
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.2
+OLLAMA_REQUEST_TIMEOUT_SECONDS=60
 
 # Optional — Trading Mode
 MODE=live                     # runtime paper execution banned (#426)
@@ -734,7 +746,7 @@ Tests use in-memory SQLite (`DB_PATH=":memory:"`) and dummy credentials via `tes
 - Max 3 retries per stock
 - After exhaustion, skip stock and continue with next
 
-### API Quota Errors (Gemini)
+### API Quota / Provider Errors (LLM)
 - Return safe HOLD decision with confidence=0
 - Log error but don't crash
 - Agent continues trading on next cycle
