@@ -175,6 +175,7 @@ High-frequency trading with individual stock analysis:
 - Low-liquidity session detection: `NXT_AFTER`, `US_PRE`, `US_DAY`, `US_AFTER`
 - Market order forbidden in low-liquidity sessions (`OrderPolicyRejected` raised)
 - Limit/IOC/FOK orders always allowed
+- Pending-order retries now prefer executable top-of-book quotes (`best ask` for BUY, `best bid` for SELL) and cancel instead of re-chasing when a low-liquidity session quote gap exceeds `EXECUTABLE_QUOTE_MAX_GAP_PCT`
 
 **KillSwitch** (`kill_switch.py`) — Emergency trading halt orchestration (v2)
 

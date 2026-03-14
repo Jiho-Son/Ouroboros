@@ -289,3 +289,11 @@
 - next_ticket: OOR-408
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: Approved PR #815 is now conflicting with origin/main@979bb48 after main advanced to fix session-high buy blocking; this session is limited to merge-sync, revalidation, and landing without broadening OOR-408 scope.
+
+### 2026-03-14 | session=codex-oor-813-start
+- branch: feature/issue-813-unfilled-order-policy
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-813 Todo state, issue description, no attachments, no prior workpad
+- next_ticket: OOR-813
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: Reproduce the unfilled-order behavior first, then tighten execution policy around orderbook gaps with test-first changes and matching docs before opening a PR.

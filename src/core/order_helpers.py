@@ -7,6 +7,7 @@ FX buffer checks, and overnight exit logic.  Extracted from ``src/main.py``.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from src.analysis.smart_scanner import ScanCandidate
@@ -195,6 +196,92 @@ def _should_block_buy_chasing_session_high(
     pullback_from_high_pct = ((session_high_price - current_price) / session_high_price) * 100.0
     blocked = price_change_pct >= min_gain_pct and pullback_from_high_pct <= max_pullback_pct
     return blocked, pullback_from_high_pct, min_gain_pct, max_pullback_pct
+
+
+@dataclass(frozen=True)
+class ExecutableQuote:
+    price: float | None
+    source: str | None
+    gap_pct: float
+    buy_gap_rejected: bool
+
+
+def _unwrap_quote_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not payload:
+        return {}
+    for key in ("output2", "output1", "output"):
+        nested = payload.get(key)
+        if isinstance(nested, list):
+            nested = nested[0] if nested else {}
+        if isinstance(nested, dict) and nested:
+            return nested
+    return payload if isinstance(payload, dict) else {}
+
+
+def _extract_quote_value(
+    payload: dict[str, Any],
+    *,
+    keys: tuple[str, ...],
+) -> tuple[float | None, str | None]:
+    for key in keys:
+        raw = payload.get(key)
+        if raw in (None, ""):
+            continue
+        try:
+            return float(raw), key
+        except (ValueError, TypeError):
+            continue
+    return None, None
+
+
+def resolve_executable_quote(
+    *,
+    market: MarketInfo,
+    action: str,
+    current_price: float,
+    settings: Settings | None,
+    payload: dict[str, Any] | None,
+) -> ExecutableQuote:
+    quote_payload = _unwrap_quote_payload(payload)
+    if action not in {"BUY", "SELL"}:
+        return ExecutableQuote(price=None, source=None, gap_pct=0.0, buy_gap_rejected=False)
+
+    if action == "BUY":
+        quote_price, source = _extract_quote_value(
+            quote_payload,
+            keys=("pask1", "askp1", "stck_askp1", "ask", "best_ask", "ask_price"),
+        )
+    else:
+        quote_price, source = _extract_quote_value(
+            quote_payload,
+            keys=("pbid1", "bidp1", "stck_bidp1", "bid", "best_bid", "bid_price"),
+        )
+
+    if quote_price is None or quote_price <= 0 or current_price <= 0:
+        return ExecutableQuote(price=None, source=None, gap_pct=0.0, buy_gap_rejected=False)
+
+    if action == "BUY":
+        gap_pct = max(0.0, (quote_price - current_price) / current_price * 100.0)
+    else:
+        gap_pct = max(0.0, (current_price - quote_price) / current_price * 100.0)
+
+    from src.core.session_risk import _resolve_market_setting
+
+    max_gap_pct = float(
+        _resolve_market_setting(
+            market=market,
+            settings=settings,
+            key="EXECUTABLE_QUOTE_MAX_GAP_PCT",
+            default=2.0,
+        )
+    )
+    buy_gap_rejected = action == "BUY" and gap_pct > max_gap_pct
+    return ExecutableQuote(
+        price=quote_price,
+        source=source,
+        gap_pct=gap_pct,
+        buy_gap_rejected=buy_gap_rejected,
+    )
 
 
 def _should_force_exit_for_overnight(

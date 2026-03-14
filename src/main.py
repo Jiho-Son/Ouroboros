@@ -1536,9 +1536,29 @@ async def _execute_trading_cycle_action(
     realtime_hard_stop_monitor: RealtimeHardStopMonitor | None = None,
     realtime_hard_stop_client: KISWebSocketClient | None = None,
 ) -> dict[str, Any]:
+    def _extract_quote_from_output(
+        payload: dict[str, Any],
+        *,
+        ask_keys: tuple[str, ...],
+        bid_keys: tuple[str, ...],
+    ) -> tuple[float | None, float | None]:
+        def _float(*keys: str) -> float | None:
+            for key in keys:
+                raw = payload.get(key)
+                if raw in (None, ""):
+                    continue
+                try:
+                    return float(raw)
+                except (ValueError, TypeError):
+                    continue
+            return None
+
+        return _float(*ask_keys), _float(*bid_keys)
+
     decision = decision_data["decision"]
     match = decision_data["match"]
     current_price = snapshot["current_price"]
+    price_output = snapshot.get("price_output", {})
     total_cash = snapshot["total_cash"]
     pnl_pct = snapshot["pnl_pct"]
     candidate = snapshot["candidate"]
@@ -1596,7 +1616,134 @@ async def _execute_trading_cycle_action(
         execution_result["should_return"] = True
         return execution_result
 
-    order_amount = current_price * quantity
+    cooldown_key = f"{market.code}:{stock_code}"
+    if decision.action == "BUY" and buy_cooldown is not None:
+        cooldown_until = buy_cooldown.get(cooldown_key, 0.0)
+        now = asyncio.get_event_loop().time()
+        if now < cooldown_until:
+            remaining = int(cooldown_until - now)
+            logger.info(
+                "Skip BUY %s (%s): insufficient-balance cooldown active (%ds remaining)",
+                stock_code,
+                market.name,
+                remaining,
+            )
+            execution_result["should_return"] = True
+            return execution_result
+
+    executable_quote: float | None = None
+    if market.is_domestic:
+        quote_market_div_code = _resolve_domestic_quote_market_div_code(runtime_session_id)
+        fallback_order_price = float(
+            kr_round_down(current_price * (1.002 if decision.action == "BUY" else 0.998))
+        )
+        try:
+            orderbook = await broker.get_orderbook_by_market(
+                stock_code,
+                market_div_code=quote_market_div_code,
+            )
+            ask_price, bid_price = KISBroker._extract_orderbook_top_levels(orderbook)
+            executable_quote = ask_price if decision.action == "BUY" else bid_price
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch domestic executable quote for %s %s: %s",
+                decision.action,
+                stock_code,
+                exc,
+            )
+        if executable_quote and executable_quote > 0:
+            order_price = executable_quote
+        else:
+            order_price = fallback_order_price
+    else:
+        fallback_order_price = round(
+            current_price * (1.002 if decision.action == "BUY" else 0.998),
+            2 if current_price >= 1.0 else 4,
+        )
+        ask_price, bid_price = _extract_quote_from_output(
+            price_output,
+            ask_keys=("ask", "pask1"),
+            bid_keys=("bid", "pbid1"),
+        )
+        executable_quote = ask_price if decision.action == "BUY" else bid_price
+        if executable_quote is None or executable_quote <= 0:
+            try:
+                orderbook = await overseas_broker.get_overseas_orderbook(
+                    market.exchange_code,
+                    stock_code,
+                )
+                ask_price, bid_price = OverseasBroker._extract_orderbook_top_levels(orderbook)
+                executable_quote = ask_price if decision.action == "BUY" else bid_price
+            except Exception as exc:
+                logger.warning(
+                    "Failed to fetch overseas executable quote for %s %s: %s",
+                    decision.action,
+                    stock_code,
+                    exc,
+                )
+        order_price = (
+            float(executable_quote)
+            if executable_quote is not None and executable_quote > 0
+            else float(fallback_order_price)
+        )
+
+    if (
+        decision.action == "BUY"
+        and executable_quote is not None
+        and executable_quote > 0
+        and current_price > 0
+    ):
+        gap_pct = abs(executable_quote - current_price) / current_price * 100.0
+        max_gap_pct = float(
+            _resolve_market_setting(
+                market=market,
+                settings=settings,
+                key="EXECUTABLE_QUOTE_MAX_GAP_PCT",
+                default=2.0,
+            )
+        )
+        if gap_pct > max_gap_pct:
+            if buy_cooldown is not None:
+                buy_cooldown[cooldown_key] = asyncio.get_event_loop().time() + _BUY_COOLDOWN_SECONDS
+            logger.warning(
+                (
+                    "Skip BUY %s (%s): executable quote gap too wide "
+                    "(last=%.4f executable=%.4f gap_pct=%.2f cap_pct=%.2f)"
+                ),
+                stock_code,
+                market.name,
+                current_price,
+                executable_quote,
+                gap_pct,
+                max_gap_pct,
+            )
+            execution_result["should_return"] = True
+            return execution_result
+
+    if decision.action == "BUY":
+        quantity = _determine_order_quantity(
+            action=decision.action,
+            current_price=order_price,
+            total_cash=total_cash,
+            candidate=candidate,
+            settings=settings,
+            broker_held_qty=broker_held_qty,
+            playbook_allocation_pct=matched_scenario.allocation_pct if matched_scenario else None,
+            scenario_confidence=match.confidence,
+        )
+        execution_result["quantity"] = quantity
+        if quantity <= 0:
+            logger.info(
+                "Skip BUY %s (%s): no affordable quantity at executable price %.4f",
+                stock_code,
+                market.name,
+                order_price,
+            )
+            execution_result["should_return"] = True
+            return execution_result
+
+    order_amount = order_price * quantity
+    execution_result["trade_price"] = order_price
     fx_blocked, remaining_cash, required_buffer = _should_block_overseas_buy_for_fx_buffer(
         market=market,
         action=decision.action,
@@ -1619,21 +1766,6 @@ async def _execute_trading_cycle_action(
         )
         execution_result["should_return"] = True
         return execution_result
-
-    if decision.action == "BUY" and buy_cooldown is not None:
-        cooldown_key = f"{market.code}:{stock_code}"
-        cooldown_until = buy_cooldown.get(cooldown_key, 0.0)
-        now = asyncio.get_event_loop().time()
-        if now < cooldown_until:
-            remaining = int(cooldown_until - now)
-            logger.info(
-                "Skip BUY %s (%s): insufficient-balance cooldown active (%ds remaining)",
-                stock_code,
-                market.name,
-                remaining,
-            )
-            execution_result["should_return"] = True
-            return execution_result
 
     try:
         if decision.action == "SELL":
@@ -1678,10 +1810,6 @@ async def _execute_trading_cycle_action(
 
     order_succeeded = True
     if market.is_domestic:
-        if decision.action == "BUY":
-            order_price = kr_round_down(current_price * 1.002)
-        else:
-            order_price = kr_round_down(current_price * 0.998)
         try:
             validate_order_policy(
                 market=market,
@@ -1727,16 +1855,11 @@ async def _execute_trading_cycle_action(
                 msg1,
             )
     else:
-        _price_decimals = 2 if current_price >= 1.0 else 4
-        if decision.action == "BUY":
-            overseas_price = round(current_price * 1.002, _price_decimals)
-        else:
-            overseas_price = round(current_price * 0.998, _price_decimals)
         try:
             validate_order_policy(
                 market=market,
                 order_type=decision.action,
-                price=float(overseas_price),
+                price=float(order_price),
             )
         except OrderPolicyRejected as exc:
             logger.warning(
@@ -1755,7 +1878,7 @@ async def _execute_trading_cycle_action(
             stock_code=stock_code,
             order_type=decision.action,
             quantity=quantity,
-            price=float(overseas_price),
+            price=float(order_price),
             source="trading_cycle",
         ):
             execution_result["should_return"] = True
@@ -1765,7 +1888,7 @@ async def _execute_trading_cycle_action(
             stock_code=stock_code,
             order_type=decision.action,
             quantity=quantity,
-            price=overseas_price,
+            price=order_price,
         )
         if result.get("rt_cd", "") != "0":
             order_succeeded = False

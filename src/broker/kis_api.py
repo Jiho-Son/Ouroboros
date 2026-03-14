@@ -301,7 +301,7 @@ class KISBroker:
             raise ConnectionError(f"Network error fetching orderbook: {exc}") from exc
 
     @staticmethod
-    def _extract_orderbook_metrics(payload: dict[str, Any]) -> tuple[float | None, float | None]:
+    def _extract_orderbook_top_levels(payload: dict[str, Any]) -> tuple[float | None, float | None]:
         output = payload.get("output1") or payload.get("output") or {}
         if not isinstance(output, dict):
             return None, None
@@ -319,6 +319,26 @@ class KISBroker:
 
         ask = _float("askp1", "stck_askp1")
         bid = _float("bidp1", "stck_bidp1")
+        return ask, bid
+
+    @staticmethod
+    def _extract_orderbook_metrics(payload: dict[str, Any]) -> tuple[float | None, float | None]:
+        ask, bid = KISBroker._extract_orderbook_top_levels(payload)
+        output = payload.get("output1") or payload.get("output") or {}
+        if not isinstance(output, dict):
+            return None, None
+
+        def _float(*keys: str) -> float | None:
+            for key in keys:
+                raw = output.get(key)
+                if raw in (None, ""):
+                    continue
+                try:
+                    return float(cast(str | int | float, raw))
+                except (ValueError, TypeError):
+                    continue
+            return None
+
         if ask is not None and bid is not None and ask > 0 and bid > 0 and ask >= bid:
             mid = (ask + bid) / 2
             if mid > 0:

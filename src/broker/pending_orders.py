@@ -21,12 +21,14 @@ from src.core.order_policy import (
     classify_session_id,
     validate_order_policy,
 )
+from src.core.session_risk import _resolve_market_setting
 from src.markets.schedule import MARKETS
 from src.notifications.telegram_client import TelegramClient
 
 logger = logging.getLogger(__name__)
 
 _BUY_COOLDOWN_SECONDS = 600  # 10-minute cooldown after insufficient-balance rejection
+_LOW_LIQUIDITY_SESSIONS = {"NXT_AFTER", "US_PRE", "US_DAY", "US_AFTER"}
 
 RollbackOpenPosition = Callable[..., None]
 
@@ -82,6 +84,77 @@ def _require_order_acceptance(
 def _is_ambiguous_submit_error(exc: Exception) -> bool:
     """Return True when submit result is unknown and rollback would be unsafe."""
     return isinstance(exc, ConnectionError)
+
+
+def _extract_quote_from_mapping(
+    payload: dict[str, Any],
+    *,
+    ask_keys: tuple[str, ...],
+    bid_keys: tuple[str, ...],
+) -> tuple[float | None, float | None]:
+    def _float(*keys: str) -> float | None:
+        for key in keys:
+            raw = payload.get(key)
+            if raw in (None, ""):
+                continue
+            try:
+                return float(raw)
+            except (ValueError, TypeError):
+                continue
+        return None
+
+    return _float(*ask_keys), _float(*bid_keys)
+
+
+def _is_low_liquidity_session(*, market_code: str) -> bool:
+    market = MARKETS[market_code]
+    return classify_session_id(market) in _LOW_LIQUIDITY_SESSIONS
+
+
+def _resolve_executable_gap_cap_pct(*, market_code: str, settings: Settings) -> float:
+    return float(
+        _resolve_market_setting(
+            market=MARKETS[market_code],
+            settings=settings,
+            key="EXECUTABLE_QUOTE_MAX_GAP_PCT",
+            default=2.0,
+        )
+    )
+
+
+def _resolve_retry_price_from_executable_quote(
+    *,
+    market_code: str,
+    order_type: str,
+    last_price: float,
+    fallback_price: float,
+    executable_quote: float | None,
+    settings: Settings,
+) -> tuple[float | None, float | None, bool]:
+    if executable_quote is None or executable_quote <= 0:
+        return fallback_price, None, False
+    if last_price <= 0:
+        return fallback_price, None, False
+
+    gap_pct = abs(executable_quote - last_price) / last_price * 100.0
+    if _is_low_liquidity_session(market_code=market_code):
+        max_gap_pct = _resolve_executable_gap_cap_pct(market_code=market_code, settings=settings)
+        if gap_pct > max_gap_pct:
+            logger.warning(
+                (
+                    "Skip %s retry for %s: executable quote gap too wide "
+                    "(last=%.4f executable=%.4f gap_pct=%.2f cap_pct=%.2f)"
+                ),
+                order_type,
+                market_code,
+                last_price,
+                executable_quote,
+                gap_pct,
+                max_gap_pct,
+            )
+            return None, gap_pct, False
+
+    return executable_quote, gap_pct, True
 
 
 def _has_matching_domestic_pending_order(
@@ -359,7 +432,55 @@ async def handle_domestic_pending_orders(
                         )
                         if last_price <= 0:
                             raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
-                        new_price = kr_round_down(last_price * 1.004)
+                        fallback_price = float(kr_round_down(last_price * 1.004))
+                        executable_quote: float | None = None
+                        try:
+                            orderbook = await broker.get_orderbook_by_market(
+                                stock_code,
+                                market_div_code=quote_market_div_code,
+                            )
+                            executable_quote, _ = KISBroker._extract_orderbook_top_levels(orderbook)
+                        except Exception as quote_exc:
+                            logger.warning(
+                                "Failed to fetch domestic retry quote for BUY %s: %s",
+                                stock_code,
+                                quote_exc,
+                            )
+                        resolved_price, gap_pct, used_executable_quote = (
+                            _resolve_retry_price_from_executable_quote(
+                            market_code="KR",
+                            order_type="BUY",
+                            last_price=last_price,
+                            fallback_price=fallback_price,
+                            executable_quote=executable_quote,
+                            settings=settings,
+                        ))
+                        if resolved_price is None:
+                            if buy_cooldown is not None:
+                                buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                            try:
+                                await telegram.notify_unfilled_order(
+                                    stock_code=stock_code,
+                                    market="KR",
+                                    action="BUY",
+                                    quantity=psbl_qty,
+                                    outcome="cancelled",
+                                )
+                            except Exception as notify_exc:
+                                logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                            _rollback_pending_position(
+                                rollback_open_position=rollback_open_position,
+                                market_code="KR",
+                                exchange_code=order_exchange,
+                                stock_code=stock_code,
+                                action="BUY",
+                            )
+                            continue
+                        new_price = (
+                            resolved_price
+                            if used_executable_quote
+                            else float(kr_round_down(resolved_price))
+                        )
                         validate_order_policy(
                             market=MARKETS["KR"],
                             order_type="BUY",
@@ -390,6 +511,12 @@ async def handle_domestic_pending_orders(
                                 outcome="resubmitted",
                                 new_price=float(new_price),
                             )
+                            if gap_pct is not None:
+                                logger.info(
+                                    "BUY KR %s retry priced from executable ask gap_pct=%.2f",
+                                    stock_code,
+                                    gap_pct,
+                                )
                         except Exception as notify_exc:
                             logger.warning("notify_unfilled_order failed: %s", notify_exc)
                     except Exception as exc:
@@ -488,10 +615,59 @@ async def handle_domestic_pending_orders(
                 else:
                     # First unfilled SELL → resubmit at last * 0.996 (-0.4%).
                     try:
-                        last_price, _, _ = await broker.get_current_price(stock_code)
+                        last_price, _, _ = await broker.get_current_price(
+                            stock_code,
+                            market_div_code=quote_market_div_code,
+                        )
                         if last_price <= 0:
                             raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
-                        new_price = kr_round_down(last_price * 0.996)
+                        fallback_price = float(kr_round_down(last_price * 0.996))
+                        executable_quote: float | None = None
+                        try:
+                            orderbook = await broker.get_orderbook_by_market(
+                                stock_code,
+                                market_div_code=quote_market_div_code,
+                            )
+                            _, executable_quote = KISBroker._extract_orderbook_top_levels(orderbook)
+                        except Exception as quote_exc:
+                            logger.warning(
+                                "Failed to fetch domestic retry quote for SELL %s: %s",
+                                stock_code,
+                                quote_exc,
+                            )
+                        resolved_price, gap_pct, used_executable_quote = (
+                            _resolve_retry_price_from_executable_quote(
+                            market_code="KR",
+                            order_type="SELL",
+                            last_price=last_price,
+                            fallback_price=fallback_price,
+                            executable_quote=executable_quote,
+                            settings=settings,
+                        ))
+                        if resolved_price is None:
+                            try:
+                                await telegram.notify_unfilled_order(
+                                    stock_code=stock_code,
+                                    market="KR",
+                                    action="SELL",
+                                    quantity=psbl_qty,
+                                    outcome="cancelled",
+                                )
+                            except Exception as notify_exc:
+                                logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                            _rollback_pending_position(
+                                rollback_open_position=rollback_open_position,
+                                market_code="KR",
+                                exchange_code=order_exchange,
+                                stock_code=stock_code,
+                                action="SELL",
+                            )
+                            continue
+                        new_price = (
+                            resolved_price
+                            if used_executable_quote
+                            else float(kr_round_down(resolved_price))
+                        )
                         validate_order_policy(
                             market=MARKETS["KR"],
                             order_type="SELL",
@@ -520,6 +696,12 @@ async def handle_domestic_pending_orders(
                                 outcome="resubmitted",
                                 new_price=float(new_price),
                             )
+                            if gap_pct is not None:
+                                logger.info(
+                                    "SELL KR %s retry priced from executable bid gap_pct=%.2f",
+                                    stock_code,
+                                    gap_pct,
+                                )
                         except Exception as notify_exc:
                             logger.warning("notify_unfilled_order failed: %s", notify_exc)
                     except Exception as exc:
@@ -715,7 +897,57 @@ async def handle_overseas_pending_orders(
                             last_price = float(price_data.get("output", {}).get("last", "0") or "0")
                             if last_price <= 0:
                                 raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
-                            new_price = round(last_price * 1.004, 2 if last_price >= 1 else 4)
+                            fallback_price = round(last_price * 1.004, 2 if last_price >= 1 else 4)
+                            executable_quote, _ = _extract_quote_from_mapping(
+                                price_data.get("output", {}),
+                                ask_keys=("ask", "pask1"),
+                                bid_keys=("bid", "pbid1"),
+                            )
+                            try:
+                                orderbook = await overseas_broker.get_overseas_orderbook(
+                                    order_exchange,
+                                    stock_code,
+                                )
+                                executable_quote, _ = OverseasBroker._extract_orderbook_top_levels(
+                                    orderbook
+                                )
+                            except Exception as quote_exc:
+                                logger.warning(
+                                    "Failed to fetch overseas retry quote for BUY %s %s: %s",
+                                    order_exchange,
+                                    stock_code,
+                                    quote_exc,
+                                )
+                            resolved_price, gap_pct, _ = _resolve_retry_price_from_executable_quote(
+                                market_code=market_code,
+                                order_type="BUY",
+                                last_price=last_price,
+                                fallback_price=fallback_price,
+                                executable_quote=executable_quote,
+                                settings=settings,
+                            )
+                            if resolved_price is None:
+                                if buy_cooldown is not None:
+                                    buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                                try:
+                                    await telegram.notify_unfilled_order(
+                                        stock_code=stock_code,
+                                        market=order_exchange,
+                                        action="BUY",
+                                        quantity=nccs_qty,
+                                        outcome="cancelled",
+                                    )
+                                except Exception as notify_exc:
+                                    logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                                _rollback_pending_position(
+                                    rollback_open_position=rollback_open_position,
+                                    market_code=market_code,
+                                    exchange_code=order_exchange,
+                                    stock_code=stock_code,
+                                    action="BUY",
+                                )
+                                continue
+                            new_price = round(resolved_price, 2 if resolved_price >= 1 else 4)
                             market_info = next(
                                 (
                                     m
@@ -755,6 +987,13 @@ async def handle_overseas_pending_orders(
                                     outcome="resubmitted",
                                     new_price=new_price,
                                 )
+                                if gap_pct is not None:
+                                    logger.info(
+                                        "BUY %s %s retry priced from executable ask gap_pct=%.2f",
+                                        order_exchange,
+                                        stock_code,
+                                        gap_pct,
+                                    )
                             except Exception as notify_exc:
                                 logger.warning("notify_unfilled_order failed: %s", notify_exc)
                         except Exception as exc:
@@ -869,7 +1108,55 @@ async def handle_overseas_pending_orders(
                             last_price = float(price_data.get("output", {}).get("last", "0") or "0")
                             if last_price <= 0:
                                 raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
-                            new_price = round(last_price * 0.996, 2 if last_price >= 1 else 4)
+                            fallback_price = round(last_price * 0.996, 2 if last_price >= 1 else 4)
+                            _, executable_quote = _extract_quote_from_mapping(
+                                price_data.get("output", {}),
+                                ask_keys=("ask", "pask1"),
+                                bid_keys=("bid", "pbid1"),
+                            )
+                            try:
+                                orderbook = await overseas_broker.get_overseas_orderbook(
+                                    order_exchange,
+                                    stock_code,
+                                )
+                                _, executable_quote = OverseasBroker._extract_orderbook_top_levels(
+                                    orderbook
+                                )
+                            except Exception as quote_exc:
+                                logger.warning(
+                                    "Failed to fetch overseas retry quote for SELL %s %s: %s",
+                                    order_exchange,
+                                    stock_code,
+                                    quote_exc,
+                                )
+                            resolved_price, gap_pct, _ = _resolve_retry_price_from_executable_quote(
+                                market_code=market_code,
+                                order_type="SELL",
+                                last_price=last_price,
+                                fallback_price=fallback_price,
+                                executable_quote=executable_quote,
+                                settings=settings,
+                            )
+                            if resolved_price is None:
+                                try:
+                                    await telegram.notify_unfilled_order(
+                                        stock_code=stock_code,
+                                        market=order_exchange,
+                                        action="SELL",
+                                        quantity=nccs_qty,
+                                        outcome="cancelled",
+                                    )
+                                except Exception as notify_exc:
+                                    logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                                _rollback_pending_position(
+                                    rollback_open_position=rollback_open_position,
+                                    market_code=market_code,
+                                    exchange_code=order_exchange,
+                                    stock_code=stock_code,
+                                    action="SELL",
+                                )
+                                continue
+                            new_price = round(resolved_price, 2 if resolved_price >= 1 else 4)
                             market_info = next(
                                 (
                                     m
@@ -907,6 +1194,13 @@ async def handle_overseas_pending_orders(
                                     outcome="resubmitted",
                                     new_price=new_price,
                                 )
+                                if gap_pct is not None:
+                                    logger.info(
+                                        "SELL %s %s retry priced from executable bid gap_pct=%.2f",
+                                        order_exchange,
+                                        stock_code,
+                                        gap_pct,
+                                    )
                             except Exception as notify_exc:
                                 logger.warning("notify_unfilled_order failed: %s", notify_exc)
                         except Exception as exc:

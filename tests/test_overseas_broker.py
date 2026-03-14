@@ -492,6 +492,50 @@ class TestGetOverseasPrice:
             await overseas_broker.get_overseas_price("NASD", "AAPL")
 
 
+class TestGetOverseasOrderbook:
+    """Test get_overseas_orderbook method."""
+
+    @pytest.mark.asyncio
+    async def test_success(self, overseas_broker: OverseasBroker) -> None:
+        """Successful orderbook fetch returns JSON data with mapped exchange code."""
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={"output2": {"pask1": "150.20", "pbid1": "150.10"}}
+        )
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
+
+        _setup_broker_mocks(overseas_broker, mock_session)
+        overseas_broker._broker._auth_headers = AsyncMock(
+            return_value={"authorization": "Bearer t"}
+        )
+
+        result = await overseas_broker.get_overseas_orderbook("NASD", "AAPL")
+        assert result["output2"]["pask1"] == "150.20"
+
+        call_args = mock_session.get.call_args
+        params = call_args[1]["params"]
+        assert params["EXCD"] == "NAS"
+        assert params["SYMB"] == "AAPL"
+
+    @pytest.mark.asyncio
+    async def test_http_error_raises(self, overseas_broker: OverseasBroker) -> None:
+        """Non-200 response should raise ConnectionError."""
+        mock_resp = AsyncMock()
+        mock_resp.status = 400
+        mock_resp.text = AsyncMock(return_value="Bad Request")
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
+
+        _setup_broker_mocks(overseas_broker, mock_session)
+
+        with pytest.raises(ConnectionError, match="get_overseas_orderbook failed"):
+            await overseas_broker.get_overseas_orderbook("NASD", "AAPL")
+
+
 class TestGetOverseasBalance:
     """Test get_overseas_balance method."""
 
