@@ -297,3 +297,11 @@
 - next_ticket: OOR-819
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: LLM client 추상화와 Ollama provider 추가가 목표이며, 기존 Gemini 기본 경로를 유지하는 구성이 필요하다.
+
+### 2026-03-15 | session=codex-oor-814-rework-r2-start
+- branch: feature/issue-814-token-refresh-r2
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-814 Rework state, issue description, human comment, prior PR #819 feedback
+- next_ticket: OOR-814
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: Rework reset closes PR #819 and restarts from origin/main; this pass must address reviewer feedback on token-refresh fallback semantics and test assertions while preserving issue scope.

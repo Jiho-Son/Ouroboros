@@ -22,6 +22,10 @@ _KIS_VTS_HOST = "openapivts.koreainvestment.com"
 
 logger = logging.getLogger(__name__)
 
+_TOKEN_REFRESH_LEAD_RATIO = 0.1
+_TOKEN_REFRESH_MIN_LEAD_SECONDS = 60.0
+_TOKEN_REFRESH_MAX_LEAD_SECONDS = 1800.0
+
 
 def _normalize_domestic_exchange_code(value: Any) -> str:
     raw = str(value or "").strip().upper()
@@ -117,6 +121,7 @@ class KISBroker:
         self._session: aiohttp.ClientSession | None = None
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
+        self._token_refresh_at: float = 0.0
         self._token_lock = asyncio.Lock()
         self._last_refresh_attempt: float = 0.0
         self._refresh_cooldown: float = 60.0  # Seconds (matches KIS 1/minute limit)
@@ -146,6 +151,28 @@ class KISBroker:
     # Token Management
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _compute_token_refresh_at(*, issued_at: float, expires_in: float) -> float:
+        """Return the deadline when a cached token should be proactively refreshed."""
+        ttl = max(expires_in, 0.0)
+        lead_time = max(
+            _TOKEN_REFRESH_MIN_LEAD_SECONDS,
+            min(_TOKEN_REFRESH_MAX_LEAD_SECONDS, ttl * _TOKEN_REFRESH_LEAD_RATIO),
+        )
+        if ttl <= lead_time:
+            return issued_at + ttl
+        return issued_at + ttl - lead_time
+
+    def _has_unexpired_token(self, *, now: float) -> bool:
+        return self._access_token is not None and now < self._token_expires_at
+
+    def _has_usable_token(self, *, now: float) -> bool:
+        if not self._has_unexpired_token(now=now):
+            return False
+        if self._token_refresh_at > 0 and now >= self._token_refresh_at:
+            return False
+        return True
+
     async def _ensure_token(self) -> str:
         """Return a valid access token, refreshing if expired.
 
@@ -154,20 +181,29 @@ class KISBroker:
         """
         # Fast path: check without lock
         now = asyncio.get_event_loop().time()
-        if self._access_token and now < self._token_expires_at:
-            return self._access_token
+        if self._has_usable_token(now=now):
+            return cast(str, self._access_token)
 
         # Slow path: acquire lock and refresh
         async with self._token_lock:
             # Re-check after acquiring lock (another coroutine may have refreshed)
             now = asyncio.get_event_loop().time()
-            if self._access_token and now < self._token_expires_at:
-                return self._access_token
+            if self._has_usable_token(now=now):
+                return cast(str, self._access_token)
+
+            can_fallback_to_cached = self._has_unexpired_token(now=now)
 
             # Check cooldown period (prevents hitting EGW00133: 1/minute limit)
             time_since_last_attempt = now - self._last_refresh_attempt
             if time_since_last_attempt < self._refresh_cooldown:
                 remaining = self._refresh_cooldown - time_since_last_attempt
+                if can_fallback_to_cached:
+                    logger.warning(
+                        "Token refresh on cooldown. Reusing cached token for %.1fs"
+                        " before next retry",
+                        remaining,
+                    )
+                    return cast(str, self._access_token)
                 # Do not fail fast here. If token is unavailable, upstream calls
                 # will all fail for up to a minute and scanning returns no trades.
                 logger.warning(
@@ -176,6 +212,7 @@ class KISBroker:
                 )
                 await asyncio.sleep(remaining)
                 now = asyncio.get_event_loop().time()
+                can_fallback_to_cached = self._has_unexpired_token(now=now)
 
             logger.info("Refreshing KIS access token")
             self._last_refresh_attempt = now
@@ -187,16 +224,31 @@ class KISBroker:
                 "appsecret": self._app_secret,
             }
 
-            async with session.post(url, json=body) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise ConnectionError(f"Token refresh failed ({resp.status}): {text}")
-                data = await resp.json()
+            try:
+                async with session.post(url, json=body) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        raise ConnectionError(f"Token refresh failed ({resp.status}): {text}")
+                    data = await resp.json()
+            except Exception:
+                if can_fallback_to_cached:
+                    logger.warning(
+                        "Token refresh failed but cached token is still valid;"
+                        " reusing cached token",
+                        exc_info=True,
+                    )
+                    return cast(str, self._access_token)
+                raise
 
+            expires_in = float(data.get("expires_in", 86400))
             self._access_token = data["access_token"]
-            self._token_expires_at = now + data.get("expires_in", 86400) - 60  # 1-min buffer
+            self._token_expires_at = now + expires_in
+            self._token_refresh_at = self._compute_token_refresh_at(
+                issued_at=now,
+                expires_in=expires_in,
+            )
             logger.info("Token refreshed successfully")
-            return self._access_token
+            return cast(str, self._access_token)
 
     async def get_websocket_approval_key(self) -> str:
         """Return a websocket approval key for realtime subscriptions."""

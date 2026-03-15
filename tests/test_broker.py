@@ -60,8 +60,10 @@ class TestTokenManagement:
     @pytest.mark.asyncio
     async def test_reuses_cached_token(self, settings):
         broker = KISBroker(settings)
+        now = asyncio.get_event_loop().time()
         broker._access_token = "cached_token"
-        broker._token_expires_at = asyncio.get_event_loop().time() + 3600
+        broker._token_expires_at = now + 3600
+        broker._token_refresh_at = now + 1800
 
         token = await broker._ensure_token()
         assert token == "cached_token"
@@ -69,15 +71,77 @@ class TestTokenManagement:
         await broker.close()
 
     @pytest.mark.asyncio
+    async def test_refreshes_cached_token_after_refresh_deadline(self, settings):
+        broker = KISBroker(settings)
+        now = asyncio.get_event_loop().time()
+        broker._access_token = "cached_token"
+        broker._token_expires_at = now + 300
+        broker._token_refresh_at = now - 1
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={
+                "access_token": "tok_proactive_refresh",
+                "token_type": "Bearer",
+                "expires_in": 86400,
+            }
+        )
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            token = await broker._ensure_token()
+
+        assert token == "tok_proactive_refresh"
+        assert mock_post.call_count == 1
+
+        await broker.close()
+
+    @pytest.mark.asyncio
+    async def test_refresh_failure_after_deadline_reuses_unexpired_token(self, settings):
+        broker = KISBroker(settings)
+        now = asyncio.get_event_loop().time()
+        broker._access_token = "cached_token"
+        broker._token_expires_at = now + 300
+        broker._token_refresh_at = now - 1
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 403
+        mock_resp.text = AsyncMock(return_value='{"error_code":"EGW00133"}')
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            token = await broker._ensure_token()
+
+        assert token == "cached_token"
+        assert mock_post.call_count == 1
+
+        await broker.close()
+
+    @pytest.mark.parametrize(
+        ("issued_at", "expires_in", "expected"),
+        [
+            (100.0, 0.0, 100.0),  # zero TTL
+            (100.0, 30.0, 130.0),  # less than minimum lead
+            (100.0, 600.0, 640.0),  # 10% == minimum lead (60s)
+            (100.0, 86400.0, 84700.0),  # capped at max lead (1800s)
+        ],
+    )
+    def test_compute_token_refresh_at_boundaries(self, issued_at, expires_in, expected):
+        refresh_at = KISBroker._compute_token_refresh_at(
+            issued_at=issued_at,
+            expires_in=expires_in,
+        )
+        assert refresh_at == pytest.approx(expected, abs=1e-6)
+
+    @pytest.mark.asyncio
     async def test_concurrent_token_refresh_calls_api_once(self, settings):
         """Multiple concurrent token requests should only call API once."""
         broker = KISBroker(settings)
 
-        # Track how many times the mock API is called
-        call_count = [0]
-
-        def create_mock_resp():
-            call_count[0] += 1
+        def create_mock_resp(*_args, **_kwargs):
             mock_resp = AsyncMock()
             mock_resp.status = 200
             mock_resp.json = AsyncMock(
@@ -91,7 +155,7 @@ class TestTokenManagement:
             mock_resp.__aexit__ = AsyncMock(return_value=False)
             return mock_resp
 
-        with patch("aiohttp.ClientSession.post", return_value=create_mock_resp()):
+        with patch("aiohttp.ClientSession.post", side_effect=create_mock_resp) as mock_post:
             # Launch 5 concurrent token requests
             tokens = await asyncio.gather(
                 broker._ensure_token(),
@@ -104,7 +168,7 @@ class TestTokenManagement:
             # All should get the same token
             assert all(t == "tok_concurrent" for t in tokens)
             # API should be called only once (due to lock)
-            assert call_count[0] == 1
+            assert mock_post.call_count == 1
 
         await broker.close()
 
