@@ -60,11 +60,65 @@ class TestTokenManagement:
     @pytest.mark.asyncio
     async def test_reuses_cached_token(self, settings):
         broker = KISBroker(settings)
+        now = asyncio.get_event_loop().time()
         broker._access_token = "cached_token"
-        broker._token_expires_at = asyncio.get_event_loop().time() + 3600
+        broker._token_expires_at = now + 3600
+        broker._token_refresh_at = now + 1800
 
         token = await broker._ensure_token()
         assert token == "cached_token"
+
+        await broker.close()
+
+    @pytest.mark.asyncio
+    async def test_records_refresh_deadline_when_token_is_issued(self, settings):
+        broker = KISBroker(settings)
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={
+                "access_token": "tok_refresh_deadline",
+                "token_type": "Bearer",
+                "expires_in": 86400,
+            }
+        )
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp):
+            token = await broker._ensure_token()
+
+        assert token == "tok_refresh_deadline"
+        assert broker._token_refresh_at < broker._token_expires_at
+        assert broker._token_expires_at - broker._token_refresh_at == pytest.approx(1800, abs=1)
+
+        await broker.close()
+
+    @pytest.mark.asyncio
+    async def test_refreshes_cached_token_after_refresh_deadline(self, settings):
+        broker = KISBroker(settings)
+        now = asyncio.get_event_loop().time()
+        broker._access_token = "cached_token"
+        broker._token_expires_at = now + 300
+        broker._token_refresh_at = now - 1
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={
+                "access_token": "tok_proactive_refresh",
+                "token_type": "Bearer",
+                "expires_in": 86400,
+            }
+        )
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            token = await broker._ensure_token()
+
+        assert token == "tok_proactive_refresh"
+        assert mock_post.call_count == 1
 
         await broker.close()
 
@@ -105,6 +159,44 @@ class TestTokenManagement:
             assert all(t == "tok_concurrent" for t in tokens)
             # API should be called only once (due to lock)
             assert call_count[0] == 1
+
+        await broker.close()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_calls_after_refresh_deadline_calls_api_once(self, settings):
+        """Concurrent callers should share one proactive refresh attempt."""
+        broker = KISBroker(settings)
+        now = asyncio.get_event_loop().time()
+        broker._access_token = "cached_token"
+        broker._token_expires_at = now + 300
+        broker._token_refresh_at = now - 1
+
+        call_count = [0]
+
+        def create_mock_resp():
+            call_count[0] += 1
+            mock_resp = AsyncMock()
+            mock_resp.status = 200
+            mock_resp.json = AsyncMock(
+                return_value={
+                    "access_token": "tok_refresh_once",
+                    "token_type": "Bearer",
+                    "expires_in": 86400,
+                }
+            )
+            mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+            mock_resp.__aexit__ = AsyncMock(return_value=False)
+            return mock_resp
+
+        with patch("aiohttp.ClientSession.post", return_value=create_mock_resp()):
+            tokens = await asyncio.gather(
+                broker._ensure_token(),
+                broker._ensure_token(),
+                broker._ensure_token(),
+            )
+
+        assert tokens == ["tok_refresh_once", "tok_refresh_once", "tok_refresh_once"]
+        assert call_count[0] == 1
 
         await broker.close()
 
