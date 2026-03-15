@@ -1,9 +1,9 @@
 <!--
 Doc-ID: DOC-REQ-001
-Version: 1.0.12
+Version: 1.0.13
 Status: active
 Owner: strategy
-Updated: 2026-03-02
+Updated: 2026-03-15
 -->
 
 # 요구사항 원장 (Single Source of Truth)
@@ -38,7 +38,9 @@ Updated: 2026-03-02
 - `REQ-OPS-002`: 문서의 수치 정책은 원장에서만 변경한다.
 - `REQ-OPS-003`: 구현 태스크는 반드시 테스트 태스크를 동반한다.
 - `REQ-OPS-004`: 원본 계획 문서(`v2`, `v3`)는 `docs/ouroboros/source/` 경로를 단일 기준으로 사용한다.
+- `REQ-OPS-005`: canonical `main` 런타임 재시작 자동화는 Symphony `before_remove` 훅에서 관리되어야 하며, merged worktree 삭제 시 canonical `main` checkout만 정확히 한 번 재시작하고 non-`main` runtime 경계를 침범하지 않아야 한다.
 
 ## 변경 이력
 
 - 2026-03-02: `v1.0.12` 문서 검증 게이트 강화(#390) 반영에 따라 정책 문서 동기화 체크를 수행했다. (`REQ-OPS-002`)
+- 2026-03-15: `v1.0.13` canonical main 재시작 자동화를 Symphony `before_remove` 훅 기준으로 명시하고 runtime 경계/정확히-한-번 요구를 추가했다. (`REQ-OPS-005`)
