@@ -305,3 +305,10 @@
 - next_ticket: OOR-811
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: Rework reset requires closing PR #822 and deleting the previous Codex Workpad before rebuilding from origin/main@29e05fc with explicit handling for lock-timeout and restart-failure review feedback.
+### 2026-03-15 | session=codex-oor-821-rework-r1
+- branch: feature/issue-821-linear-korean-writing-rules-rework
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-821, PR #820 review comments
+- next_ticket: OOR-821
+- process_gate_checked: process_ticket=OOR-821 merged_to_feature_branch=n/a
+- risks_or_notes: Rework reset from closed PR #820; this ticket itself is process/governance scope so no separate prerequisite process ticket.

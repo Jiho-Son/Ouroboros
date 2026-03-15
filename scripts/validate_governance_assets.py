@@ -18,6 +18,16 @@ TEST_ID_IN_TEXT = re.compile(r"\bTEST-[A-Z0-9-]+-\d{3}\b")
 READ_ONLY_FILES = {"src/core/risk_manager.py"}
 PLACEHOLDER_VALUES = {"", "tbd", "n/a", "na", "none", "<link>", "<required>"}
 TIMEZONE_TOKEN_PATTERN = re.compile(r"\b(?:KST|UTC)\b")
+KOREAN_COMMUNICATION_POLICY_HEADER = "## Korean Communication Policy (Mandatory)"
+KOREAN_COMMUNICATION_POLICY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("default-language", ("한글", "기본", "언어")),
+    (
+        "linear-communication-surfaces",
+        ("Linear workpad", "이슈 코멘트", "PR 코멘트", "최종 보고", "한글"),
+    ),
+    ("verbatim-technical-tokens", ("코드", "명령어", "경로", "식별자", "원문 표기")),
+    ("english-source-interpretation", ("영어", "해석", "한글")),
+)
 
 
 def must_contain(path: Path, required: list[str], errors: list[str]) -> None:
@@ -166,6 +176,31 @@ def validate_timezone_policy_tokens(errors: list[str]) -> None:
             errors.append(f"{path}: missing timezone policy token (KST/UTC)")
 
 
+def validate_korean_communication_tokens(
+    errors: list[str], *, workflow_doc: Path | None = None
+) -> None:
+    """Validate Korean-first communication policy tokens with keyword groups."""
+    path = workflow_doc or Path("WORKFLOW.md")
+    if not path.exists():
+        errors.append(f"missing file: {path}")
+        return
+
+    text = path.read_text(encoding="utf-8")
+    if KOREAN_COMMUNICATION_POLICY_HEADER not in text:
+        errors.append(
+            f"{path}: missing Korean communication policy token -> "
+            f"{KOREAN_COMMUNICATION_POLICY_HEADER}"
+        )
+
+    for label, keywords in KOREAN_COMMUNICATION_POLICY_KEYWORDS:
+        missing_keywords = [keyword for keyword in keywords if keyword not in text]
+        if missing_keywords:
+            errors.append(
+                f"{path}: missing Korean communication policy token -> "
+                f"{label} keywords ({', '.join(missing_keywords)})"
+            )
+
+
 def validate_pr_traceability(errors: list[str]) -> None:
     title = os.getenv("GOVERNANCE_PR_TITLE", "").strip()
     body = os.getenv("GOVERNANCE_PR_BODY", "").strip()
@@ -302,6 +337,7 @@ def main() -> int:
     validate_task_req_mapping(errors)
     validate_task_test_pairing(errors)
     validate_timezone_policy_tokens(errors)
+    validate_korean_communication_tokens(errors)
     validate_pr_traceability(errors)
     validate_read_only_approval(changed_files, errors, warnings)
 

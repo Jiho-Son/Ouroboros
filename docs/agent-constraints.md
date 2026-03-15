@@ -66,6 +66,11 @@ It is distinct from `docs/requirements-log.md`, which records **project/product 
 
 - Repository collaboration is now GitHub-based for unattended runs; use `gh` for PR create/edit/read and `gh auth status` for auth preflight.
 
+### 2026-03-15
+
+- Symphony unattended Linear 실행에서 workpad/코멘트/최종 보고의 서술형 문장은 한글을 기본으로 작성한다.
+- 코드, 명령어, 경로, 식별자 같은 기술 토큰은 원문 표기를 유지한다.
+
 ### 2026-02-27
 
 - Apply process-change-first as an execution gate: process ticket must be merged before implementation ticket coding.
