@@ -305,3 +305,19 @@
 - next_ticket: OOR-811
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: Rework reset requires closing PR #822 and deleting the previous Codex Workpad before rebuilding from origin/main@29e05fc with explicit handling for lock-timeout and restart-failure review feedback.
+
+### 2026-03-16 | session=codex-oor-813-rework-r2
+- branch: feature/issue-813-executable-quote-rework-v2
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-813 Rework state, issue description, Jiho Son issue comment, prior PR #823 review feedback
+- next_ticket: OOR-813
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: Rework reset completed (closed PR #823 + deleted stale workpad); this attempt must keep BUY/SELL executable quote policy while addressing review deltas (US_DAY intent clarity, orderbook fetch dedup, safe overseas market resolution, fallback-path tests).
+
+### 2026-03-15 | session=codex-oor-813-rework-r2-utc
+- branch: feature/issue-813-executable-quote-rework-v2
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-813 Rework state, issue description, Jiho Son issue comment, prior PR #823 review feedback
+- next_ticket: OOR-813
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: Rework reset completed (closed PR #823 + deleted stale workpad); this attempt must keep BUY/SELL executable quote policy while addressing review deltas (US_DAY intent clarity, orderbook fetch dedup, safe overseas market resolution, fallback-path tests).

@@ -492,6 +492,53 @@ class TestGetOverseasPrice:
             await overseas_broker.get_overseas_price("NASD", "AAPL")
 
 
+class TestGetOverseasOrderbook:
+    """Test overseas executable quote-book access."""
+
+    @pytest.mark.asyncio
+    async def test_success(self, overseas_broker: OverseasBroker) -> None:
+        """Successful orderbook fetch should use the asking-price endpoint and mapped code."""
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={"output2": {"pask1": "200.60", "pbid1": "200.40"}}
+        )
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
+
+        _setup_broker_mocks(overseas_broker, mock_session)
+        overseas_broker._broker._auth_headers = AsyncMock(
+            return_value={"authorization": "Bearer t"}
+        )
+
+        result = await overseas_broker.get_overseas_orderbook("NASD", "AAPL")
+
+        assert result["output2"]["pask1"] == "200.60"
+        call_args = mock_session.get.call_args
+        url = call_args[0][0]
+        params = call_args[1]["params"]
+        assert "/uapi/overseas-price/v1/quotations/inquire-asking-price" in url
+        assert params["AUTH"] == ""
+        assert params["EXCD"] == "NAS"
+        assert params["SYMB"] == "AAPL"
+        overseas_broker._broker._auth_headers.assert_called_with("HHDFS76200100")
+
+    @pytest.mark.asyncio
+    async def test_http_error_raises(self, overseas_broker: OverseasBroker) -> None:
+        """Non-200 response should raise ConnectionError."""
+        mock_resp = AsyncMock()
+        mock_resp.status = 400
+        mock_resp.text = AsyncMock(return_value="Bad Request")
+
+        mock_session = MagicMock()
+        mock_session.get = MagicMock(return_value=_make_async_cm(mock_resp))
+
+        _setup_broker_mocks(overseas_broker, mock_session)
+
+        with pytest.raises(ConnectionError, match="get_overseas_orderbook failed"):
+            await overseas_broker.get_overseas_orderbook("NASD", "AAPL")
+
 class TestGetOverseasBalance:
     """Test get_overseas_balance method."""
 
