@@ -18,6 +18,17 @@ TEST_ID_IN_TEXT = re.compile(r"\bTEST-[A-Z0-9-]+-\d{3}\b")
 READ_ONLY_FILES = {"src/core/risk_manager.py"}
 PLACEHOLDER_VALUES = {"", "tbd", "n/a", "na", "none", "<link>", "<required>"}
 TIMEZONE_TOKEN_PATTERN = re.compile(r"\b(?:KST|UTC)\b")
+KOREAN_POLICY_WORKFLOW_HEADER = "## Korean Communication Policy (Mandatory)"
+KOREAN_POLICY_WORKFLOW_KEYWORD_GROUPS = (
+    ("korean-default-language", ("한글", "기본", "서술형")),
+    ("technical-token-preservation", ("기술", "토큰", "원문", "표기")),
+    ("linear-surfaces", ("Linear", "workpad", "코멘트", "최종 보고")),
+)
+KOREAN_POLICY_CONSTRAINT_KEYWORD_GROUPS = (
+    ("history-date", ("2026-03-15",)),
+    ("korean-default-language", ("한글", "기본")),
+    ("technical-token-preservation", ("기술", "토큰", "원문", "표기")),
+)
 
 
 def must_contain(path: Path, required: list[str], errors: list[str]) -> None:
@@ -166,6 +177,76 @@ def validate_timezone_policy_tokens(errors: list[str]) -> None:
             errors.append(f"{path}: missing timezone policy token (KST/UTC)")
 
 
+def _extract_markdown_section(text: str, header: str) -> str | None:
+    lines = text.splitlines()
+    start_index: int | None = None
+
+    for idx, line in enumerate(lines):
+        if line.strip() == header:
+            start_index = idx + 1
+            break
+    if start_index is None:
+        return None
+
+    end_index = len(lines)
+    for idx in range(start_index, len(lines)):
+        if lines[idx].startswith("## "):
+            end_index = idx
+            break
+    return "\n".join(lines[start_index:end_index])
+
+
+def _validate_keyword_groups(
+    text: str,
+    keyword_groups: tuple[tuple[str, tuple[str, ...]], ...],
+    *,
+    path: Path,
+    errors: list[str],
+) -> None:
+    for group_name, keywords in keyword_groups:
+        if any(keyword not in text for keyword in keywords):
+            errors.append(f"{path}: missing Korean policy keyword group -> {group_name}")
+
+
+def validate_korean_communication_tokens(
+    errors: list[str],
+    *,
+    workflow_doc: Path | None = None,
+    constraints_doc: Path | None = None,
+) -> None:
+    workflow_path = workflow_doc or Path("WORKFLOW.md")
+    constraints_path = constraints_doc or Path("docs/agent-constraints.md")
+
+    if not workflow_path.exists():
+        errors.append(f"missing file: {workflow_path}")
+    else:
+        workflow_text = workflow_path.read_text(encoding="utf-8")
+        policy_section = _extract_markdown_section(workflow_text, KOREAN_POLICY_WORKFLOW_HEADER)
+        if policy_section is None:
+            errors.append(
+                f"{workflow_path}: missing Korean policy section -> {KOREAN_POLICY_WORKFLOW_HEADER}"
+            )
+        else:
+            _validate_keyword_groups(
+                policy_section,
+                KOREAN_POLICY_WORKFLOW_KEYWORD_GROUPS,
+                path=workflow_path,
+                errors=errors,
+            )
+
+    if not constraints_path.exists():
+        errors.append(f"missing file: {constraints_path}")
+        return
+
+    constraints_text = constraints_path.read_text(encoding="utf-8")
+    _validate_keyword_groups(
+        constraints_text,
+        KOREAN_POLICY_CONSTRAINT_KEYWORD_GROUPS,
+        path=constraints_path,
+        errors=errors,
+    )
+
+
 def validate_pr_traceability(errors: list[str]) -> None:
     title = os.getenv("GOVERNANCE_PR_TITLE", "").strip()
     body = os.getenv("GOVERNANCE_PR_BODY", "").strip()
@@ -302,6 +383,7 @@ def main() -> int:
     validate_task_req_mapping(errors)
     validate_task_test_pairing(errors)
     validate_timezone_policy_tokens(errors)
+    validate_korean_communication_tokens(errors)
     validate_pr_traceability(errors)
     validate_read_only_approval(changed_files, errors, warnings)
 

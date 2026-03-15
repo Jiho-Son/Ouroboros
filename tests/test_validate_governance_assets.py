@@ -364,3 +364,99 @@ def test_validate_timezone_policy_tokens_requires_kst_or_utc(tmp_path, monkeypat
     module.validate_timezone_policy_tokens(errors)
     assert errors
     assert any("missing timezone policy token" in err for err in errors)
+
+
+def test_validate_korean_communication_tokens_passes_with_section_scoped_keywords(
+    tmp_path, monkeypatch
+) -> None:
+    module = _load_module()
+    docs = tmp_path / "docs"
+    docs.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    (tmp_path / "WORKFLOW.md").write_text(
+        "\n".join(
+            [
+                "## Korean Communication Policy (Mandatory)",
+                "- Symphony unattended Linear 작업의 서술형 문장은 한글을 기본 언어로 사용한다.",
+                "- 기술 토큰(코드/경로/명령/식별자)은 원문 표기를 유지한다.",
+                "- 이 규칙은 Linear workpad, 이슈 코멘트, 최종 보고에 동일하게 적용한다.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (docs / "agent-constraints.md").write_text(
+        "\n".join(
+            [
+                "## History",
+                "### 2026-03-15",
+                "- Symphony unattended Linear 실행에서 workpad/코멘트/최종 보고의 "
+                "서술형 문장은 한글을 기본으로 작성한다.",
+                "- 기술 토큰은 원문 표기를 유지한다.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors: list[str] = []
+    module.validate_korean_communication_tokens(errors)
+    assert errors == []
+
+
+def test_validate_korean_communication_tokens_fails_when_workflow_file_missing(
+    tmp_path, monkeypatch
+) -> None:
+    module = _load_module()
+    docs = tmp_path / "docs"
+    docs.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    (docs / "agent-constraints.md").write_text(
+        "### 2026-03-15\n- 한글 기본\n- 원문 표기 유지\n",
+        encoding="utf-8",
+    )
+
+    errors: list[str] = []
+    module.validate_korean_communication_tokens(errors)
+    assert any("missing file: WORKFLOW.md" in err for err in errors)
+
+
+def test_validate_korean_communication_tokens_checks_keywords_inside_policy_section_only(
+    tmp_path, monkeypatch
+) -> None:
+    module = _load_module()
+    docs = tmp_path / "docs"
+    docs.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    (tmp_path / "WORKFLOW.md").write_text(
+        "\n".join(
+            [
+                "## Korean Communication Policy (Mandatory)",
+                "- Symphony unattended 작업에서는 한글을 기본으로 작성한다.",
+                "",
+                "## Unrelated Section",
+                "- 기술 토큰은 원문 표기를 유지한다.",
+                "- Linear workpad/코멘트/최종 보고 경로는 별도 문단에서 설명한다.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (docs / "agent-constraints.md").write_text(
+        "\n".join(
+            [
+                "### 2026-03-15",
+                "- 한글 기본 작성",
+                "- 기술 토큰 원문 표기 유지",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors: list[str] = []
+    module.validate_korean_communication_tokens(errors)
+    assert any("WORKFLOW.md: missing Korean policy keyword group" in err for err in errors)
