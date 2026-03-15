@@ -297,3 +297,11 @@
 - next_ticket: OOR-819
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: LLM client 추상화와 Ollama provider 추가가 목표이며, 기존 Gemini 기본 경로를 유지하는 구성이 필요하다.
+
+### 2026-03-15 | session=codex-oor-814-start
+- branch: feature/issue-814-token-refresh
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-814 Todo state, issue description, Jiho Son comment, no attachments, no prior Codex workpad
+- next_ticket: OOR-814
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: 토큰 만료 직전 무동작 구간이 토큰 갱신 타이밍 문제인지 먼저 재현으로 분리하고, KIS 토큰을 만료 전에 선제 갱신하도록 테스트 우선으로 좁게 수정한다.

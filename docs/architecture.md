@@ -48,6 +48,7 @@ High-frequency trading with individual stock analysis:
 **KISBroker** (`kis_api.py`) — Async KIS API client for domestic Korean market
 
 - Automatic OAuth token refresh (valid for 24 hours)
+- Refresh deadline is scheduled from token TTL at issue time (10% lead, capped at 30 minutes) to avoid near-expiry stalls
 - Leaky-bucket rate limiter (configurable RPS, default 2.0)
 - POST body hash-key signing for order authentication
 - Custom SSL context with disabled hostname verification for VTS (virtual trading) endpoint due to known certificate mismatch
