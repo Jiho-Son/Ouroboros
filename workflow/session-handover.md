@@ -297,3 +297,11 @@
 - next_ticket: OOR-819
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: LLM client 추상화와 Ollama provider 추가가 목표이며, 기존 Gemini 기본 경로를 유지하는 구성이 필요하다.
+
+### 2026-03-15 | session=codex-oor-813-rework-r3
+- branch: feature/issue-813-executable-quote-rework
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-813 Rework state, issue body, prior workpad reset, PR #818 closed inline feedback
+- next_ticket: OOR-813
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: Rework attempt restarts from origin/main@29e05fc with explicit buy/sell asymmetry: buy-side wide-gap cancellation remains capped while sell-side retains executable-bid exit urgency under large gaps.

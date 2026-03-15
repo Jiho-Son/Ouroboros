@@ -490,7 +490,8 @@ High-frequency trading with individual stock analysis:
         ┌──────────────────────────────────┐
         │ Broker: Fetch Market Data        │
         │ - Domestic: orderbook + balance  │
-        │ - Overseas: price + balance      │
+        │ - Overseas: price + orderbook    │
+        │   + balance                      │
         └──────────────────┬───────────────┘
                            │
                            ▼
@@ -524,6 +525,12 @@ High-frequency trading with individual stock analysis:
         │ - Telegram notification          │
         └──────────────────────────────────┘
 ```
+
+Pending-order retry policy:
+- Domestic retries reuse the domestic orderbook top-of-book quote when available.
+- Overseas retries fetch the overseas asking-price book so `pask1` / `pbid1` drive retry pricing when available.
+- BUY retries cancel instead of chasing in low-liquidity sessions when the executable ask diverges from the last trade beyond `EXECUTABLE_QUOTE_MAX_GAP_PCT`.
+- SELL retries do not inherit that cap; they still reprice to the executable best bid so exit urgency is preserved during downside moves.
 
 ## Database Schema
 

@@ -6,6 +6,7 @@ Extracted from ``src/main.py`` to reduce module size.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -21,12 +22,14 @@ from src.core.order_policy import (
     classify_session_id,
     validate_order_policy,
 )
+from src.core.session_risk import _resolve_market_setting
 from src.markets.schedule import MARKETS
 from src.notifications.telegram_client import TelegramClient
 
 logger = logging.getLogger(__name__)
 
 _BUY_COOLDOWN_SECONDS = 600  # 10-minute cooldown after insufficient-balance rejection
+_LOW_LIQUIDITY_SESSIONS = {"NXT_AFTER", "US_PRE", "US_DAY", "US_AFTER"}
 
 RollbackOpenPosition = Callable[..., None]
 
@@ -82,6 +85,83 @@ def _require_order_acceptance(
 def _is_ambiguous_submit_error(exc: Exception) -> bool:
     """Return True when submit result is unknown and rollback would be unsafe."""
     return isinstance(exc, ConnectionError)
+
+
+def _extract_quote_from_mapping(
+    payload: dict[str, Any],
+    *,
+    ask_keys: tuple[str, ...],
+    bid_keys: tuple[str, ...],
+) -> tuple[float | None, float | None]:
+    output = payload.get("output1") or payload.get("output2") or payload.get("output") or payload
+    if isinstance(output, list):
+        output = output[0] if output else {}
+    if not isinstance(output, dict):
+        return None, None
+
+    def _float(*keys: str) -> float | None:
+        for key in keys:
+            raw = output.get(key)
+            if raw in (None, ""):
+                continue
+            try:
+                return float(raw)
+            except (ValueError, TypeError):
+                continue
+        return None
+
+    return _float(*ask_keys), _float(*bid_keys)
+
+
+def _is_low_liquidity_session(*, market_code: str) -> bool:
+    return classify_session_id(MARKETS[market_code]) in _LOW_LIQUIDITY_SESSIONS
+
+
+def _resolve_executable_gap_cap_pct(*, market_code: str, settings: Settings) -> float:
+    return float(
+        _resolve_market_setting(
+            market=MARKETS[market_code],
+            settings=settings,
+            key="EXECUTABLE_QUOTE_MAX_GAP_PCT",
+            default=2.0,
+        )
+    )
+
+
+def _resolve_retry_price_from_executable_quote(
+    *,
+    market_code: str,
+    order_type: str,
+    last_price: float,
+    fallback_price: float | None,
+    executable_quote: float | None,
+    settings: Settings,
+) -> tuple[float | None, float | None, bool]:
+    if executable_quote is not None and executable_quote > 0:
+        gap_pct: float | None = None
+        if last_price > 0:
+            gap_pct = abs(executable_quote - last_price) / last_price * 100.0
+            if order_type == "BUY" and _is_low_liquidity_session(market_code=market_code):
+                max_gap_pct = _resolve_executable_gap_cap_pct(
+                    market_code=market_code,
+                    settings=settings,
+                )
+                if gap_pct > max_gap_pct:
+                    logger.warning(
+                        (
+                            "Skip %s retry for %s: executable quote gap too wide "
+                            "(last=%.4f executable=%.4f gap_pct=%.2f cap_pct=%.2f)"
+                        ),
+                        order_type,
+                        market_code,
+                        last_price,
+                        executable_quote,
+                        gap_pct,
+                        max_gap_pct,
+                    )
+                    return None, gap_pct, True
+        return executable_quote, gap_pct, False
+    return fallback_price, None, False
 
 
 def _has_matching_domestic_pending_order(
@@ -266,12 +346,13 @@ async def handle_domestic_pending_orders(
     ``get_domestic_pending_orders`` returns [] immediately and this function
     exits without making further API calls.
 
-    BUY pending  → cancel then resubmit at +0.4% from last price (chase buy)
-                   at most once per key per session. On subsequent unfilled BUY,
-                   only cancel + set cooldown.
-    SELL pending → cancel then resubmit at a wider spread (-0.4% from last
-                   price, kr_round_down applied).  Resubmission is attempted
-                   at most once per key per session to avoid infinite loops.
+    BUY pending  → cancel then resubmit at the executable best ask when available.
+                   In low-liquidity sessions, cancel without resubmitting when
+                   the best ask is too far above the last trade.
+    SELL pending → cancel then resubmit at the executable best bid when
+                   available. SELL does not inherit the BUY-side gap cap because
+                   exit urgency takes priority. Resubmission is attempted at
+                   most once per key per session to avoid infinite loops.
 
     Args:
         broker: KISBroker instance.
@@ -357,9 +438,68 @@ async def handle_domestic_pending_orders(
                         last_price, _, _ = await broker.get_current_price(
                             stock_code, market_div_code=quote_market_div_code
                         )
-                        if last_price <= 0:
-                            raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
-                        new_price = kr_round_down(last_price * 1.004)
+                        fallback_price: float | None = None
+                        if last_price > 0:
+                            fallback_price = float(kr_round_down(last_price * 1.004))
+
+                        orderbook_payload: dict[str, Any] = {}
+                        fetch_orderbook = getattr(broker, "get_orderbook_by_market", None)
+                        if callable(fetch_orderbook) and inspect.iscoroutinefunction(
+                            fetch_orderbook
+                        ):
+                            try:
+                                orderbook_payload = await fetch_orderbook(
+                                    stock_code,
+                                    market_div_code=quote_market_div_code,
+                                )
+                            except Exception as quote_exc:
+                                logger.warning(
+                                    "Failed to fetch domestic orderbook for %s: %s",
+                                    stock_code,
+                                    quote_exc,
+                                )
+                        executable_ask, _ = _extract_quote_from_mapping(
+                            orderbook_payload,
+                            ask_keys=("stck_askp1", "askp1"),
+                            bid_keys=("stck_bidp1", "bidp1"),
+                        )
+                        new_price, _, gap_rejected = _resolve_retry_price_from_executable_quote(
+                            market_code="KR",
+                            order_type="BUY",
+                            last_price=last_price,
+                            fallback_price=fallback_price,
+                            executable_quote=executable_ask,
+                            settings=settings,
+                        )
+                        if gap_rejected:
+                            if buy_cooldown is not None:
+                                buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                            logger.warning(
+                                "BUY KR %s cancelled after executable ask gap rejection",
+                                stock_code,
+                            )
+                            try:
+                                await telegram.notify_unfilled_order(
+                                    stock_code=stock_code,
+                                    market="KR",
+                                    action="BUY",
+                                    quantity=psbl_qty,
+                                    outcome="cancelled",
+                                )
+                            except Exception as notify_exc:
+                                logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                            _rollback_pending_position(
+                                rollback_open_position=rollback_open_position,
+                                market_code="KR",
+                                exchange_code=order_exchange,
+                                stock_code=stock_code,
+                                action="BUY",
+                            )
+                            continue
+                        if new_price is None or new_price <= 0:
+                            raise ValueError(
+                                f"Invalid retry price ({new_price}) for {stock_code}"
+                            )
                         validate_order_policy(
                             market=MARKETS["KR"],
                             order_type="BUY",
@@ -461,7 +601,7 @@ async def handle_domestic_pending_orders(
                         )
 
             elif sll_buy == "01":
-                # SELL pending — attempt one resubmit at a wider spread.
+                    # SELL pending — attempt one executable-bid resubmit.
                 if sell_resubmit_counts.get(key, 0) >= 1:
                     # Already resubmitted once — only cancel (already done above).
                     logger.warning(
@@ -486,12 +626,46 @@ async def handle_domestic_pending_orders(
                         action="SELL",
                     )
                 else:
-                    # First unfilled SELL → resubmit at last * 0.996 (-0.4%).
+                        # First unfilled SELL → resubmit at best executable bid when available.
                     try:
                         last_price, _, _ = await broker.get_current_price(stock_code)
-                        if last_price <= 0:
-                            raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
-                        new_price = kr_round_down(last_price * 0.996)
+                        fallback_price: float | None = None
+                        if last_price > 0:
+                            fallback_price = float(kr_round_down(last_price * 0.996))
+
+                        orderbook_payload: dict[str, Any] = {}
+                        fetch_orderbook = getattr(broker, "get_orderbook_by_market", None)
+                        if callable(fetch_orderbook) and inspect.iscoroutinefunction(
+                            fetch_orderbook
+                        ):
+                            try:
+                                orderbook_payload = await fetch_orderbook(
+                                    stock_code,
+                                    market_div_code=quote_market_div_code,
+                                )
+                            except Exception as quote_exc:
+                                logger.warning(
+                                    "Failed to fetch domestic orderbook for %s: %s",
+                                    stock_code,
+                                    quote_exc,
+                                )
+                        _, executable_bid = _extract_quote_from_mapping(
+                            orderbook_payload,
+                            ask_keys=("stck_askp1", "askp1"),
+                            bid_keys=("stck_bidp1", "bidp1"),
+                        )
+                        new_price, _, _ = _resolve_retry_price_from_executable_quote(
+                            market_code="KR",
+                            order_type="SELL",
+                            last_price=last_price,
+                            fallback_price=fallback_price,
+                            executable_quote=executable_bid,
+                            settings=settings,
+                        )
+                        if new_price is None or new_price <= 0:
+                            raise ValueError(
+                                f"Invalid retry price ({new_price}) for {stock_code}"
+                            )
                         validate_order_policy(
                             market=MARKETS["KR"],
                             order_type="SELL",
@@ -604,12 +778,13 @@ async def handle_overseas_pending_orders(
     In paper mode the KIS pending-orders API (TTTS3018R) is unsupported, so
     this function returns immediately without making any API calls.
 
-    BUY pending  → cancel then resubmit at +0.4% from last price (chase buy)
-                   at most once per key per session. On subsequent unfilled BUY,
-                   only cancel + set cooldown.
-    SELL pending → cancel then resubmit at a wider spread (-0.4% from last
-                   price).  Resubmission is attempted at most once per key
-                   per session to avoid infinite retry loops.
+    BUY pending  → cancel then resubmit at the executable best ask when available.
+                   In low-liquidity sessions, cancel without resubmitting when
+                   the best ask is too far above the last trade.
+    SELL pending → cancel then resubmit at the executable best bid when
+                   available. SELL does not inherit the BUY-side gap cap because
+                   exit urgency takes priority. Resubmission is attempted at
+                   most once per key per session to avoid infinite retry loops.
 
     Args:
         overseas_broker: OverseasBroker instance.
@@ -713,17 +888,76 @@ async def handle_overseas_pending_orders(
                                 order_exchange, stock_code
                             )
                             last_price = float(price_data.get("output", {}).get("last", "0") or "0")
-                            if last_price <= 0:
-                                raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
-                            new_price = round(last_price * 1.004, 2 if last_price >= 1 else 4)
-                            market_info = next(
-                                (
-                                    m
-                                    for m in MARKETS.values()
-                                    if m.exchange_code == order_exchange and not m.is_domestic
-                                ),
+                            fallback_price: float | None = None
+                            if last_price > 0:
+                                fallback_price = round(
+                                    last_price * 1.004,
+                                    2 if last_price >= 1 else 4,
+                                )
+
+                            orderbook_payload: dict[str, Any] = {}
+                            fetch_orderbook = getattr(
+                                overseas_broker,
+                                "get_overseas_orderbook",
                                 None,
                             )
+                            if callable(fetch_orderbook) and inspect.iscoroutinefunction(
+                                fetch_orderbook
+                            ):
+                                try:
+                                    orderbook_payload = await fetch_orderbook(
+                                        order_exchange,
+                                        stock_code,
+                                    )
+                                except Exception as quote_exc:
+                                    logger.warning(
+                                        "Failed to fetch overseas orderbook for %s %s: %s",
+                                        order_exchange,
+                                        stock_code,
+                                        quote_exc,
+                                    )
+                            executable_ask, _ = OverseasBroker._extract_orderbook_top_levels(
+                                orderbook_payload
+                            )
+                            new_price, _, gap_rejected = _resolve_retry_price_from_executable_quote(
+                                market_code=market_code,
+                                order_type="BUY",
+                                last_price=last_price,
+                                fallback_price=fallback_price,
+                                executable_quote=executable_ask,
+                                settings=settings,
+                            )
+                            if gap_rejected:
+                                if buy_cooldown is not None:
+                                    buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
+                                logger.warning(
+                                    "BUY %s %s cancelled after executable ask gap rejection",
+                                    order_exchange,
+                                    stock_code,
+                                )
+                                try:
+                                    await telegram.notify_unfilled_order(
+                                        stock_code=stock_code,
+                                        market=order_exchange,
+                                        action="BUY",
+                                        quantity=nccs_qty,
+                                        outcome="cancelled",
+                                    )
+                                except Exception as notify_exc:
+                                    logger.warning("notify_unfilled_order failed: %s", notify_exc)
+                                _rollback_pending_position(
+                                    rollback_open_position=rollback_open_position,
+                                    market_code=market_code,
+                                    exchange_code=order_exchange,
+                                    stock_code=stock_code,
+                                    action="BUY",
+                                )
+                                continue
+                            if new_price is None or new_price <= 0:
+                                raise ValueError(
+                                    f"Invalid retry price ({new_price}) for {stock_code}"
+                                )
+                            market_info = MARKETS.get(market_code)
                             if market_info is not None:
                                 validate_order_policy(
                                     market=market_info,
@@ -835,7 +1069,7 @@ async def handle_overseas_pending_orders(
                             )
 
                 elif sll_buy == "01":
-                    # SELL pending — attempt one resubmit at a wider spread.
+                    # SELL pending — attempt one executable-bid resubmit.
                     if sell_resubmit_counts.get(key, 0) >= 1:
                         # Already resubmitted once — only cancel (already done above).
                         logger.warning(
@@ -861,23 +1095,56 @@ async def handle_overseas_pending_orders(
                             action="SELL",
                         )
                     else:
-                        # First unfilled SELL → resubmit at last * 0.996 (-0.4%).
+                        # First unfilled SELL → resubmit at best executable bid when available.
                         try:
                             price_data = await overseas_broker.get_overseas_price(
                                 order_exchange, stock_code
                             )
                             last_price = float(price_data.get("output", {}).get("last", "0") or "0")
-                            if last_price <= 0:
-                                raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
-                            new_price = round(last_price * 0.996, 2 if last_price >= 1 else 4)
-                            market_info = next(
-                                (
-                                    m
-                                    for m in MARKETS.values()
-                                    if m.exchange_code == order_exchange and not m.is_domestic
-                                ),
+                            fallback_price: float | None = None
+                            if last_price > 0:
+                                fallback_price = round(
+                                    last_price * 0.996,
+                                    2 if last_price >= 1 else 4,
+                                )
+
+                            orderbook_payload: dict[str, Any] = {}
+                            fetch_orderbook = getattr(
+                                overseas_broker,
+                                "get_overseas_orderbook",
                                 None,
                             )
+                            if callable(fetch_orderbook) and inspect.iscoroutinefunction(
+                                fetch_orderbook
+                            ):
+                                try:
+                                    orderbook_payload = await fetch_orderbook(
+                                        order_exchange,
+                                        stock_code,
+                                    )
+                                except Exception as quote_exc:
+                                    logger.warning(
+                                        "Failed to fetch overseas orderbook for %s %s: %s",
+                                        order_exchange,
+                                        stock_code,
+                                        quote_exc,
+                                    )
+                            _, executable_bid = OverseasBroker._extract_orderbook_top_levels(
+                                orderbook_payload
+                            )
+                            new_price, _, _ = _resolve_retry_price_from_executable_quote(
+                                market_code=market_code,
+                                order_type="SELL",
+                                last_price=last_price,
+                                fallback_price=fallback_price,
+                                executable_quote=executable_bid,
+                                settings=settings,
+                            )
+                            if new_price is None or new_price <= 0:
+                                raise ValueError(
+                                    f"Invalid retry price ({new_price}) for {stock_code}"
+                                )
+                            market_info = MARKETS.get(market_code)
                             if market_info is not None:
                                 validate_order_policy(
                                     market=market_info,

@@ -7890,7 +7890,7 @@ class TestHandleOverseasPendingOrders:
 
     @pytest.mark.asyncio
     async def test_buy_pending_is_cancelled_then_resubmitted_once(self) -> None:
-        """First unfilled BUY should be cancelled then resubmitted at +0.4%."""
+        """First unfilled BUY should be cancelled then resubmitted at best ask."""
         settings = self._make_settings("US_NASDAQ")
         telegram = self._make_telegram()
 
@@ -7905,6 +7905,9 @@ class TestHandleOverseasPendingOrders:
         overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
         overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
         overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "200.0"}})
+        overseas_broker.get_overseas_orderbook = AsyncMock(
+            return_value={"output2": {"pask1": "200.60", "pbid1": "200.40"}}
+        )
         overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
 
         sell_resubmit_counts: dict[str, int] = {}
@@ -7923,13 +7926,48 @@ class TestHandleOverseasPendingOrders:
         overseas_broker.send_overseas_order.assert_called_once()
         resubmit_kwargs = overseas_broker.send_overseas_order.call_args[1]
         assert resubmit_kwargs["order_type"] == "BUY"
-        assert resubmit_kwargs["price"] == round(200.0 * 1.004, 2)
+        assert resubmit_kwargs["price"] == 200.60
         assert "BUY:NASD:AAPL" in sell_resubmit_counts
         assert "NASD:AAPL" not in buy_cooldown
         telegram.notify_unfilled_order.assert_called_once()
         call_kwargs = telegram.notify_unfilled_order.call_args[1]
         assert call_kwargs["action"] == "BUY"
         assert call_kwargs["outcome"] == "resubmitted"
+
+    @pytest.mark.asyncio
+    async def test_buy_pending_wide_quote_gap_is_cancelled_in_low_liquidity_session(self) -> None:
+        """Low-liquidity BUY retry should cancel instead of chasing a wide executable ask."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "AAPL",
+            "odno": "ORD001-W",
+            "sll_buy_dvsn_cd": "02",
+            "nccs_qty": "3",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "200.0"}})
+        overseas_broker.get_overseas_orderbook = AsyncMock(
+            return_value={"output2": {"pask1": "220.00", "pbid1": "199.50"}}
+        )
+        overseas_broker.send_overseas_order = AsyncMock()
+
+        buy_cooldown: dict[str, float] = {}
+
+        with patch("src.broker.pending_orders.classify_session_id", return_value="US_PRE"):
+            await handle_overseas_pending_orders(
+                overseas_broker, telegram, settings, {}, buy_cooldown
+            )
+
+        overseas_broker.send_overseas_order.assert_not_called()
+        assert "NASD:AAPL" in buy_cooldown
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["action"] == "BUY"
+        assert notify_kwargs["outcome"] == "cancelled"
 
     @pytest.mark.asyncio
     async def test_buy_already_resubmitted_is_only_cancelled_with_cooldown(self) -> None:
@@ -7966,7 +8004,7 @@ class TestHandleOverseasPendingOrders:
 
     @pytest.mark.asyncio
     async def test_sell_pending_is_cancelled_then_resubmitted(self) -> None:
-        """First unfilled SELL should be cancelled then resubmitted at -0.4% price."""
+        """First unfilled SELL should be cancelled then resubmitted at best bid."""
         settings = self._make_settings("US_NASDAQ")
         telegram = self._make_telegram()
 
@@ -7981,6 +8019,9 @@ class TestHandleOverseasPendingOrders:
         overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
         overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
         overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "200.0"}})
+        overseas_broker.get_overseas_orderbook = AsyncMock(
+            return_value={"output2": {"pask1": "200.20", "pbid1": "199.40"}}
+        )
         overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
 
         sell_resubmit_counts: dict[str, int] = {}
@@ -7993,9 +8034,40 @@ class TestHandleOverseasPendingOrders:
         overseas_broker.send_overseas_order.assert_called_once()
         resubmit_kwargs = overseas_broker.send_overseas_order.call_args[1]
         assert resubmit_kwargs["order_type"] == "SELL"
-        assert resubmit_kwargs["price"] == round(200.0 * 0.996, 2)
+        assert resubmit_kwargs["price"] == 199.40
         assert sell_resubmit_counts.get("NASD:AAPL") == 1
         notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["outcome"] == "resubmitted"
+
+    @pytest.mark.asyncio
+    async def test_sell_pending_wide_quote_gap_still_resubmits_at_best_bid(self) -> None:
+        """SELL should still exit at best bid even when the executable gap is wide."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "AAPL",
+            "odno": "ORD002-W",
+            "sll_buy_dvsn_cd": "01",
+            "nccs_qty": "5",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "200.0"}})
+        overseas_broker.get_overseas_orderbook = AsyncMock(
+            return_value={"output2": {"pask1": "200.50", "pbid1": "180.00"}}
+        )
+        overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+
+        with patch("src.broker.pending_orders.classify_session_id", return_value="US_PRE"):
+            await handle_overseas_pending_orders(overseas_broker, telegram, settings, {})
+
+        overseas_broker.send_overseas_order.assert_called_once()
+        assert overseas_broker.send_overseas_order.call_args[1]["price"] == 180.00
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["action"] == "SELL"
         assert notify_kwargs["outcome"] == "resubmitted"
 
     @pytest.mark.asyncio
@@ -8553,9 +8625,7 @@ class TestHandleDomesticPendingOrders:
 
     @pytest.mark.asyncio
     async def test_buy_pending_is_cancelled_then_resubmitted_once(self) -> None:
-        """First unfilled BUY should be cancelled then resubmitted at +0.4%."""
-        from src.broker.kis_api import kr_round_down
-
+        """First unfilled BUY should be cancelled then resubmitted at best ask."""
         settings = self._make_settings()
         telegram = self._make_telegram()
 
@@ -8570,6 +8640,9 @@ class TestHandleDomesticPendingOrders:
         broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
         broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
         broker.get_current_price = AsyncMock(return_value=(50000.0, 0.0, 0.0))
+        broker.get_orderbook_by_market = AsyncMock(
+            return_value={"output1": {"stck_askp1": "50050", "stck_bidp1": "49990"}}
+        )
         broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
 
         sell_resubmit_counts: dict[str, int] = {}
@@ -8589,7 +8662,7 @@ class TestHandleDomesticPendingOrders:
         broker.send_order.assert_called_once()
         resubmit_kwargs = broker.send_order.call_args[1]
         assert resubmit_kwargs["order_type"] == "BUY"
-        assert resubmit_kwargs["price"] == kr_round_down(50000.0 * 1.004)
+        assert resubmit_kwargs["price"] == 50050
         assert "BUY:KR:005930" in sell_resubmit_counts
         assert "KR:005930" not in buy_cooldown
         telegram.notify_unfilled_order.assert_called_once()
@@ -8597,6 +8670,47 @@ class TestHandleDomesticPendingOrders:
         assert call_kwargs["action"] == "BUY"
         assert call_kwargs["outcome"] == "resubmitted"
         assert call_kwargs["market"] == "KR"
+
+    @pytest.mark.asyncio
+    async def test_buy_pending_wide_quote_gap_is_cancelled_in_low_liquidity_session(self) -> None:
+        """Low-liquidity KR BUY retry should cancel instead of chasing a wide best ask."""
+        settings = self._make_settings()
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORD001-W",
+            "ord_gno_brno": "BRN01",
+            "sll_buy_dvsn_cd": "02",
+            "psbl_qty": "3",
+            "order_exchange": "NXT",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(50000.0, 0.0, 0.0))
+        broker.get_orderbook_by_market = AsyncMock(
+            return_value={"output1": {"stck_askp1": "55000", "stck_bidp1": "49950"}}
+        )
+        broker.send_order = AsyncMock()
+
+        buy_cooldown: dict[str, float] = {}
+
+        with patch("src.broker.pending_orders.classify_session_id", return_value="NXT_AFTER"):
+            await handle_domestic_pending_orders(
+                broker,
+                telegram,
+                settings,
+                {},
+                buy_cooldown,
+                quote_market_div_code="NX",
+            )
+
+        broker.send_order.assert_not_called()
+        assert "KR:005930" in buy_cooldown
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["action"] == "BUY"
+        assert notify_kwargs["outcome"] == "cancelled"
 
     @pytest.mark.asyncio
     async def test_buy_pending_uses_odno_when_orgn_odno_empty(self) -> None:
@@ -8673,9 +8787,7 @@ class TestHandleDomesticPendingOrders:
 
     @pytest.mark.asyncio
     async def test_sell_pending_is_cancelled_then_resubmitted(self) -> None:
-        """First unfilled SELL should be cancelled then resubmitted at -0.4% price."""
-        from src.broker.kis_api import kr_round_down
-
+        """First unfilled SELL should be cancelled then resubmitted at best bid."""
         settings = self._make_settings()
         telegram = self._make_telegram()
 
@@ -8690,6 +8802,9 @@ class TestHandleDomesticPendingOrders:
         broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
         broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
         broker.get_current_price = AsyncMock(return_value=(50000.0, 0.0, 0.0))
+        broker.get_orderbook_by_market = AsyncMock(
+            return_value={"output1": {"stck_askp1": "50020", "stck_bidp1": "49950"}}
+        )
         broker.send_order = AsyncMock(return_value={"rt_cd": "0"})
 
         sell_resubmit_counts: dict[str, int] = {}
@@ -8700,10 +8815,47 @@ class TestHandleDomesticPendingOrders:
         broker.send_order.assert_called_once()
         resubmit_kwargs = broker.send_order.call_args[1]
         assert resubmit_kwargs["order_type"] == "SELL"
-        expected_price = kr_round_down(50000.0 * 0.996)
-        assert resubmit_kwargs["price"] == expected_price
+        assert resubmit_kwargs["price"] == 49950
         assert sell_resubmit_counts.get("KR:005930") == 1
         notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["outcome"] == "resubmitted"
+
+    @pytest.mark.asyncio
+    async def test_sell_pending_wide_quote_gap_still_resubmits_at_best_bid(self) -> None:
+        """KR SELL should still exit at best bid even when the executable gap is wide."""
+        settings = self._make_settings()
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORD002-W",
+            "ord_gno_brno": "BRN02",
+            "sll_buy_dvsn_cd": "01",
+            "psbl_qty": "5",
+            "order_exchange": "NXT",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(50000.0, 0.0, 0.0))
+        broker.get_orderbook_by_market = AsyncMock(
+            return_value={"output1": {"stck_askp1": "50050", "stck_bidp1": "47000"}}
+        )
+        broker.send_order = AsyncMock(return_value={"rt_cd": "0"})
+
+        with patch("src.broker.pending_orders.classify_session_id", return_value="NXT_AFTER"):
+            await handle_domestic_pending_orders(
+                broker,
+                telegram,
+                settings,
+                {},
+                quote_market_div_code="NX",
+            )
+
+        broker.send_order.assert_called_once()
+        assert broker.send_order.call_args[1]["price"] == 47000
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["action"] == "SELL"
         assert notify_kwargs["outcome"] == "resubmitted"
 
     @pytest.mark.asyncio
