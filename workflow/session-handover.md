@@ -297,3 +297,11 @@
 - next_ticket: OOR-819
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: LLM client 추상화와 Ollama provider 추가가 목표이며, 기존 Gemini 기본 경로를 유지하는 구성이 필요하다.
+
+### 2026-03-15 | session=codex-oor-821-start
+- branch: feature/issue-821-linear-korean-writing-rules
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-821
+- next_ticket: OOR-821
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Linear 워크패드 한글 중심 소통 규칙을 워크플로우/프롬프트/검증 경로에 반영한다.

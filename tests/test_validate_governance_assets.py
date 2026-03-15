@@ -364,3 +364,47 @@ def test_validate_timezone_policy_tokens_requires_kst_or_utc(tmp_path, monkeypat
     module.validate_timezone_policy_tokens(errors)
     assert errors
     assert any("missing timezone policy token" in err for err in errors)
+
+
+def test_validate_korean_communication_tokens_fails_when_workflow_missing_policy(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    workflow_doc = tmp_path / "WORKFLOW.md"
+    workflow_doc.write_text(
+        "\n".join(
+            [
+                "Instructions:",
+                "1. This is an unattended orchestration session.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    errors: list[str] = []
+    module.validate_korean_communication_tokens(errors, workflow_doc=workflow_doc)
+    assert errors
+    assert any("missing Korean communication policy token" in err for err in errors)
+
+
+def test_validate_korean_communication_tokens_passes_when_policy_tokens_present(
+    tmp_path,
+) -> None:
+    module = _load_module()
+    workflow_doc = tmp_path / "WORKFLOW.md"
+    workflow_doc.write_text(
+        "\n".join(
+            [
+                "## Korean Communication Policy (Mandatory)",
+                "- 한글을 기본 언어로 사용한다.",
+                "- Linear workpad, 이슈 코멘트, PR 코멘트, "
+                "최종 보고의 서술 문장은 한글 위주로 작성한다.",
+                "- 코드/명령어/경로/식별자는 원문 표기를 유지한다.",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    errors: list[str] = []
+    module.validate_korean_communication_tokens(errors, workflow_doc=workflow_doc)
+    assert errors == []

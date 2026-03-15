@@ -71,3 +71,8 @@ It is distinct from `docs/requirements-log.md`, which records **project/product 
 - Apply process-change-first as an execution gate: process ticket must be merged before implementation ticket coding.
 - Handover entry must record concrete `next_ticket` and `process_gate_checked`; placeholders are not allowed in strict gate.
 - Before process merge confirmation, all subagent tasks must remain read-only (analysis only).
+
+### 2026-03-15
+
+- Symphony unattended Linear 실행에서 workpad/코멘트/최종 보고의 서술형 문장은 한글을 기본으로 작성한다.
+- 코드, 명령어, 경로, 식별자 같은 기술 토큰은 원문 표기를 유지한다.

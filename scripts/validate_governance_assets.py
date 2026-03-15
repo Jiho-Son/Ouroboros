@@ -18,6 +18,12 @@ TEST_ID_IN_TEXT = re.compile(r"\bTEST-[A-Z0-9-]+-\d{3}\b")
 READ_ONLY_FILES = {"src/core/risk_manager.py"}
 PLACEHOLDER_VALUES = {"", "tbd", "n/a", "na", "none", "<link>", "<required>"}
 TIMEZONE_TOKEN_PATTERN = re.compile(r"\b(?:KST|UTC)\b")
+KOREAN_COMMUNICATION_POLICY_TOKENS = (
+    "## Korean Communication Policy (Mandatory)",
+    "한글을 기본 언어로 사용한다.",
+    "Linear workpad, 이슈 코멘트, PR 코멘트, 최종 보고의 서술 문장은 한글 위주로 작성한다.",
+    "코드/명령어/경로/식별자는 원문 표기를 유지한다.",
+)
 
 
 def must_contain(path: Path, required: list[str], errors: list[str]) -> None:
@@ -166,6 +172,20 @@ def validate_timezone_policy_tokens(errors: list[str]) -> None:
             errors.append(f"{path}: missing timezone policy token (KST/UTC)")
 
 
+def validate_korean_communication_tokens(
+    errors: list[str], *, workflow_doc: Path | None = None
+) -> None:
+    path = workflow_doc or Path("WORKFLOW.md")
+    if not path.exists():
+        errors.append(f"missing file: {path}")
+        return
+
+    text = path.read_text(encoding="utf-8")
+    for token in KOREAN_COMMUNICATION_POLICY_TOKENS:
+        if token not in text:
+            errors.append(f"{path}: missing Korean communication policy token -> {token}")
+
+
 def validate_pr_traceability(errors: list[str]) -> None:
     title = os.getenv("GOVERNANCE_PR_TITLE", "").strip()
     body = os.getenv("GOVERNANCE_PR_BODY", "").strip()
@@ -302,6 +322,7 @@ def main() -> int:
     validate_task_req_mapping(errors)
     validate_task_test_pairing(errors)
     validate_timezone_policy_tokens(errors)
+    validate_korean_communication_tokens(errors)
     validate_pr_traceability(errors)
     validate_read_only_approval(changed_files, errors, warnings)
 
