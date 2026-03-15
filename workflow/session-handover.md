@@ -297,3 +297,11 @@
 - next_ticket: OOR-819
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: LLM client 추상화와 Ollama provider 추가가 목표이며, 기존 Gemini 기본 경로를 유지하는 구성이 필요하다.
+
+### 2026-03-15 | session=codex-oor-811-rework-r3
+- branch: feature/issue-811-canonical-restart-before-remove-r3
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-811 Rework state, issue description, human review on PR #822, prior workpad comment, attached PR metadata
+- next_ticket: OOR-811
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: Rework reset requires closing PR #822 and deleting the previous Codex Workpad before rebuilding from origin/main@29e05fc with explicit handling for lock-timeout and restart-failure review feedback.
