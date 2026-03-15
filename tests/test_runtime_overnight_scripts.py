@@ -12,6 +12,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RUN_OVERNIGHT = REPO_ROOT / "scripts" / "run_overnight.sh"
 RUNTIME_MONITOR = REPO_ROOT / "scripts" / "runtime_verify_monitor.sh"
 RUNTIME_INSTANCE_ENV = REPO_ROOT / "scripts" / "runtime_instance_env.sh"
+SYMPHONY_BEFORE_REMOVE_CANONICAL_RESTART = (
+    REPO_ROOT / "scripts" / "symphony_before_remove_canonical_restart.sh"
+)
 
 
 def _latest_runtime_log(log_dir: Path) -> str:
@@ -49,6 +52,221 @@ def _resolve_runtime_defaults(*, state_root: Path, branch: str) -> dict[str, str
     return {key: value for key, value in pairs}
 
 
+def _write_fake_git(*, tmp_path: Path) -> Path:
+    fake_git = tmp_path / "fake_git.py"
+    fake_git.write_text(
+        """#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+
+
+def log(message: str) -> None:
+    log_path = os.environ.get("FAKE_GIT_LOG_PATH")
+    if not log_path:
+        return
+    path = Path(log_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(message + "\\n")
+
+
+def parse(argv: list[str]) -> tuple[Path, list[str]]:
+    cwd = Path(os.getcwd())
+    args = list(argv)
+    while args[:1] == ["-C"]:
+        cwd = Path(args[1])
+        args = args[2:]
+    return cwd, args
+
+
+def main() -> int:
+    cwd, args = parse(sys.argv[1:])
+    workspace_root = Path(os.environ["FAKE_GIT_WORKSPACE_ROOT"])
+    canonical_root = Path(os.environ["FAKE_GIT_CANONICAL_ROOT"])
+    workspace_branch = os.environ["FAKE_GIT_WORKSPACE_BRANCH"]
+    workspace_sha = os.environ["FAKE_GIT_WORKSPACE_SHA"]
+    canonical_branch = os.environ.get("FAKE_GIT_CANONICAL_BRANCH", "main")
+    canonical_head = os.environ.get("FAKE_GIT_CANONICAL_HEAD", "canonical-head")
+    target_sha = os.environ["FAKE_GIT_TARGET_SHA"]
+    merged_by_git = os.environ.get("FAKE_GIT_MERGED_BY_GIT", "false") == "true"
+    remote_url = os.environ.get(
+        "FAKE_GIT_REMOTE_URL",
+        "https://github.com/test-owner/test-repo.git",
+    )
+    pull_fails = os.environ.get("FAKE_GIT_PULL_FAILS", "false") == "true"
+    fetch_noise = os.environ.get("FAKE_GIT_FETCH_NOISE", "false") == "true"
+
+    if args == ["branch", "--show-current"]:
+        if cwd == workspace_root:
+            print(workspace_branch)
+            return 0
+        if cwd == canonical_root:
+            print(canonical_branch)
+            return 0
+        raise SystemExit(f"unexpected cwd for branch lookup: {cwd}")
+
+    if args == ["rev-parse", "HEAD"]:
+        if cwd == workspace_root:
+            print(workspace_sha)
+            return 0
+        if cwd == canonical_root:
+            print(canonical_head)
+            return 0
+        raise SystemExit(f"unexpected cwd for HEAD lookup: {cwd}")
+
+    if args == ["rev-parse", "origin/main"]:
+        print(target_sha)
+        return 0
+
+    if args == ["remote", "get-url", "origin"]:
+        print(remote_url)
+        return 0
+
+    if args == ["worktree", "list", "--porcelain"]:
+        print(
+            f"worktree {workspace_root}\\n"
+            f"HEAD {workspace_sha}\\n"
+            f"branch refs/heads/{workspace_branch}\\n"
+        )
+        print(
+            f"worktree {canonical_root}\\n"
+            f"HEAD {canonical_head}\\n"
+            f"branch refs/heads/{canonical_branch}\\n"
+        )
+        return 0
+
+    if args == ["fetch", "origin"]:
+        log(f"fetch:{cwd}")
+        if fetch_noise:
+            print("FAKE_FETCH_PROGRESS", file=sys.stderr)
+        return 0
+
+    if args == ["pull", "--ff-only", "origin", "main"]:
+        log(f"pull:{cwd}")
+        if pull_fails:
+            print("pull failed: non-fast-forward", file=sys.stderr)
+            return 1
+        return 0
+
+    if args[:2] == ["merge-base", "--is-ancestor"]:
+        log(f"merge-base:{cwd}:{' '.join(args[2:])}")
+        return 0 if merged_by_git else 1
+
+    raise SystemExit(f"unsupported fake git args: {args}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+""",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
+    return fake_git
+
+
+def _write_fake_gh(*, tmp_path: Path) -> Path:
+    fake_gh = tmp_path / "fake_gh.py"
+    fake_gh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    if args[:3] != ["api", "-X", "GET"]:
+        raise SystemExit(f"unsupported fake gh args: {args}")
+
+    merged = os.environ.get("FAKE_GH_MERGED", "false") == "true"
+    workspace_branch = os.environ["FAKE_GH_WORKSPACE_BRANCH"]
+    workspace_sha = os.environ["FAKE_GH_WORKSPACE_SHA"]
+    payload = []
+    if merged:
+        payload.append(
+            {
+                "merged_at": "2026-03-14T00:00:00Z",
+                "base": {"ref": "main"},
+                "head": {"ref": workspace_branch, "sha": workspace_sha},
+            }
+        )
+    print(json.dumps(payload))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    return fake_gh
+
+
+def _run_symphony_before_remove_hook(
+    *,
+    tmp_path: Path,
+    merged_by_git: bool,
+    github_merged: bool,
+    target_sha: str,
+    dry_run: bool = False,
+    workspace_branch: str = "feature/issue-811",
+    pull_fails: bool = False,
+    fetch_noise: bool = False,
+    disable_flock: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path, Path, Path]:
+    workspace_root = tmp_path / "workspace"
+    canonical_root = tmp_path / "canonical-main"
+    state_root = tmp_path / "state-root"
+    hooks_log = tmp_path / "restart-hooks.log"
+    git_log = tmp_path / "fake-git.log"
+    marker_path = state_root / "canonical_restart.last_sha"
+    restart_log = state_root / "canonical_restart.log"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    canonical_root.mkdir(parents=True, exist_ok=True)
+    fake_git = _write_fake_git(tmp_path=tmp_path)
+    fake_gh = _write_fake_gh(tmp_path=tmp_path)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "OVERNIGHT_STATE_ROOT": str(state_root),
+            "CANONICAL_RESTART_GIT_BIN": str(fake_git),
+            "CANONICAL_RESTART_GH_BIN": str(fake_gh),
+            "CANONICAL_RESTART_STOP_CMD": f"printf 'stop\\n' >> '{hooks_log}'",
+            "CANONICAL_RESTART_START_CMD": f"printf 'start\\n' >> '{hooks_log}'",
+            "FAKE_GIT_LOG_PATH": str(git_log),
+            "FAKE_GIT_WORKSPACE_ROOT": str(workspace_root),
+            "FAKE_GIT_CANONICAL_ROOT": str(canonical_root),
+            "FAKE_GIT_WORKSPACE_BRANCH": workspace_branch,
+            "FAKE_GIT_WORKSPACE_SHA": "workspace-sha-1",
+            "FAKE_GIT_TARGET_SHA": target_sha,
+            "FAKE_GIT_MERGED_BY_GIT": "true" if merged_by_git else "false",
+            "FAKE_GIT_PULL_FAILS": "true" if pull_fails else "false",
+            "FAKE_GIT_FETCH_NOISE": "true" if fetch_noise else "false",
+            "FAKE_GH_MERGED": "true" if github_merged else "false",
+            "FAKE_GH_WORKSPACE_BRANCH": workspace_branch,
+            "FAKE_GH_WORKSPACE_SHA": "workspace-sha-1",
+            "CANONICAL_RESTART_DISABLE_FLOCK": "true" if disable_flock else "false",
+        }
+    )
+
+    args = ["bash", str(SYMPHONY_BEFORE_REMOVE_CANONICAL_RESTART)]
+    if dry_run:
+        args.append("--dry-run")
+
+    completed = subprocess.run(
+        args,
+        cwd=workspace_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed, canonical_root, hooks_log, marker_path, git_log, restart_log
+
+
 def test_runtime_instance_defaults_keep_main_canonical(tmp_path: Path) -> None:
     state_root = tmp_path / "overnight"
     defaults = _resolve_runtime_defaults(state_root=state_root, branch="main")
@@ -58,6 +276,178 @@ def test_runtime_instance_defaults_keep_main_canonical(tmp_path: Path) -> None:
     assert defaults["DASHBOARD_PORT"] == "8080"
     assert defaults["TMUX_SESSION_PREFIX"] == "ouroboros_overnight"
     assert defaults["LIVE_RUNTIME_LOCK_PATH"] == str(state_root / "live_runtime.lock")
+
+
+def test_before_remove_canonical_restart_skips_unmerged_worktree(
+    tmp_path: Path,
+) -> None:
+    completed, canonical_root, hooks_log, marker_path, git_log, _ = (
+        _run_symphony_before_remove_hook(
+            tmp_path=tmp_path,
+            merged_by_git=False,
+            github_merged=False,
+            target_sha="main-sha-1",
+        )
+    )
+
+    assert completed.returncode == 0, f"{completed.stdout}\n{completed.stderr}"
+    output = f"{completed.stdout}\n{completed.stderr}"
+    assert "not merged into origin/main" in output
+    assert str(canonical_root) in output
+    assert not hooks_log.exists()
+    assert not marker_path.exists()
+    assert "pull:" not in git_log.read_text(encoding="utf-8")
+
+
+def test_before_remove_canonical_restart_uses_github_merge_signal_for_squash_merges(
+    tmp_path: Path,
+) -> None:
+    completed, _canonical_root, hooks_log, marker_path, _git_log, _ = (
+        _run_symphony_before_remove_hook(
+            tmp_path=tmp_path,
+            merged_by_git=False,
+            github_merged=True,
+            target_sha="main-sha-squash",
+        )
+    )
+
+    assert completed.returncode == 0, f"{completed.stdout}\n{completed.stderr}"
+    assert hooks_log.read_text(encoding="utf-8").splitlines() == ["stop", "start"]
+    assert marker_path.read_text(encoding="utf-8").strip() == "main-sha-squash"
+
+
+def test_before_remove_canonical_restart_skips_main_workspace_cleanup(
+    tmp_path: Path,
+) -> None:
+    completed, _canonical_root, hooks_log, marker_path, _git_log, _ = (
+        _run_symphony_before_remove_hook(
+            tmp_path=tmp_path,
+            merged_by_git=True,
+            github_merged=True,
+            target_sha="main-sha-main",
+            workspace_branch="main",
+        )
+    )
+
+    assert completed.returncode == 0, f"{completed.stdout}\n{completed.stderr}"
+    assert "skip" in completed.stdout.lower()
+    assert not hooks_log.exists()
+    assert not marker_path.exists()
+
+
+def test_before_remove_canonical_restart_restarts_canonical_main_once_per_target_sha(
+    tmp_path: Path,
+) -> None:
+    first, canonical_root, hooks_log, marker_path, git_log, _ = (
+        _run_symphony_before_remove_hook(
+            tmp_path=tmp_path,
+            merged_by_git=True,
+            github_merged=True,
+            target_sha="main-sha-1",
+        )
+    )
+
+    assert first.returncode == 0, f"{first.stdout}\n{first.stderr}"
+    assert hooks_log.read_text(encoding="utf-8").splitlines() == ["stop", "start"]
+    assert marker_path.read_text(encoding="utf-8").strip() == "main-sha-1"
+    assert f"pull:{canonical_root}" in git_log.read_text(encoding="utf-8")
+
+    second, _, _, _, _, _ = _run_symphony_before_remove_hook(
+        tmp_path=tmp_path,
+        merged_by_git=True,
+        github_merged=True,
+        target_sha="main-sha-1",
+    )
+
+    assert second.returncode == 0, f"{second.stdout}\n{second.stderr}"
+    output = f"{second.stdout}\n{second.stderr}"
+    assert "already processed" in output
+    assert hooks_log.read_text(encoding="utf-8").splitlines() == ["stop", "start"]
+    assert marker_path.read_text(encoding="utf-8").strip() == "main-sha-1"
+
+
+def test_before_remove_canonical_restart_dry_run_reports_plan_without_mutation(
+    tmp_path: Path,
+) -> None:
+    completed, canonical_root, hooks_log, marker_path, _git_log, _ = (
+        _run_symphony_before_remove_hook(
+            tmp_path=tmp_path,
+            merged_by_git=True,
+            github_merged=True,
+            target_sha="main-sha-2",
+            dry_run=True,
+        )
+    )
+
+    assert completed.returncode == 0, f"{completed.stdout}\n{completed.stderr}"
+    output = f"{completed.stdout}\n{completed.stderr}"
+    assert "dry-run" in output
+    assert str(canonical_root) in output
+    assert str(marker_path) in output
+    assert not hooks_log.exists()
+    assert not marker_path.exists()
+
+
+def test_before_remove_canonical_restart_falls_back_when_flock_missing(
+    tmp_path: Path,
+) -> None:
+    completed, _canonical_root, hooks_log, marker_path, _git_log, restart_log = (
+        _run_symphony_before_remove_hook(
+            tmp_path=tmp_path,
+            merged_by_git=True,
+            github_merged=True,
+            target_sha="main-sha-fallback-lock",
+            disable_flock=True,
+        )
+    )
+
+    assert completed.returncode == 0, f"{completed.stdout}\n{completed.stderr}"
+    assert hooks_log.read_text(encoding="utf-8").splitlines() == ["stop", "start"]
+    assert marker_path.read_text(encoding="utf-8").strip() == "main-sha-fallback-lock"
+    log_text = restart_log.read_text(encoding="utf-8")
+    assert "flock unavailable; using mkdir lock fallback" in log_text
+
+
+def test_before_remove_canonical_restart_logs_pull_failures(
+    tmp_path: Path,
+) -> None:
+    completed, _canonical_root, hooks_log, marker_path, _git_log, restart_log = (
+        _run_symphony_before_remove_hook(
+            tmp_path=tmp_path,
+            merged_by_git=True,
+            github_merged=True,
+            target_sha="main-sha-pull-fail",
+            pull_fails=True,
+        )
+    )
+
+    assert completed.returncode != 0
+    output = f"{completed.stdout}\n{completed.stderr}"
+    assert "canonical pull failed" in output
+    assert not hooks_log.exists()
+    assert not marker_path.exists()
+    log_text = restart_log.read_text(encoding="utf-8")
+    assert "pull --ff-only origin main failed" in log_text
+
+
+def test_before_remove_canonical_restart_suppresses_fetch_noise(
+    tmp_path: Path,
+) -> None:
+    completed, _canonical_root, hooks_log, marker_path, _git_log, _ = (
+        _run_symphony_before_remove_hook(
+            tmp_path=tmp_path,
+            merged_by_git=True,
+            github_merged=True,
+            target_sha="main-sha-noise",
+            fetch_noise=True,
+        )
+    )
+
+    assert completed.returncode == 0, f"{completed.stdout}\n{completed.stderr}"
+    output = f"{completed.stdout}\n{completed.stderr}"
+    assert "FAKE_FETCH_PROGRESS" not in output
+    assert hooks_log.read_text(encoding="utf-8").splitlines() == ["stop", "start"]
+    assert marker_path.read_text(encoding="utf-8").strip() == "main-sha-noise"
 
 
 def test_runtime_instance_defaults_isolate_non_main_branch(tmp_path: Path) -> None:
