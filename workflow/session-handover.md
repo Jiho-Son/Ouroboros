@@ -313,3 +313,11 @@
 - next_ticket: OOR-821
 - process_gate_checked: process_ticket=OOR-821 merged_to_feature_branch=n/a
 - risks_or_notes: Rework flow resets prior attempt by closing PR #825, removing stale workpad, and rebuilding from origin/main@c3ac2f3 with stricter Korean-policy token validation to reduce section-external false positives.
+
+### 2026-03-16 | session=codex-oor-813-rework-r3
+- branch: feature/issue-813-executable-quote-rework-v3
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-813 Rework state, issue description, human issue comments, attached PR #827/#823/#818, PR #827 review summary
+- next_ticket: OOR-813
+- process_gate_checked: process_ticket=OOR-813 merged_to_feature_branch=yes
+- risks_or_notes: Rework reset closes open PR #827 and removes stale workpad before rebuilding from origin/main@ca8fe40; this attempt keeps refactor out-of-scope while implementing explicit per-market executable-gap policy behavior/tests requested in review.

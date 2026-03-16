@@ -7932,6 +7932,80 @@ class TestHandleOverseasPendingOrders:
         assert call_kwargs["outcome"] == "resubmitted"
 
     @pytest.mark.asyncio
+    async def test_buy_pending_prefers_executable_best_ask_when_available(self) -> None:
+        """BUY retry should use executable best-ask instead of last-price multiplier."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "AAPL",
+            "odno": "ORD001-A",
+            "sll_buy_dvsn_cd": "02",
+            "nccs_qty": "3",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "200.0"}})
+        overseas_broker.get_overseas_orderbook = AsyncMock(
+            return_value={"output2": {"pask1": "201.5", "pbid1": "200.8"}}
+        )
+        overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+
+        await handle_overseas_pending_orders(overseas_broker, telegram, settings, {})
+
+        resubmit_kwargs = overseas_broker.send_overseas_order.call_args[1]
+        assert resubmit_kwargs["order_type"] == "BUY"
+        assert resubmit_kwargs["price"] == 201.5
+
+    @pytest.mark.asyncio
+    async def test_buy_pending_gap_cap_uses_market_override_and_cancels(self) -> None:
+        """BUY retry should cancel when executable ask gap exceeds market-specific cap."""
+        settings = self._make_settings("US_NASDAQ")
+        settings.EXECUTABLE_QUOTE_MAX_GAP_PCT = 5.0
+        settings.EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON = '{"US_NASDAQ": 1.0}'
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+        buy_cooldown: dict[str, float] = {}
+
+        pending_order = {
+            "pdno": "AAPL",
+            "odno": "ORD001-CAP",
+            "sll_buy_dvsn_cd": "02",
+            "nccs_qty": "3",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "200.0"}})
+        overseas_broker.get_overseas_orderbook = AsyncMock(
+            return_value={"output2": {"pask1": "204.0", "pbid1": "199.5"}}
+        )
+        overseas_broker.send_overseas_order = AsyncMock()
+
+        await handle_overseas_pending_orders(
+            overseas_broker,
+            telegram,
+            settings,
+            {},
+            buy_cooldown,
+            rollback_open_position=rollback_open_position,
+        )
+
+        overseas_broker.send_overseas_order.assert_not_called()
+        assert "NASD:AAPL" in buy_cooldown
+        rollback_open_position.assert_called_once_with(
+            market_code="US_NASDAQ",
+            exchange_code="NASD",
+            stock_code="AAPL",
+            action="BUY",
+        )
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["outcome"] == "cancelled"
+
+    @pytest.mark.asyncio
     async def test_buy_already_resubmitted_is_only_cancelled_with_cooldown(self) -> None:
         """Second unfilled BUY should only cancel and set cooldown, no further chase."""
         settings = self._make_settings("US_NASDAQ")
@@ -8597,6 +8671,82 @@ class TestHandleDomesticPendingOrders:
         assert call_kwargs["action"] == "BUY"
         assert call_kwargs["outcome"] == "resubmitted"
         assert call_kwargs["market"] == "KR"
+
+    @pytest.mark.asyncio
+    async def test_buy_pending_prefers_executable_best_ask_for_domestic(self) -> None:
+        """Domestic BUY retry should use executable best-ask instead of multiplier fallback."""
+        settings = self._make_settings()
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORD001-ASK",
+            "ord_gno_brno": "BRN01",
+            "sll_buy_dvsn_cd": "02",
+            "psbl_qty": "3",
+            "order_exchange": "KRX",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(50000.0, 0.0, 0.0))
+        broker.get_orderbook_by_market = AsyncMock(
+            return_value={"output": {"askp1": "50300", "bidp1": "49900"}}
+        )
+        broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+
+        await handle_domestic_pending_orders(broker, telegram, settings, {}, {})
+
+        resubmit_kwargs = broker.send_order.call_args[1]
+        assert resubmit_kwargs["order_type"] == "BUY"
+        assert resubmit_kwargs["price"] == 50300.0
+
+    @pytest.mark.asyncio
+    async def test_buy_pending_gap_cap_uses_market_override_for_domestic(self) -> None:
+        """Domestic BUY retry should cancel when executable ask exceeds KR market cap."""
+        settings = self._make_settings()
+        settings.EXECUTABLE_QUOTE_MAX_GAP_PCT = 5.0
+        settings.EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON = '{"KR": 0.5}'
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+        buy_cooldown: dict[str, float] = {}
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORD001-CAP",
+            "ord_gno_brno": "BRN01",
+            "sll_buy_dvsn_cd": "02",
+            "psbl_qty": "3",
+            "order_exchange": "KRX",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(50000.0, 0.0, 0.0))
+        broker.get_orderbook_by_market = AsyncMock(
+            return_value={"output": {"askp1": "51000", "bidp1": "49900"}}
+        )
+        broker.send_order = AsyncMock()
+
+        await handle_domestic_pending_orders(
+            broker,
+            telegram,
+            settings,
+            {},
+            buy_cooldown,
+            rollback_open_position=rollback_open_position,
+        )
+
+        broker.send_order.assert_not_called()
+        assert "KR:005930" in buy_cooldown
+        rollback_open_position.assert_called_once_with(
+            market_code="KR",
+            exchange_code="KRX",
+            stock_code="005930",
+            action="BUY",
+        )
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["outcome"] == "cancelled"
 
     @pytest.mark.asyncio
     async def test_buy_pending_uses_odno_when_orgn_odno_empty(self) -> None:
