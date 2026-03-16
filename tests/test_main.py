@@ -7874,13 +7874,14 @@ class TestDomesticBuyDoublePreventionTradingCycle:
 class TestHandleOverseasPendingOrders:
     """Tests for handle_overseas_pending_orders function."""
 
-    def _make_settings(self, markets: str = "US_NASDAQ,US_NYSE,US_AMEX") -> Settings:
+    def _make_settings(self, markets: str = "US_NASDAQ,US_NYSE,US_AMEX", **kwargs: Any) -> Settings:
         return Settings(
             KIS_APP_KEY="k",
             KIS_APP_SECRET="s",
             KIS_ACCOUNT_NO="12345678-01",
             GEMINI_API_KEY="g",
             ENABLED_MARKETS=markets,
+            **kwargs,
         )
 
     def _make_telegram(self) -> MagicMock:
@@ -7962,9 +7963,11 @@ class TestHandleOverseasPendingOrders:
     @pytest.mark.asyncio
     async def test_buy_pending_gap_cap_uses_market_override_and_cancels(self) -> None:
         """BUY retry should cancel when executable ask gap exceeds market-specific cap."""
-        settings = self._make_settings("US_NASDAQ")
-        settings.EXECUTABLE_QUOTE_MAX_GAP_PCT = 5.0
-        settings.EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON = '{"US_NASDAQ": 1.0}'
+        settings = self._make_settings(
+            "US_NASDAQ",
+            EXECUTABLE_QUOTE_MAX_GAP_PCT=5.0,
+            EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON='{"US_NASDAQ": 1.0}',
+        )
         telegram = self._make_telegram()
         rollback_open_position = MagicMock()
         buy_cooldown: dict[str, float] = {}
@@ -8611,13 +8614,14 @@ class TestHandleOverseasPendingOrders:
 class TestHandleDomesticPendingOrders:
     """Tests for handle_domestic_pending_orders function."""
 
-    def _make_settings(self) -> Settings:
+    def _make_settings(self, **kwargs: Any) -> Settings:
         return Settings(
             KIS_APP_KEY="k",
             KIS_APP_SECRET="s",
             KIS_ACCOUNT_NO="12345678-01",
             GEMINI_API_KEY="g",
             ENABLED_MARKETS="KR",
+            **kwargs,
         )
 
     def _make_telegram(self) -> MagicMock:
@@ -8706,9 +8710,10 @@ class TestHandleDomesticPendingOrders:
     @pytest.mark.asyncio
     async def test_buy_pending_gap_cap_uses_market_override_for_domestic(self) -> None:
         """Domestic BUY gap-cap should apply with market override regardless of session branch."""
-        settings = self._make_settings()
-        settings.EXECUTABLE_QUOTE_MAX_GAP_PCT = 5.0
-        settings.EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON = '{"KR": 0.5}'
+        settings = self._make_settings(
+            EXECUTABLE_QUOTE_MAX_GAP_PCT=5.0,
+            EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON='{"KR": 0.5}',
+        )
         telegram = self._make_telegram()
         rollback_open_position = MagicMock()
         buy_cooldown: dict[str, float] = {}

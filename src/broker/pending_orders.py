@@ -485,15 +485,15 @@ async def handle_domestic_pending_orders(
                         )
                         new_price, _, gap_rejected = _resolve_retry_price_from_executable_quote(
                             order_type="BUY",
-                        stock_code=stock_code,
-                        market_code="KR",
-                        last_price=float(last_price),
-                        fallback_price=fallback_price,
-                        executable_quote=executable_ask,
-                        settings=settings,
-                        # Intentional policy: BUY retries apply gap-cap in all sessions.
-                        enforce_gap_cap=True,
-                    )
+                            stock_code=stock_code,
+                            market_code="KR",
+                            last_price=float(last_price),
+                            fallback_price=fallback_price,
+                            executable_quote=executable_ask,
+                            settings=settings,
+                            # Intentional policy: BUY retries apply gap-cap in all sessions.
+                            enforce_gap_cap=True,
+                        )
                         if gap_rejected:
                             if buy_cooldown is not None:
                                 buy_cooldown[key] = now + _BUY_COOLDOWN_SECONDS
