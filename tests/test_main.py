@@ -188,6 +188,38 @@ def test_resolve_terminal_sell_order_price_overseas_regular_session() -> None:
     assert mode == "market"
 
 
+def test_resolve_terminal_sell_order_price_overseas_low_liquidity_normal_price() -> None:
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+    market.exchange_code = "NASD"
+    market.is_domestic = False
+
+    with patch("src.main.get_session_info", return_value=MagicMock(is_low_liquidity=True)):
+        price, mode = main_module._resolve_terminal_sell_order_price(
+            market=market,
+            current_price=250.0,
+        )
+
+    assert price == pytest.approx(round(250.0 * 0.996, 2))
+    assert mode == "low_liquidity_limit"
+
+
+def test_resolve_terminal_sell_order_price_overseas_low_liquidity_penny_stock() -> None:
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+    market.exchange_code = "NASD"
+    market.is_domestic = False
+
+    with patch("src.main.get_session_info", return_value=MagicMock(is_low_liquidity=True)):
+        price, mode = main_module._resolve_terminal_sell_order_price(
+            market=market,
+            current_price=0.5,
+        )
+
+    assert price == pytest.approx(round(0.5 * 0.996, 4))
+    assert mode == "low_liquidity_limit"
+
+
 @pytest.mark.asyncio
 async def test_sync_realtime_hard_stop_monitor_registers_hold_position() -> None:
     monitor = RealtimeHardStopMonitor()
@@ -9207,6 +9239,84 @@ class TestDomesticLimitOrderPrice:
                 "src.main.get_session_info",
                 return_value=MagicMock(is_low_liquidity=False, session_id="KRX_REG"),
             ),
+        ):
+            await trading_cycle(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=risk,
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                market=market,
+                stock_code=stock_code,
+                scan_candidates={},
+                sell_resubmit_counts={"KR:005930": 1},
+            )
+
+        broker.send_order.assert_called_once()
+        call_kwargs = broker.send_order.call_args[1]
+        assert call_kwargs["order_type"] == "SELL"
+        assert call_kwargs["price"] == 0
+
+    @pytest.mark.asyncio
+    async def test_trading_cycle_terminal_sell_passes_order_policy_in_regular_session(
+        self,
+    ) -> None:
+        """Terminal market order (price=0) must pass validate_order_policy in a regular session.
+
+        validate_order_policy is NOT mocked here — this confirms price=0 is allowed when
+        both src.main and src.core.order_policy agree the session is non-low-liquidity.
+        """
+        from src.strategy.models import ScenarioAction
+
+        current_price = 70000.0
+        stock_code = "005930"
+        balance_data = {
+            "output1": [
+                {"pdno": stock_code, "hldg_qty": "5", "prpr": "70000", "evlu_amt": "350000"}
+            ],
+            "output2": [
+                {
+                    "tot_evlu_amt": "350000",
+                    "dnca_tot_amt": "0",
+                    "pchs_amt_smtl_amt": "350000",
+                }
+            ],
+        }
+        broker = self._make_broker(current_price, balance_data)
+        market = self._make_market()
+
+        sell_match = ScenarioMatch(
+            stock_code=stock_code,
+            matched_scenario=None,
+            action=ScenarioAction.SELL,
+            confidence=85,
+            rationale="test",
+        )
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=sell_match)
+
+        risk = MagicMock()
+        risk.validate_order = MagicMock()
+        risk.check_circuit_breaker = MagicMock()
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        regular_session = MagicMock(is_low_liquidity=False, session_id="KRX_REG")
+        with (
+            patch("src.main.log_trade"),
+            patch("src.main.get_session_info", return_value=regular_session),
+            patch("src.core.order_policy.get_session_info", return_value=regular_session),
         ):
             await trading_cycle(
                 broker=broker,

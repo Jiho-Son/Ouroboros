@@ -1731,7 +1731,10 @@ async def _execute_trading_cycle_action(
         if decision.action == "BUY":
             order_price = kr_round_down(current_price * 1.002)
         elif terminal_sell_mode is not None:
-            assert terminal_order_price is not None
+            if terminal_order_price is None:
+                raise RuntimeError(  # pragma: no cover
+                    "terminal_order_price must be set when terminal_sell_mode is set"
+                )
             order_price = terminal_order_price
         else:
             order_price = kr_round_down(current_price * 0.998)
@@ -1784,7 +1787,10 @@ async def _execute_trading_cycle_action(
         if decision.action == "BUY":
             overseas_price = round(current_price * 1.002, _price_decimals)
         elif terminal_sell_mode is not None:
-            assert terminal_order_price is not None
+            if terminal_order_price is None:
+                raise RuntimeError(  # pragma: no cover
+                    "terminal_order_price must be set when terminal_sell_mode is set"
+                )
             overseas_price = terminal_order_price
         else:
             overseas_price = round(current_price * 0.998, _price_decimals)
@@ -1867,7 +1873,7 @@ async def _execute_trading_cycle_action(
 
     execution_result["order_succeeded"] = order_succeeded
     if order_succeeded:
-        if sell_resubmit_counts is not None and decision.action in {"BUY", "SELL"}:
+        if sell_resubmit_counts is not None:
             sell_resubmit_counts.pop(
                 _pending_sell_resubmit_key(market=market, stock_code=stock_code),
                 None,
