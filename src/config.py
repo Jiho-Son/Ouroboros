@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from functools import cached_property
+
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
 
@@ -44,6 +47,8 @@ class Settings(BaseSettings):
     CONFIDENCE_THRESHOLD: int = Field(default=80, ge=0, le=100)
     BUY_CHASE_MIN_INTRADAY_GAIN_PCT: float = Field(default=4.0, ge=0.0, le=100.0)
     BUY_CHASE_MAX_PULLBACK_FROM_HIGH_PCT: float = Field(default=0.5, ge=0.0, le=20.0)
+    EXECUTABLE_QUOTE_MAX_GAP_PCT: float = Field(default=2.0, ge=0.0, le=100.0)
+    EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON: str = "{}"
 
     # Smart Scanner Configuration
     RSI_OVERSOLD_THRESHOLD: int = Field(default=30, ge=0, le=50)
@@ -154,7 +159,35 @@ class Settings(BaseSettings):
     def _validate_selected_llm_provider(self) -> Settings:
         if self.LLM_PROVIDER == "gemini" and not self.GEMINI_API_KEY:
             raise ValueError("GEMINI_API_KEY is required when LLM_PROVIDER=gemini")
+        self._parse_executable_quote_gap_caps_by_market()
         return self
+
+    def _parse_executable_quote_gap_caps_by_market(self) -> dict[str, float]:
+        try:
+            parsed = json.loads(self.EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON or "{}")
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON must be valid JSON object"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON must be a JSON object")
+        normalized: dict[str, float] = {}
+        for raw_market, raw_value in parsed.items():
+            market_code = str(raw_market).strip().upper()
+            if not market_code:
+                continue
+            try:
+                cap_pct = float(raw_value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    "EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON values must be numeric"
+                ) from exc
+            if cap_pct < 0.0 or cap_pct > 100.0:
+                raise ValueError(
+                    "EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON values must be within [0, 100]"
+                )
+            normalized[market_code] = cap_pct
+        return normalized
 
     @property
     def account_number(self) -> str:
@@ -179,6 +212,11 @@ class Settings(BaseSettings):
 
         raw = [m.strip() for m in self.ENABLED_MARKETS.split(",") if m.strip()]
         return expand_market_codes(raw)
+
+    @cached_property
+    def executable_quote_gap_caps_by_market(self) -> dict[str, float]:
+        """Market-specific executable quote gap caps (percent)."""
+        return self._parse_executable_quote_gap_caps_by_market()
 
     @property
     def llm_model(self) -> str:
