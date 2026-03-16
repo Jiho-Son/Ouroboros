@@ -155,6 +155,57 @@ class OverseasBroker:
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching overseas price: {exc}") from exc
 
+    @staticmethod
+    def _extract_orderbook_top_levels(payload: dict[str, Any]) -> tuple[float | None, float | None]:
+        """Extract top ask/bid from overseas orderbook payload variants."""
+        output = payload.get("output2") or payload.get("output") or payload
+        if isinstance(output, list):
+            output = output[0] if output else {}
+        if not isinstance(output, dict):
+            return None, None
+
+        def _float(*keys: str) -> float | None:
+            for key in keys:
+                raw = output.get(key)
+                if raw in (None, ""):
+                    continue
+                try:
+                    value = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                if value > 0:
+                    return value
+            return None
+
+        ask = _float("pask1", "askp1", "ask_price_1")
+        bid = _float("pbid1", "bidp1", "bid_price_1")
+        return ask, bid
+
+    async def get_overseas_orderbook(self, exchange_code: str, stock_code: str) -> dict[str, Any]:
+        """Fetch overseas best bid/ask quote snapshot."""
+        await self._broker._rate_limiter.acquire()
+        session = self._broker._get_session()
+
+        headers = await self._broker._auth_headers("HHDFS76200100")
+        price_excd = _PRICE_EXCHANGE_MAP.get(exchange_code, exchange_code)
+        params = {
+            "AUTH": "",
+            "EXCD": price_excd,
+            "SYMB": stock_code,
+        }
+        url = f"{self._broker._base_url}/uapi/overseas-price/v1/quotations/inquire-asking-price"
+
+        try:
+            async with session.get(url, headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise ConnectionError(
+                        f"get_overseas_orderbook failed ({resp.status}): {text}"
+                    )
+                return await resp.json()
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise ConnectionError(f"Network error fetching overseas orderbook: {exc}") from exc
+
     async def fetch_overseas_rankings(
         self,
         exchange_code: str,
