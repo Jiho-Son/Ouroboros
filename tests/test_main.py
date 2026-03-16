@@ -156,6 +156,38 @@ def test_resolve_terminal_sell_order_price_uses_limit_in_low_liquidity_session()
     assert mode == "low_liquidity_limit"
 
 
+def test_resolve_terminal_sell_order_price_uses_market_order_in_regular_session() -> None:
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    with patch("src.main.get_session_info", return_value=MagicMock(is_low_liquidity=False)):
+        price, mode = main_module._resolve_terminal_sell_order_price(
+            market=market,
+            current_price=100.0,
+        )
+
+    assert price == 0.0
+    assert mode == "market"
+
+
+def test_resolve_terminal_sell_order_price_overseas_regular_session() -> None:
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+    market.exchange_code = "NASD"
+    market.is_domestic = False
+
+    with patch("src.main.get_session_info", return_value=MagicMock(is_low_liquidity=False)):
+        price, mode = main_module._resolve_terminal_sell_order_price(
+            market=market,
+            current_price=250.0,
+        )
+
+    assert price == 0.0
+    assert mode == "market"
+
+
 @pytest.mark.asyncio
 async def test_sync_realtime_hard_stop_monitor_registers_hold_position() -> None:
     monitor = RealtimeHardStopMonitor()
@@ -9171,6 +9203,10 @@ class TestDomesticLimitOrderPrice:
         with (
             patch("src.main.log_trade"),
             patch("src.main.validate_order_policy"),
+            patch(
+                "src.main.get_session_info",
+                return_value=MagicMock(is_low_liquidity=False, session_id="KRX_REG"),
+            ),
         ):
             await trading_cycle(
                 broker=broker,
@@ -9487,7 +9523,13 @@ async def test_trading_cycle_uses_market_sell_overseas_when_pending_retry_budget
     telegram.notify_circuit_breaker = AsyncMock()
     telegram.notify_scenario_matched = AsyncMock()
 
-    with patch("src.main.validate_order_policy"):
+    with (
+        patch("src.main.validate_order_policy"),
+        patch(
+            "src.main.get_session_info",
+            return_value=MagicMock(is_low_liquidity=False, session_id="US_REG"),
+        ),
+    ):
         await trading_cycle(
             broker=broker,
             overseas_broker=overseas_broker,
