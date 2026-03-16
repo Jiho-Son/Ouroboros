@@ -313,3 +313,11 @@
 - next_ticket: OOR-821
 - process_gate_checked: process_ticket=OOR-821 merged_to_feature_branch=n/a
 - risks_or_notes: Rework flow resets prior attempt by closing PR #825, removing stale workpad, and rebuilding from origin/main@c3ac2f3 with stricter Korean-policy token validation to reduce section-external false positives.
+
+### 2026-03-16 | session=codex-oor-825-start
+- branch: feature/issue-825-sell-unfilled-loop
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-825 Todo state, issue description, no active workpad, no existing branch PR
+- next_ticket: OOR-825
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: main@e1575a8 이후 매도 미체결 반복이 계속된다는 보고가 있어 pending-order retry 한도와 메인 SELL 실행 경로의 상호작용을 재현부터 확인한다.

@@ -147,6 +147,11 @@ def _log_realtime_hard_stop_monitor_start(settings: Settings) -> None:
     )
 
 
+def _pending_sell_resubmit_key(*, market: MarketInfo, stock_code: str) -> str:
+    market_key = market.code if market.is_domestic else market.exchange_code
+    return f"{str(market_key).strip().upper()}:{stock_code.strip().upper()}"
+
+
 def _ensure_runtime_mode_allowed(mode: str) -> None:
     """Reject runtime execution modes that are banned by policy."""
     if mode == "paper":
@@ -1535,6 +1540,7 @@ async def _execute_trading_cycle_action(
     buy_cooldown: dict[str, float] | None = None,
     realtime_hard_stop_monitor: RealtimeHardStopMonitor | None = None,
     realtime_hard_stop_client: KISWebSocketClient | None = None,
+    sell_resubmit_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     decision = decision_data["decision"]
     match = decision_data["match"]
@@ -1631,6 +1637,18 @@ async def _execute_trading_cycle_action(
                 stock_code,
                 market.name,
                 remaining,
+            )
+            execution_result["should_return"] = True
+            return execution_result
+
+    if decision.action == "SELL" and sell_resubmit_counts is not None:
+        exhausted_sell_key = _pending_sell_resubmit_key(market=market, stock_code=stock_code)
+        if sell_resubmit_counts.get(exhausted_sell_key, 0) >= 1:
+            logger.warning(
+                "Skip SELL %s (%s): pending retry budget exhausted key=%s",
+                stock_code,
+                market.name,
+                exhausted_sell_key,
             )
             execution_result["should_return"] = True
             return execution_result
@@ -1809,6 +1827,12 @@ async def _execute_trading_cycle_action(
                 )
     logger.info("Order result: %s", result.get("msg1", "OK"))
 
+    if order_succeeded and decision.action == "BUY" and sell_resubmit_counts is not None:
+        sell_resubmit_counts.pop(
+            _pending_sell_resubmit_key(market=market, stock_code=stock_code),
+            None,
+        )
+
     execution_result["order_succeeded"] = order_succeeded
     if order_succeeded:
         try:
@@ -1951,6 +1975,7 @@ async def trading_cycle(
     buy_cooldown: dict[str, float] | None = None,
     realtime_hard_stop_monitor: RealtimeHardStopMonitor | None = None,
     realtime_hard_stop_client: KISWebSocketClient | None = None,
+    sell_resubmit_counts: dict[str, int] | None = None,
 ) -> None:
     """Execute one trading cycle for a single stock."""
     cycle_start_time = asyncio.get_event_loop().time()
@@ -2001,6 +2026,7 @@ async def trading_cycle(
         buy_cooldown=buy_cooldown,
         realtime_hard_stop_monitor=realtime_hard_stop_monitor,
         realtime_hard_stop_client=realtime_hard_stop_client,
+        sell_resubmit_counts=sell_resubmit_counts,
     )
     if execution_result["should_return"]:
         return
@@ -4329,6 +4355,7 @@ async def run(settings: Settings) -> None:
                                     buy_cooldown,
                                     realtime_hard_stop_monitor,
                                     realtime_hard_stop_client,
+                                    sell_resubmit_counts=sell_resubmit_counts,
                                 )
                                 break
                             except CircuitBreakerTripped as exc:

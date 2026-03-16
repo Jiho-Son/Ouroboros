@@ -9109,6 +9109,114 @@ class TestDomesticLimitOrderPrice:
         assert call_kwargs["price"] == expected_price
         assert call_kwargs["order_type"] == "SELL"
 
+    @pytest.mark.asyncio
+    async def test_trading_cycle_skips_sell_when_pending_retry_budget_is_exhausted(
+        self,
+    ) -> None:
+        """Cancel-only restored positions must not immediately emit a fresh SELL again."""
+        current_price = 70000.0
+        stock_code = "005930"
+        balance_data = {
+            "output1": [
+                {"pdno": stock_code, "hldg_qty": "5", "prpr": "70000", "evlu_amt": "350000"}
+            ],
+            "output2": [
+                {
+                    "tot_evlu_amt": "350000",
+                    "dnca_tot_amt": "0",
+                    "pchs_amt_smtl_amt": "350000",
+                }
+            ],
+        }
+        broker = self._make_broker(current_price, balance_data)
+        market = self._make_market()
+        risk = MagicMock()
+        risk.validate_order = MagicMock()
+        risk.check_circuit_breaker = MagicMock()
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=MagicMock(
+                    evaluate=MagicMock(return_value=_make_sell_match(stock_code))
+                ),
+                playbook=_make_playbook(),
+                risk=risk,
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                market=market,
+                stock_code=stock_code,
+                scan_candidates={},
+                sell_resubmit_counts={"KR:005930": 1},
+            )
+
+        broker.send_order.assert_not_called()
+        risk.check_circuit_breaker.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_trading_cycle_buy_clears_stale_sell_retry_budget(self) -> None:
+        """A new BUY position lifecycle should clear stale SELL exhaustion state."""
+        current_price = 70000.0
+        stock_code = "005930"
+        balance_data = {
+            "output2": [
+                {
+                    "tot_evlu_amt": "10000000",
+                    "dnca_tot_amt": "5000000",
+                    "pchs_amt_smtl_amt": "5000000",
+                }
+            ]
+        }
+        broker = self._make_broker(current_price, balance_data)
+        market = self._make_market()
+        sell_resubmit_counts = {"KR:005930": 1}
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=MagicMock(
+                    evaluate=MagicMock(return_value=_make_buy_match(stock_code))
+                ),
+                playbook=_make_playbook(),
+                risk=MagicMock(
+                    validate_order=MagicMock(),
+                    check_circuit_breaker=MagicMock(),
+                ),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                market=market,
+                stock_code=stock_code,
+                scan_candidates={},
+                sell_resubmit_counts=sell_resubmit_counts,
+            )
+
+        broker.send_order.assert_called_once()
+        assert "KR:005930" not in sell_resubmit_counts
+
 
 # ---------------------------------------------------------------------------
 # Ghost position — overseas SELL "잔고내역이 없습니다" handling
@@ -9298,6 +9406,69 @@ class TestOverseasGhostPositionClose:
             and "[ghost-close]" in (c.kwargs.get("rationale") or "")
         ]
         assert not ghost_close_calls, "Ghost-close must NOT be triggered for non-잔고없음 errors"
+
+
+@pytest.mark.asyncio
+async def test_trading_cycle_skips_overseas_sell_when_pending_retry_budget_is_exhausted(
+) -> None:
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    broker = MagicMock()
+    broker.get_balance = AsyncMock(return_value={"output1": [], "output2": [{}]})
+
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_price = AsyncMock(
+        return_value={"output": {"last": "250.0", "rate": "0.0"}}
+    )
+    overseas_broker.get_overseas_balance = AsyncMock(
+        return_value={
+            "output1": [{"ovrs_pdno": "AAPL", "ord_psbl_qty": "5", "ovrs_cblc_qty": "5"}],
+            "output2": [{"frcr_evlu_tota": "100000", "frcr_buy_amt_smtl": "0"}],
+        }
+    )
+    overseas_broker.get_overseas_buying_power = AsyncMock(
+        return_value={"output": {"ovrs_ord_psbl_amt": "0"}}
+    )
+    overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "NASDAQ"
+    market.code = "US_NASDAQ"
+    market.exchange_code = "NASD"
+    market.is_domestic = False
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    await trading_cycle(
+        broker=broker,
+        overseas_broker=overseas_broker,
+        scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_sell_match("AAPL"))),
+        playbook=_make_playbook("US_NASDAQ"),
+        risk=MagicMock(validate_order=MagicMock(), check_circuit_breaker=MagicMock()),
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        context_store=MagicMock(
+            get_latest_timeframe=MagicMock(return_value=None),
+            set_context=MagicMock(),
+        ),
+        criticality_assessor=MagicMock(
+            assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+            get_timeout=MagicMock(return_value=5.0),
+        ),
+        telegram=telegram,
+        market=market,
+        stock_code="AAPL",
+        scan_candidates={},
+        settings=_make_settings(MODE="paper", PAPER_OVERSEAS_CASH=50000.0),
+        sell_resubmit_counts={"NASD:AAPL": 1},
+    )
+
+    overseas_broker.send_overseas_order.assert_not_called()
 
 
 @pytest.mark.asyncio
