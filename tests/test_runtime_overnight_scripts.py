@@ -7,8 +7,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+WORKFLOW_TEMPLATE = REPO_ROOT / "WORKFLOW.md"
 RUN_OVERNIGHT = REPO_ROOT / "scripts" / "run_overnight.sh"
 RUNTIME_MONITOR = REPO_ROOT / "scripts" / "runtime_verify_monitor.sh"
 RUNTIME_INSTANCE_ENV = REPO_ROOT / "scripts" / "runtime_instance_env.sh"
@@ -52,6 +54,14 @@ def _resolve_runtime_defaults(*, state_root: Path, branch: str) -> dict[str, str
     return {key: value for key, value in pairs}
 
 
+def _workflow_before_remove_command() -> str:
+    _, front_matter, _ = WORKFLOW_TEMPLATE.read_text(encoding="utf-8").split("---", 2)
+    workflow = yaml.safe_load(front_matter)
+    command = workflow["hooks"]["before_remove"]
+    assert isinstance(command, str) and command.strip()
+    return command.strip()
+
+
 def _write_fake_git(*, tmp_path: Path) -> Path:
     fake_git = tmp_path / "fake_git.py"
     fake_git.write_text(
@@ -69,6 +79,10 @@ def log(message: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(message + "\\n")
+
+
+def is_under(root: Path, candidate: Path) -> bool:
+    return candidate == root or root in candidate.parents
 
 
 def parse(argv: list[str]) -> tuple[Path, list[str]]:
@@ -104,22 +118,31 @@ def main() -> int:
     fetch_noise = os.environ.get("FAKE_GIT_FETCH_NOISE", "false") == "true"
 
     if args == ["branch", "--show-current"]:
-        if cwd == workspace_root:
+        if is_under(workspace_root, cwd):
             print(workspace_branch)
             return 0
-        if cwd == canonical_root:
+        if is_under(canonical_root, cwd):
             print(canonical_branch)
             return 0
         raise SystemExit(f"unexpected cwd for branch lookup: {cwd}")
 
     if args == ["rev-parse", "HEAD"]:
-        if cwd == workspace_root:
+        if is_under(workspace_root, cwd):
             print(workspace_sha)
             return 0
-        if cwd == canonical_root:
+        if is_under(canonical_root, cwd):
             print(canonical_head)
             return 0
         raise SystemExit(f"unexpected cwd for HEAD lookup: {cwd}")
+
+    if args == ["rev-parse", "--show-toplevel"]:
+        if is_under(workspace_root, cwd):
+            print(workspace_root)
+            return 0
+        if is_under(canonical_root, cwd):
+            print(canonical_root)
+            return 0
+        raise SystemExit(f"unexpected cwd for toplevel lookup: {cwd}")
 
     if args == ["rev-parse", "origin/main"]:
         print(target_sha)
@@ -235,6 +258,8 @@ def _run_symphony_before_remove_hook(
     lock_wait_seconds: int | None = None,
     include_bare_entry: bool = False,
     emit_stray_main_branch_after_bare: bool = False,
+    invocation_mode: str = "script",
+    cwd_relative: str = "",
     timeout_sec: float = 10.0,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path, Path, Path]:
     workspace_root = tmp_path / "workspace"
@@ -246,12 +271,31 @@ def _run_symphony_before_remove_hook(
     marker_path = state_root / "canonical_restart.last_sha"
     restart_log = state_root / "canonical_restart.log"
     workspace_root.mkdir(parents=True, exist_ok=True)
+    invoke_cwd = workspace_root / cwd_relative if cwd_relative else workspace_root
+    invoke_cwd.mkdir(parents=True, exist_ok=True)
+    workspace_scripts = workspace_root / "scripts"
+    workspace_scripts.mkdir(parents=True, exist_ok=True)
+    workflow_hook_script = workspace_scripts / "symphony_before_remove_canonical_restart.sh"
+    workflow_hook_script.write_text(
+        (
+            "#!/usr/bin/env bash\n"
+            f"exec bash '{SYMPHONY_BEFORE_REMOVE_CANONICAL_RESTART}' \"$@\"\n"
+        ),
+        encoding="utf-8",
+    )
+    workflow_hook_script.chmod(0o755)
     canonical_root.mkdir(parents=True, exist_ok=True)
     bare_root.mkdir(parents=True, exist_ok=True)
     if precreate_lock_dir:
         (state_root / "canonical_restart.lock.d").mkdir(parents=True, exist_ok=True)
     fake_git = _write_fake_git(tmp_path=tmp_path)
     fake_gh = _write_fake_gh(tmp_path=tmp_path)
+    shim_git = tmp_path / "git"
+    shim_git.write_text(
+        f"#!/usr/bin/env bash\nexec '{fake_git}' \"$@\"\n",
+        encoding="utf-8",
+    )
+    shim_git.chmod(0o755)
 
     start_cmd = (
         "bash -c 'exit 17'"
@@ -284,18 +328,24 @@ def _run_symphony_before_remove_hook(
             "FAKE_GH_WORKSPACE_BRANCH": workspace_branch,
             "FAKE_GH_WORKSPACE_SHA": "workspace-sha-1",
             "CANONICAL_RESTART_DISABLE_FLOCK": "true" if disable_flock else "false",
+            "PATH": f"{tmp_path}:{env.get('PATH', '')}",
         }
     )
     if lock_wait_seconds is not None:
         env["CANONICAL_RESTART_LOCK_WAIT_SECONDS"] = str(lock_wait_seconds)
 
-    args = ["bash", str(SYMPHONY_BEFORE_REMOVE_CANONICAL_RESTART)]
-    if dry_run:
-        args.append("--dry-run")
+    if invocation_mode == "workflow":
+        if dry_run:
+            raise ValueError("workflow invocation does not support dry_run in this helper")
+        args = ["bash", "-lc", _workflow_before_remove_command()]
+    else:
+        args = ["bash", str(SYMPHONY_BEFORE_REMOVE_CANONICAL_RESTART)]
+        if dry_run:
+            args.append("--dry-run")
 
     completed = subprocess.run(
         args,
-        cwd=workspace_root,
+        cwd=invoke_cwd,
         env=env,
         capture_output=True,
         text=True,
@@ -335,6 +385,50 @@ def test_before_remove_canonical_restart_skips_unmerged_worktree(
     assert not hooks_log.exists()
     assert not marker_path.exists()
     assert "pull:" not in git_log.read_text(encoding="utf-8")
+
+
+def test_workflow_before_remove_hook_resolves_script_from_nested_worktree_dir(
+    tmp_path: Path,
+) -> None:
+    completed, _canonical_root, hooks_log, marker_path, _git_log, _restart_log = (
+        _run_symphony_before_remove_hook(
+            tmp_path=tmp_path,
+            merged_by_git=True,
+            github_merged=True,
+            target_sha="main-sha-workflow-hook",
+            invocation_mode="workflow",
+            cwd_relative="nested/context",
+        )
+    )
+
+    assert completed.returncode == 0, f"{completed.stdout}\n{completed.stderr}"
+    assert hooks_log.read_text(encoding="utf-8").splitlines() == ["stop", "start"]
+    assert marker_path.read_text(encoding="utf-8").strip() == "main-sha-workflow-hook"
+
+
+def test_before_remove_canonical_restart_logs_invocation_and_skip_reason(
+    tmp_path: Path,
+) -> None:
+    completed, canonical_root, hooks_log, marker_path, git_log, restart_log = (
+        _run_symphony_before_remove_hook(
+            tmp_path=tmp_path,
+            merged_by_git=False,
+            github_merged=False,
+            target_sha="main-sha-skip-log",
+        )
+    )
+
+    assert completed.returncode == 0, f"{completed.stdout}\n{completed.stderr}"
+    output = f"{completed.stdout}\n{completed.stderr}"
+    assert "not merged into origin/main" in output
+    assert str(canonical_root) in output
+    assert not hooks_log.exists()
+    assert not marker_path.exists()
+    assert "pull:" not in git_log.read_text(encoding="utf-8")
+    log_text = restart_log.read_text(encoding="utf-8")
+    assert "hook invoked" in log_text
+    assert "workspace_branch=feature/issue-811" in log_text
+    assert "not merged into origin/main" in log_text
 
 
 def test_before_remove_canonical_restart_uses_github_merge_signal_for_squash_merges(

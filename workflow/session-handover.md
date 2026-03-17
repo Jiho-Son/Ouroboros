@@ -321,3 +321,11 @@
 - next_ticket: OOR-825
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: `origin/main@e1575a8` 기준 새 브랜치에서 retry exhausted SELL state를 `trading_cycle` 로 전달해 terminal exit로 격상했다. `ruff`, `validate_docs_sync`, targeted regression, full `pytest --cov` 를 통과했다.
+
+### 2026-03-17 | session=codex-oor-826-start
+- branch: feature/issue-826-main-merge-restart-debug
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-826 Todo state, issue description, no existing workpad comment, no attachments
+- next_ticket: OOR-826
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: `origin/main@35e2cae` 기준 새 브랜치에서 main merge 후 restart hook 미동작을 재현하고 권한/훅/로그 경로를 우선 점검한다.
