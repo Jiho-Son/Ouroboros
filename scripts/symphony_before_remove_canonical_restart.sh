@@ -198,32 +198,6 @@ if [ -z "$CANONICAL_ROOT" ]; then
     exit 1
 fi
 
-canonical_branch="$(run_git -C "$CANONICAL_ROOT" branch --show-current)"
-if [ "$canonical_branch" != "main" ]; then
-    echo "canonical restart requires a main checkout (resolved branch=$canonical_branch, root=$CANONICAL_ROOT)" >&2
-    exit 1
-fi
-
-REMOTE_URL="$(run_git -C "$CANONICAL_ROOT" remote get-url origin 2>/dev/null || true)"
-REPO_SLUG="$(github_repo_slug_from_remote "$REMOTE_URL" || true)"
-
-fetch_output=""
-if ! fetch_output="$(run_git -C "$CANONICAL_ROOT" fetch origin 2>&1)"; then
-    echo "canonical fetch failed for root=$CANONICAL_ROOT: $fetch_output" >&2
-    exit 1
-fi
-
-TARGET_SHA="$(run_git -C "$CANONICAL_ROOT" rev-parse origin/main)"
-
-if ! run_git -C "$CANONICAL_ROOT" merge-base --is-ancestor "$WORKSPACE_SHA" "$TARGET_SHA"; then
-    if github_confirms_merge "$REPO_SLUG" "$workspace_branch" "$WORKSPACE_SHA"; then
-        announce "github merge fallback matched workspace_branch=$workspace_branch sha=$WORKSPACE_SHA target_sha=$TARGET_SHA canonical_root=$CANONICAL_ROOT"
-    else
-        announce "workspace branch=$workspace_branch sha=$WORKSPACE_SHA is not merged into origin/main target_sha=$TARGET_SHA canonical_root=$CANONICAL_ROOT"
-        exit 0
-    fi
-fi
-
 STATE_ROOT="$(resolve_state_root "$CANONICAL_ROOT")"
 MARKER_FILE="${CANONICAL_RESTART_MARKER_FILE:-$STATE_ROOT/canonical_restart.last_sha}"
 LOG_FILE="${CANONICAL_RESTART_LOG_FILE:-$STATE_ROOT/canonical_restart.log}"
@@ -232,24 +206,59 @@ LOCK_DIR="${LOCK_FILE}.d"
 STOP_CMD="${CANONICAL_RESTART_STOP_CMD:-env RUNTIME_REPO_ROOT=\"$CANONICAL_ROOT\" RUNTIME_BRANCH_NAME=main bash \"$CANONICAL_ROOT/scripts/stop_overnight.sh\"}"
 START_CMD="${CANONICAL_RESTART_START_CMD:-env RUNTIME_REPO_ROOT=\"$CANONICAL_ROOT\" RUNTIME_BRANCH_NAME=main TMUX_ATTACH=false bash \"$CANONICAL_ROOT/scripts/run_overnight.sh\"}"
 
+log() {
+    local timestamp=""
+    timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '%s %s\n' "$timestamp" "$1" >> "$LOG_FILE"
+}
+
+if [ "$DRY_RUN" != "true" ]; then
+    mkdir -p "$STATE_ROOT"
+    log "[INFO] hook invoked cwd=$(pwd) workspace_branch=$workspace_branch workspace_sha=$WORKSPACE_SHA canonical_root=$CANONICAL_ROOT"
+fi
+
+canonical_branch="$(run_git -C "$CANONICAL_ROOT" branch --show-current)"
+if [ "$canonical_branch" != "main" ]; then
+    if [ "$DRY_RUN" != "true" ]; then
+        log "[ERROR] canonical restart requires main checkout resolved_branch=$canonical_branch root=$CANONICAL_ROOT"
+    fi
+    echo "canonical restart requires a main checkout (resolved branch=$canonical_branch, root=$CANONICAL_ROOT)" >&2
+    exit 1
+fi
+
+REMOTE_URL="$(run_git -C "$CANONICAL_ROOT" remote get-url origin 2>/dev/null || true)"
+REPO_SLUG="$(github_repo_slug_from_remote "$REMOTE_URL" || true)"
+
 if [ "$DRY_RUN" = "true" ]; then
     announce "dry-run: workspace_branch=$workspace_branch"
     announce "dry-run: workspace_sha=$WORKSPACE_SHA"
     announce "dry-run: canonical_root=$CANONICAL_ROOT"
-    announce "dry-run: target_sha=$TARGET_SHA"
+    announce "dry-run: canonical_branch=$canonical_branch"
     announce "dry-run: marker_file=$MARKER_FILE"
     announce "dry-run: stop_cmd=$STOP_CMD"
     announce "dry-run: start_cmd=$START_CMD"
     exit 0
 fi
 
-mkdir -p "$STATE_ROOT"
+fetch_output=""
+if ! fetch_output="$(run_git -C "$CANONICAL_ROOT" fetch origin 2>&1)"; then
+    log "[ERROR] fetch origin failed canonical_root=$CANONICAL_ROOT detail=$fetch_output"
+    echo "canonical fetch failed for root=$CANONICAL_ROOT: $fetch_output" >&2
+    exit 1
+fi
 
-log() {
-    local timestamp=""
-    timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf '%s %s\n' "$timestamp" "$1" | tee -a "$LOG_FILE" >/dev/null
-}
+TARGET_SHA="$(run_git -C "$CANONICAL_ROOT" rev-parse origin/main)"
+
+if ! run_git -C "$CANONICAL_ROOT" merge-base --is-ancestor "$WORKSPACE_SHA" "$TARGET_SHA"; then
+    if github_confirms_merge "$REPO_SLUG" "$workspace_branch" "$WORKSPACE_SHA"; then
+        log "[INFO] github merge fallback matched workspace_branch=$workspace_branch workspace_sha=$WORKSPACE_SHA target_sha=$TARGET_SHA canonical_root=$CANONICAL_ROOT"
+        announce "github merge fallback matched workspace_branch=$workspace_branch sha=$WORKSPACE_SHA target_sha=$TARGET_SHA canonical_root=$CANONICAL_ROOT"
+    else
+        log "[SKIP] workspace_branch=$workspace_branch workspace_sha=$WORKSPACE_SHA is not merged into origin/main target_sha=$TARGET_SHA canonical_root=$CANONICAL_ROOT"
+        announce "workspace branch=$workspace_branch sha=$WORKSPACE_SHA is not merged into origin/main target_sha=$TARGET_SHA canonical_root=$CANONICAL_ROOT"
+        exit 0
+    fi
+fi
 
 LOCKDIR_HELD="false"
 cleanup_lockdir() {
