@@ -225,7 +225,7 @@ class TestTokenManagement:
     @pytest.mark.asyncio
     async def test_token_refresh_cooldown_with_valid_cache_returns_immediately(self, settings):
         broker = KISBroker(settings)
-        now = asyncio.get_event_loop().time()
+        now = asyncio.get_running_loop().time()
         broker._access_token = "cached_token"
         broker._token_expires_at = now + 300
         broker._token_refresh_at = now - 1
@@ -248,7 +248,7 @@ class TestTokenManagement:
         import json
 
         broker = KISBroker(settings)
-        now = asyncio.get_event_loop().time()
+        now = asyncio.get_running_loop().time()
         broker._access_token = "cached_token"
         broker._token_expires_at = now + 300
         broker._token_refresh_at = now - 1
