@@ -208,10 +208,14 @@ START_CMD="${CANONICAL_RESTART_START_CMD:-env RUNTIME_REPO_ROOT=\"$CANONICAL_ROO
 
 log() {
     local timestamp=""
-    mkdir -p "$STATE_ROOT"
     timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf '%s %s\n' "$timestamp" "$1" | tee -a "$LOG_FILE" >/dev/null
+    printf '%s %s\n' "$timestamp" "$1" >> "$LOG_FILE"
 }
+
+if [ "$DRY_RUN" != "true" ]; then
+    mkdir -p "$STATE_ROOT"
+    log "[INFO] hook invoked cwd=$(pwd) workspace_branch=$workspace_branch workspace_sha=$WORKSPACE_SHA canonical_root=$CANONICAL_ROOT"
+fi
 
 canonical_branch="$(run_git -C "$CANONICAL_ROOT" branch --show-current)"
 if [ "$canonical_branch" != "main" ]; then
@@ -225,31 +229,25 @@ fi
 REMOTE_URL="$(run_git -C "$CANONICAL_ROOT" remote get-url origin 2>/dev/null || true)"
 REPO_SLUG="$(github_repo_slug_from_remote "$REMOTE_URL" || true)"
 
-if [ "$DRY_RUN" != "true" ]; then
-    log "[INFO] hook invoked cwd=$(pwd) workspace_branch=$workspace_branch workspace_sha=$WORKSPACE_SHA canonical_root=$CANONICAL_ROOT"
-fi
-
-fetch_output=""
-if ! fetch_output="$(run_git -C "$CANONICAL_ROOT" fetch origin 2>&1)"; then
-    if [ "$DRY_RUN" != "true" ]; then
-        log "[ERROR] fetch origin failed canonical_root=$CANONICAL_ROOT detail=$fetch_output"
-    fi
-    echo "canonical fetch failed for root=$CANONICAL_ROOT: $fetch_output" >&2
-    exit 1
-fi
-
-TARGET_SHA="$(run_git -C "$CANONICAL_ROOT" rev-parse origin/main)"
-
 if [ "$DRY_RUN" = "true" ]; then
     announce "dry-run: workspace_branch=$workspace_branch"
     announce "dry-run: workspace_sha=$WORKSPACE_SHA"
     announce "dry-run: canonical_root=$CANONICAL_ROOT"
-    announce "dry-run: target_sha=$TARGET_SHA"
+    announce "dry-run: canonical_branch=$canonical_branch"
     announce "dry-run: marker_file=$MARKER_FILE"
     announce "dry-run: stop_cmd=$STOP_CMD"
     announce "dry-run: start_cmd=$START_CMD"
     exit 0
 fi
+
+fetch_output=""
+if ! fetch_output="$(run_git -C "$CANONICAL_ROOT" fetch origin 2>&1)"; then
+    log "[ERROR] fetch origin failed canonical_root=$CANONICAL_ROOT detail=$fetch_output"
+    echo "canonical fetch failed for root=$CANONICAL_ROOT: $fetch_output" >&2
+    exit 1
+fi
+
+TARGET_SHA="$(run_git -C "$CANONICAL_ROOT" rev-parse origin/main)"
 
 if ! run_git -C "$CANONICAL_ROOT" merge-base --is-ancestor "$WORKSPACE_SHA" "$TARGET_SHA"; then
     if github_confirms_merge "$REPO_SLUG" "$workspace_branch" "$WORKSPACE_SHA"; then

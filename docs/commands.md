@@ -230,6 +230,10 @@ Operational policy:
   deletion, discovers the canonical `main` checkout with
   `git worktree list --porcelain`, pulls `origin/main`, and restarts only that
   canonical runtime.
+- `--dry-run` on `scripts/symphony_before_remove_canonical_restart.sh` is now a
+  no-side-effect planning mode: it validates the canonical `main` checkout and
+  prints the intended restart inputs without calling `fetch origin` or writing
+  `canonical_restart.log` / marker files.
 - For squash merges where plain git ancestry cannot prove inclusion, the hook
   falls back to recent closed GitHub PR metadata (`head.ref` + `head.sha`)
   and may miss cases where additional commits were pushed after merge.

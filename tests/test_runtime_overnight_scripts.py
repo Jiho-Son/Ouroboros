@@ -80,7 +80,11 @@ def _workflow_before_remove_command() -> str:
         break
 
     command = "\n".join(command_lines).strip()
-    return command.strip()
+    if not command:
+        raise AssertionError(
+            "before_remove command not found in WORKFLOW.md -- check front matter indentation"
+        )
+    return command
 
 
 def _write_fake_git(*, tmp_path: Path) -> Path:
@@ -358,7 +362,7 @@ def _run_symphony_before_remove_hook(
     if invocation_mode == "workflow":
         if dry_run:
             raise ValueError("workflow invocation does not support dry_run in this helper")
-        args = ["bash", "-lc", _workflow_before_remove_command()]
+        args = ["bash", "-c", _workflow_before_remove_command()]
     else:
         args = ["bash", str(SYMPHONY_BEFORE_REMOVE_CANONICAL_RESTART)]
         if dry_run:
@@ -425,6 +429,25 @@ def test_workflow_before_remove_hook_resolves_script_from_nested_worktree_dir(
     assert completed.returncode == 0, f"{completed.stdout}\n{completed.stderr}"
     assert hooks_log.read_text(encoding="utf-8").splitlines() == ["stop", "start"]
     assert marker_path.read_text(encoding="utf-8").strip() == "main-sha-workflow-hook"
+
+
+def test_workflow_before_remove_command_raises_when_hook_is_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broken_workflow = tmp_path / "WORKFLOW.md"
+    broken_workflow.write_text(
+        """---
+hooks:
+  after_create: |
+    echo noop
+---
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("tests.test_runtime_overnight_scripts.WORKFLOW_TEMPLATE", broken_workflow)
+
+    with pytest.raises(AssertionError, match="before_remove command not found"):
+        _workflow_before_remove_command()
 
 
 def test_before_remove_canonical_restart_logs_invocation_and_skip_reason(
@@ -522,7 +545,7 @@ def test_before_remove_canonical_restart_restarts_canonical_main_once_per_target
 def test_before_remove_canonical_restart_dry_run_reports_plan_without_mutation(
     tmp_path: Path,
 ) -> None:
-    completed, canonical_root, hooks_log, marker_path, _git_log, _ = (
+    completed, canonical_root, hooks_log, marker_path, git_log, restart_log = (
         _run_symphony_before_remove_hook(
             tmp_path=tmp_path,
             merged_by_git=True,
@@ -539,6 +562,8 @@ def test_before_remove_canonical_restart_dry_run_reports_plan_without_mutation(
     assert str(marker_path) in output
     assert not hooks_log.exists()
     assert not marker_path.exists()
+    assert not git_log.exists()
+    assert not restart_log.exists()
 
 
 def test_before_remove_canonical_restart_falls_back_when_flock_missing(
