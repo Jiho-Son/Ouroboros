@@ -223,10 +223,27 @@ and `scripts/runtime_verify_monitor.sh` now share the same runtime-instance defa
 Operational policy:
 - Keep the continuously running canonical 운영 프로세스 only in the checkout whose
   git branch is `main`.
-- Restart that canonical process only after a PR has been merged into `main`.
+- Manage the post-merge restart from Symphony `hooks.before_remove` in
+  [`WORKFLOW.md`](../WORKFLOW.md): the hook runs
+  `bash scripts/symphony_before_remove_canonical_restart.sh` from the merged
+  worktree before deletion, discovers the canonical `main` checkout with
+  `git worktree list --porcelain`, pulls `origin/main`, and restarts only that
+  canonical runtime.
+- For squash merges where plain git ancestry cannot prove inclusion, the hook
+  falls back to recent closed GitHub PR metadata (`head.ref` + `head.sha`)
+  and may miss cases where additional commits were pushed after merge.
 - Non-`main` worktrees may run the same scripts concurrently for validation; the
   scripts auto-isolate `LOG_DIR`, `LIVE_RUNTIME_LOCK_PATH`, `DASHBOARD_PORT`, and
   `TMUX_SESSION_PREFIX` per branch unless you override them explicitly.
+- The hook stores its dedupe marker and restart log under the canonical state
+  root (`data/overnight/canonical_restart.*` by default), so non-`main`
+  worktree runtime state remains isolated.
+- When `flock` is unavailable the hook falls back to `mkdir` lock with timeout
+  (`CANONICAL_RESTART_LOCK_WAIT_SECONDS`, default 30s) and exits with an error
+  instead of waiting forever on stale lock state.
+- If stop succeeds but start fails, the hook logs
+  `[CRITICAL] canonical runtime start failed after stop; manual intervention required`
+  and exits non-zero without advancing the dedupe marker.
 
 Examples:
 
@@ -235,6 +252,9 @@ Examples:
 bash scripts/run_overnight.sh
 bash scripts/runtime_verify_monitor.sh
 tail -f data/overnight/runtime_verify_*.log
+
+# Hook regression proof: merged worktree cleanup restarts canonical main once
+pytest tests/test_runtime_overnight_scripts.py -k 'before_remove_canonical_restart' -v
 
 # Non-main worktree: same commands auto-scope to data/overnight/<branch-slug>
 bash scripts/run_overnight.sh

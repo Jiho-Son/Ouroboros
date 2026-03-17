@@ -23,7 +23,7 @@ hooks:
     git clone https://github.com/Jiho-Son/Ouroboros.git .
     bash .codex/worktree_init.sh --dry-run
   before_remove: |
-    true
+    bash scripts/symphony_before_remove_canonical_restart.sh
 agent:
   max_concurrent_agents: 10
   max_turns: 20
@@ -68,6 +68,12 @@ Instructions:
 3. Final message must report completed actions and blockers only. Do not include "next steps for user".
 
 Work only in the provided repository copy. Do not touch any other path.
+
+## Korean Communication Policy (Mandatory)
+
+- Symphony unattended Linear 작업의 서술형 문장은 한글을 기본 언어로 작성한다.
+- 기술 토큰(코드/경로/명령/식별자)은 원문 표기를 유지한다.
+- 이 규칙은 Linear workpad, 이슈 코멘트, 최종 보고에 동일하게 적용한다.
 
 ## Prerequisite: Linear MCP or `linear_graphql` tool is available
 

@@ -140,6 +140,86 @@ def test_log_realtime_hard_stop_monitor_start_includes_enabled_market_coverage(
     assert "source=websocket_hard_stop" in caplog.text
 
 
+def test_resolve_terminal_sell_order_price_uses_limit_in_low_liquidity_session() -> None:
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    with patch("src.main.get_session_info", return_value=MagicMock(is_low_liquidity=True)):
+        price, mode = main_module._resolve_terminal_sell_order_price(
+            market=market,
+            current_price=100.0,
+        )
+
+    assert price == pytest.approx(99.0)
+    assert mode == "low_liquidity_limit"
+
+
+def test_resolve_terminal_sell_order_price_uses_market_order_in_regular_session() -> None:
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+
+    with patch("src.main.get_session_info", return_value=MagicMock(is_low_liquidity=False)):
+        price, mode = main_module._resolve_terminal_sell_order_price(
+            market=market,
+            current_price=100.0,
+        )
+
+    assert price == 0.0
+    assert mode == "market"
+
+
+def test_resolve_terminal_sell_order_price_overseas_regular_session() -> None:
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+    market.exchange_code = "NASD"
+    market.is_domestic = False
+
+    with patch("src.main.get_session_info", return_value=MagicMock(is_low_liquidity=False)):
+        price, mode = main_module._resolve_terminal_sell_order_price(
+            market=market,
+            current_price=250.0,
+        )
+
+    assert price == 0.0
+    assert mode == "market"
+
+
+def test_resolve_terminal_sell_order_price_overseas_low_liquidity_normal_price() -> None:
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+    market.exchange_code = "NASD"
+    market.is_domestic = False
+
+    with patch("src.main.get_session_info", return_value=MagicMock(is_low_liquidity=True)):
+        price, mode = main_module._resolve_terminal_sell_order_price(
+            market=market,
+            current_price=250.0,
+        )
+
+    assert price == pytest.approx(round(250.0 * 0.996, 2))
+    assert mode == "low_liquidity_limit"
+
+
+def test_resolve_terminal_sell_order_price_overseas_low_liquidity_penny_stock() -> None:
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+    market.exchange_code = "NASD"
+    market.is_domestic = False
+
+    with patch("src.main.get_session_info", return_value=MagicMock(is_low_liquidity=True)):
+        price, mode = main_module._resolve_terminal_sell_order_price(
+            market=market,
+            current_price=0.5,
+        )
+
+    assert price == pytest.approx(round(0.5 * 0.996, 4))
+    assert mode == "low_liquidity_limit"
+
+
 @pytest.mark.asyncio
 async def test_sync_realtime_hard_stop_monitor_registers_hold_position() -> None:
     monitor = RealtimeHardStopMonitor()
@@ -7874,13 +7954,14 @@ class TestDomesticBuyDoublePreventionTradingCycle:
 class TestHandleOverseasPendingOrders:
     """Tests for handle_overseas_pending_orders function."""
 
-    def _make_settings(self, markets: str = "US_NASDAQ,US_NYSE,US_AMEX") -> Settings:
+    def _make_settings(self, markets: str = "US_NASDAQ,US_NYSE,US_AMEX", **kwargs: Any) -> Settings:
         return Settings(
             KIS_APP_KEY="k",
             KIS_APP_SECRET="s",
             KIS_ACCOUNT_NO="12345678-01",
             GEMINI_API_KEY="g",
             ENABLED_MARKETS=markets,
+            **kwargs,
         )
 
     def _make_telegram(self) -> MagicMock:
@@ -7930,6 +8011,82 @@ class TestHandleOverseasPendingOrders:
         call_kwargs = telegram.notify_unfilled_order.call_args[1]
         assert call_kwargs["action"] == "BUY"
         assert call_kwargs["outcome"] == "resubmitted"
+
+    @pytest.mark.asyncio
+    async def test_buy_pending_prefers_executable_best_ask_when_available(self) -> None:
+        """BUY retry should use executable best-ask instead of last-price multiplier."""
+        settings = self._make_settings("US_NASDAQ")
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "AAPL",
+            "odno": "ORD001-A",
+            "sll_buy_dvsn_cd": "02",
+            "nccs_qty": "3",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "200.0"}})
+        overseas_broker.get_overseas_orderbook = AsyncMock(
+            return_value={"output2": {"pask1": "201.5", "pbid1": "200.8"}}
+        )
+        overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+
+        await handle_overseas_pending_orders(overseas_broker, telegram, settings, {})
+
+        resubmit_kwargs = overseas_broker.send_overseas_order.call_args[1]
+        assert resubmit_kwargs["order_type"] == "BUY"
+        assert resubmit_kwargs["price"] == 201.5
+
+    @pytest.mark.asyncio
+    async def test_buy_pending_gap_cap_uses_market_override_and_cancels(self) -> None:
+        """BUY retry should cancel when executable ask gap exceeds market-specific cap."""
+        settings = self._make_settings(
+            "US_NASDAQ",
+            EXECUTABLE_QUOTE_MAX_GAP_PCT=5.0,
+            EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON='{"US_NASDAQ": 1.0}',
+        )
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+        buy_cooldown: dict[str, float] = {}
+
+        pending_order = {
+            "pdno": "AAPL",
+            "odno": "ORD001-CAP",
+            "sll_buy_dvsn_cd": "02",
+            "nccs_qty": "3",
+            "ovrs_excg_cd": "NASD",
+        }
+        overseas_broker = MagicMock()
+        overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
+        overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "200.0"}})
+        overseas_broker.get_overseas_orderbook = AsyncMock(
+            return_value={"output2": {"pask1": "204.0", "pbid1": "199.5"}}
+        )
+        overseas_broker.send_overseas_order = AsyncMock()
+
+        await handle_overseas_pending_orders(
+            overseas_broker,
+            telegram,
+            settings,
+            {},
+            buy_cooldown,
+            rollback_open_position=rollback_open_position,
+        )
+
+        overseas_broker.send_overseas_order.assert_not_called()
+        assert "NASD:AAPL" in buy_cooldown
+        rollback_open_position.assert_called_once_with(
+            market_code="US_NASDAQ",
+            exchange_code="NASD",
+            stock_code="AAPL",
+            action="BUY",
+        )
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["outcome"] == "cancelled"
 
     @pytest.mark.asyncio
     async def test_buy_already_resubmitted_is_only_cancelled_with_cooldown(self) -> None:
@@ -8057,6 +8214,9 @@ class TestHandleOverseasPendingOrders:
         notify_kwargs = telegram.notify_unfilled_order.call_args[1]
         assert notify_kwargs["outcome"] == "cancelled"
         assert notify_kwargs["action"] == "SELL"
+        # cancel-only path must increment to 2 so trading_cycle can distinguish
+        # "retry exhausted" (>= 2) from "first resubmit still live" (== 1)
+        assert sell_resubmit_counts["NASD:AAPL"] == 2
 
     @pytest.mark.asyncio
     async def test_buy_resubmit_failure_notifies_cancelled(self) -> None:
@@ -8537,13 +8697,14 @@ class TestHandleOverseasPendingOrders:
 class TestHandleDomesticPendingOrders:
     """Tests for handle_domestic_pending_orders function."""
 
-    def _make_settings(self) -> Settings:
+    def _make_settings(self, **kwargs: Any) -> Settings:
         return Settings(
             KIS_APP_KEY="k",
             KIS_APP_SECRET="s",
             KIS_ACCOUNT_NO="12345678-01",
             GEMINI_API_KEY="g",
             ENABLED_MARKETS="KR",
+            **kwargs,
         )
 
     def _make_telegram(self) -> MagicMock:
@@ -8597,6 +8758,85 @@ class TestHandleDomesticPendingOrders:
         assert call_kwargs["action"] == "BUY"
         assert call_kwargs["outcome"] == "resubmitted"
         assert call_kwargs["market"] == "KR"
+
+    @pytest.mark.asyncio
+    async def test_buy_pending_prefers_executable_best_ask_from_output1_for_domestic(
+        self,
+    ) -> None:
+        """Domestic BUY retry should parse `output1` top-ask and use it as executable price."""
+        settings = self._make_settings()
+        telegram = self._make_telegram()
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORD001-ASK",
+            "ord_gno_brno": "BRN01",
+            "sll_buy_dvsn_cd": "02",
+            "psbl_qty": "3",
+            "order_exchange": "KRX",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(50000.0, 0.0, 0.0))
+        broker.get_orderbook_by_market = AsyncMock(
+            return_value={"output1": {"stck_askp1": "50300", "stck_bidp1": "49900"}}
+        )
+        broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+
+        await handle_domestic_pending_orders(broker, telegram, settings, {}, {})
+
+        resubmit_kwargs = broker.send_order.call_args[1]
+        assert resubmit_kwargs["order_type"] == "BUY"
+        assert resubmit_kwargs["price"] == 50300.0
+
+    @pytest.mark.asyncio
+    async def test_buy_pending_gap_cap_uses_market_override_for_domestic(self) -> None:
+        """Domestic BUY gap-cap should apply with market override regardless of session branch."""
+        settings = self._make_settings(
+            EXECUTABLE_QUOTE_MAX_GAP_PCT=5.0,
+            EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON='{"KR": 0.5}',
+        )
+        telegram = self._make_telegram()
+        rollback_open_position = MagicMock()
+        buy_cooldown: dict[str, float] = {}
+
+        pending_order = {
+            "pdno": "005930",
+            "orgn_odno": "ORD001-CAP",
+            "ord_gno_brno": "BRN01",
+            "sll_buy_dvsn_cd": "02",
+            "psbl_qty": "3",
+            "order_exchange": "KRX",
+        }
+        broker = MagicMock()
+        broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
+        broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+        broker.get_current_price = AsyncMock(return_value=(50000.0, 0.0, 0.0))
+        broker.get_orderbook_by_market = AsyncMock(
+            return_value={"output1": {"stck_askp1": "51000", "stck_bidp1": "49900"}}
+        )
+        broker.send_order = AsyncMock()
+
+        await handle_domestic_pending_orders(
+            broker,
+            telegram,
+            settings,
+            {},
+            buy_cooldown,
+            rollback_open_position=rollback_open_position,
+        )
+
+        broker.send_order.assert_not_called()
+        assert "KR:005930" in buy_cooldown
+        rollback_open_position.assert_called_once_with(
+            market_code="KR",
+            exchange_code="KRX",
+            stock_code="005930",
+            action="BUY",
+        )
+        notify_kwargs = telegram.notify_unfilled_order.call_args[1]
+        assert notify_kwargs["outcome"] == "cancelled"
 
     @pytest.mark.asyncio
     async def test_buy_pending_uses_odno_when_orgn_odno_empty(self) -> None:
@@ -8761,6 +9001,9 @@ class TestHandleDomesticPendingOrders:
         notify_kwargs = telegram.notify_unfilled_order.call_args[1]
         assert notify_kwargs["outcome"] == "cancelled"
         assert notify_kwargs["action"] == "SELL"
+        # cancel-only path must increment to 2 so trading_cycle can distinguish
+        # "retry exhausted" (>= 2) from "first resubmit still live" (== 1)
+        assert sell_resubmit_counts["KR:005930"] == 2
 
     @pytest.mark.asyncio
     async def test_buy_resubmit_failure_notifies_cancelled(self) -> None:
@@ -8952,6 +9195,223 @@ class TestDomesticLimitOrderPrice:
         assert call_kwargs["price"] == expected_price
         assert call_kwargs["order_type"] == "SELL"
 
+    @pytest.mark.asyncio
+    async def test_trading_cycle_uses_market_sell_when_pending_retry_budget_is_exhausted(
+        self,
+    ) -> None:
+        """Exhausted pending SELL retries should escalate to a terminal exit order."""
+        from src.strategy.models import ScenarioAction
+
+        current_price = 70000.0
+        stock_code = "005930"
+        balance_data = {
+            "output1": [
+                {"pdno": stock_code, "hldg_qty": "5", "prpr": "70000", "evlu_amt": "350000"}
+            ],
+            "output2": [
+                {
+                    "tot_evlu_amt": "350000",
+                    "dnca_tot_amt": "0",
+                    "pchs_amt_smtl_amt": "350000",
+                }
+            ],
+        }
+        broker = self._make_broker(current_price, balance_data)
+        market = self._make_market()
+
+        sell_match = ScenarioMatch(
+            stock_code=stock_code,
+            matched_scenario=None,
+            action=ScenarioAction.SELL,
+            confidence=85,
+            rationale="test",
+        )
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=sell_match)
+
+        risk = MagicMock()
+        risk.validate_order = MagicMock()
+        risk.check_circuit_breaker = MagicMock()
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        with (
+            patch("src.main.log_trade"),
+            patch("src.main.validate_order_policy"),
+            patch(
+                "src.main.get_session_info",
+                return_value=MagicMock(is_low_liquidity=False, session_id="KRX_REG"),
+            ),
+        ):
+            await trading_cycle(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=risk,
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                market=market,
+                stock_code=stock_code,
+                scan_candidates={},
+                sell_resubmit_counts={"KR:005930": 2},
+            )
+
+        broker.send_order.assert_called_once()
+        call_kwargs = broker.send_order.call_args[1]
+        assert call_kwargs["order_type"] == "SELL"
+        assert call_kwargs["price"] == 0
+
+    @pytest.mark.asyncio
+    async def test_trading_cycle_terminal_sell_passes_order_policy_in_regular_session(
+        self,
+    ) -> None:
+        """Terminal market order (price=0) must pass validate_order_policy in a regular session.
+
+        validate_order_policy is NOT mocked here — this confirms price=0 is allowed when
+        both src.main and src.core.order_policy agree the session is non-low-liquidity.
+        """
+        from src.strategy.models import ScenarioAction
+
+        current_price = 70000.0
+        stock_code = "005930"
+        balance_data = {
+            "output1": [
+                {"pdno": stock_code, "hldg_qty": "5", "prpr": "70000", "evlu_amt": "350000"}
+            ],
+            "output2": [
+                {
+                    "tot_evlu_amt": "350000",
+                    "dnca_tot_amt": "0",
+                    "pchs_amt_smtl_amt": "350000",
+                }
+            ],
+        }
+        broker = self._make_broker(current_price, balance_data)
+        market = self._make_market()
+
+        sell_match = ScenarioMatch(
+            stock_code=stock_code,
+            matched_scenario=None,
+            action=ScenarioAction.SELL,
+            confidence=85,
+            rationale="test",
+        )
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=sell_match)
+
+        risk = MagicMock()
+        risk.validate_order = MagicMock()
+        risk.check_circuit_breaker = MagicMock()
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        regular_session = MagicMock(is_low_liquidity=False, session_id="KRX_REG")
+        with (
+            patch("src.main.log_trade"),
+            patch("src.main.get_session_info", return_value=regular_session),
+            patch("src.core.order_policy.get_session_info", return_value=regular_session),
+        ):
+            await trading_cycle(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=risk,
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                market=market,
+                stock_code=stock_code,
+                scan_candidates={},
+                sell_resubmit_counts={"KR:005930": 2},
+            )
+
+        broker.send_order.assert_called_once()
+        call_kwargs = broker.send_order.call_args[1]
+        assert call_kwargs["order_type"] == "SELL"
+        assert call_kwargs["price"] == 0
+
+    @pytest.mark.asyncio
+    async def test_trading_cycle_buy_clears_stale_sell_retry_budget(self) -> None:
+        """A new BUY lifecycle should clear stale exhausted SELL retry state."""
+        from src.strategy.models import ScenarioAction
+
+        current_price = 70000.0
+        stock_code = "005930"
+        balance_data = {
+            "output2": [
+                {
+                    "tot_evlu_amt": "10000000",
+                    "dnca_tot_amt": "5000000",
+                    "pchs_amt_smtl_amt": "5000000",
+                }
+            ]
+        }
+        broker = self._make_broker(current_price, balance_data)
+        market = self._make_market()
+        sell_resubmit_counts = {"KR:005930": 1}
+
+        buy_match = ScenarioMatch(
+            stock_code=stock_code,
+            matched_scenario=None,
+            action=ScenarioAction.BUY,
+            confidence=85,
+            rationale="test",
+        )
+        engine = MagicMock(spec=ScenarioEngine)
+        engine.evaluate = MagicMock(return_value=buy_match)
+
+        risk = MagicMock()
+        risk.validate_order = MagicMock()
+        risk.check_circuit_breaker = MagicMock()
+        telegram = MagicMock()
+        telegram.notify_trade_execution = AsyncMock()
+        telegram.notify_fat_finger = AsyncMock()
+        telegram.notify_circuit_breaker = AsyncMock()
+        telegram.notify_scenario_matched = AsyncMock()
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=engine,
+                playbook=_make_playbook(),
+                risk=risk,
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(get_latest_timeframe=MagicMock(return_value=None)),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=telegram,
+                market=market,
+                stock_code=stock_code,
+                scan_candidates={},
+                sell_resubmit_counts=sell_resubmit_counts,
+            )
+
+        broker.send_order.assert_called_once()
+        assert "KR:005930" not in sell_resubmit_counts
+
 
 # ---------------------------------------------------------------------------
 # Ghost position — overseas SELL "잔고내역이 없습니다" handling
@@ -9141,6 +9601,79 @@ class TestOverseasGhostPositionClose:
             and "[ghost-close]" in (c.kwargs.get("rationale") or "")
         ]
         assert not ghost_close_calls, "Ghost-close must NOT be triggered for non-잔고없음 errors"
+
+
+@pytest.mark.asyncio
+async def test_trading_cycle_uses_market_sell_overseas_when_pending_retry_budget_is_exhausted(
+) -> None:
+    db_conn = init_db(":memory:")
+    decision_logger = DecisionLogger(db_conn)
+
+    broker = MagicMock()
+    broker.get_balance = AsyncMock(return_value={"output1": [], "output2": [{}]})
+
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_price = AsyncMock(
+        return_value={"output": {"last": "250.0", "rate": "0.0"}}
+    )
+    overseas_broker.get_overseas_balance = AsyncMock(
+        return_value={
+            "output1": [{"ovrs_pdno": "AAPL", "ord_psbl_qty": "5", "ovrs_cblc_qty": "5"}],
+            "output2": [{"frcr_evlu_tota": "100000", "frcr_buy_amt_smtl": "0"}],
+        }
+    )
+    overseas_broker.get_overseas_buying_power = AsyncMock(
+        return_value={"output": {"ovrs_ord_psbl_amt": "0"}}
+    )
+    overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+
+    market = MagicMock()
+    market.name = "NASDAQ"
+    market.code = "US_NASDAQ"
+    market.exchange_code = "NASD"
+    market.is_domestic = False
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_fat_finger = AsyncMock()
+    telegram.notify_circuit_breaker = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    with (
+        patch("src.main.validate_order_policy"),
+        patch(
+            "src.main.get_session_info",
+            return_value=MagicMock(is_low_liquidity=False, session_id="US_REG"),
+        ),
+    ):
+        await trading_cycle(
+            broker=broker,
+            overseas_broker=overseas_broker,
+            scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_sell_match("AAPL"))),
+            playbook=_make_playbook("US_NASDAQ"),
+            risk=MagicMock(validate_order=MagicMock(), check_circuit_breaker=MagicMock()),
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(
+                get_latest_timeframe=MagicMock(return_value=None),
+                set_context=MagicMock(),
+            ),
+            criticality_assessor=MagicMock(
+                assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                get_timeout=MagicMock(return_value=5.0),
+            ),
+            telegram=telegram,
+            market=market,
+            stock_code="AAPL",
+            scan_candidates={},
+            settings=_make_settings(MODE="paper", PAPER_OVERSEAS_CASH=50000.0),
+            sell_resubmit_counts={"NASD:AAPL": 2},
+        )
+
+    overseas_broker.send_overseas_order.assert_called_once()
+    call_kwargs = overseas_broker.send_overseas_order.call_args[1]
+    assert call_kwargs["order_type"] == "SELL"
+    assert call_kwargs["price"] == 0
 
 
 @pytest.mark.asyncio

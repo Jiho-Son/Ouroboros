@@ -122,6 +122,7 @@ from src.strategy.scenario_engine import ScenarioEngine
 
 logger = logging.getLogger(__name__)
 _SESSION_CLOSE_WINDOWS = {"NXT_AFTER", "US_AFTER"}
+_TERMINAL_SELL_FALLBACK_MULTIPLIER = 0.996
 
 
 def _format_realtime_hard_stop_enabled_markets(settings: Settings | None) -> str:
@@ -144,6 +145,36 @@ def _log_realtime_hard_stop_monitor_start(settings: Settings) -> None:
         "ws_url=%s source=websocket_hard_stop",
         _format_realtime_hard_stop_enabled_markets(settings),
         f"{settings.kis_ws_url.rstrip('/')}{settings.KIS_WS_PATH}",
+    )
+
+
+def _pending_sell_resubmit_key(*, market: MarketInfo, stock_code: str) -> str:
+    # Key format must match pending_orders.py:
+    #   domestic  → f"KR:{stock_code}"   (market.code == "KR")
+    #   overseas  → f"{exchange_code}:{stock_code}"  (market.exchange_code, e.g. "NASD")
+    market_key = market.code if market.is_domestic else market.exchange_code
+    return f"{str(market_key).strip().upper()}:{stock_code.strip().upper()}"
+
+
+def _resolve_terminal_sell_order_price(
+    *,
+    market: MarketInfo,
+    current_price: float,
+) -> tuple[float, str]:
+    session_info = get_session_info(market)
+    if not session_info.is_low_liquidity:
+        return 0.0, "market"
+
+    if market.is_domestic:
+        return (
+            float(kr_round_down(current_price * _TERMINAL_SELL_FALLBACK_MULTIPLIER)),
+            "low_liquidity_limit",
+        )
+
+    price_decimals = 2 if current_price >= 1.0 else 4
+    return (
+        round(current_price * _TERMINAL_SELL_FALLBACK_MULTIPLIER, price_decimals),
+        "low_liquidity_limit",
     )
 
 
@@ -1535,6 +1566,7 @@ async def _execute_trading_cycle_action(
     buy_cooldown: dict[str, float] | None = None,
     realtime_hard_stop_monitor: RealtimeHardStopMonitor | None = None,
     realtime_hard_stop_client: KISWebSocketClient | None = None,
+    sell_resubmit_counts: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     decision = decision_data["decision"]
     match = decision_data["match"]
@@ -1635,6 +1667,24 @@ async def _execute_trading_cycle_action(
             execution_result["should_return"] = True
             return execution_result
 
+    pending_sell_key: str | None = None
+    terminal_sell_mode: str | None = None
+    terminal_order_price: float | None = None
+    if decision.action == "SELL" and sell_resubmit_counts is not None:
+        pending_sell_key = _pending_sell_resubmit_key(market=market, stock_code=stock_code)
+        if sell_resubmit_counts.get(pending_sell_key, 0) >= 2:
+            terminal_order_price, terminal_sell_mode = _resolve_terminal_sell_order_price(
+                market=market,
+                current_price=current_price,
+            )
+            logger.warning(
+                "Escalate SELL %s (%s): pending retry budget exhausted key=%s mode=%s",
+                stock_code,
+                market.name,
+                pending_sell_key,
+                terminal_sell_mode,
+            )
+
     try:
         if decision.action == "SELL":
             risk.check_circuit_breaker(pnl_pct)
@@ -1680,6 +1730,12 @@ async def _execute_trading_cycle_action(
     if market.is_domestic:
         if decision.action == "BUY":
             order_price = kr_round_down(current_price * 1.002)
+        elif terminal_sell_mode is not None:
+            if terminal_order_price is None:
+                raise RuntimeError(  # pragma: no cover
+                    "terminal_order_price must be set when terminal_sell_mode is set"
+                )
+            order_price = terminal_order_price
         else:
             order_price = kr_round_down(current_price * 0.998)
         try:
@@ -1730,6 +1786,12 @@ async def _execute_trading_cycle_action(
         _price_decimals = 2 if current_price >= 1.0 else 4
         if decision.action == "BUY":
             overseas_price = round(current_price * 1.002, _price_decimals)
+        elif terminal_sell_mode is not None:
+            if terminal_order_price is None:
+                raise RuntimeError(  # pragma: no cover
+                    "terminal_order_price must be set when terminal_sell_mode is set"
+                )
+            overseas_price = terminal_order_price
         else:
             overseas_price = round(current_price * 0.998, _price_decimals)
         try:
@@ -1811,6 +1873,16 @@ async def _execute_trading_cycle_action(
 
     execution_result["order_succeeded"] = order_succeeded
     if order_succeeded:
+        if sell_resubmit_counts is not None and decision.action == "BUY":
+            # Clear stale SELL retry state only on a confirmed BUY — a new BUY
+            # lifecycle for the same symbol means the position was closed.
+            # SELL keys are intentionally kept until then: an accepted-but-unfilled
+            # terminal SELL must keep its count >= 2 so the next cycle re-escalates
+            # rather than treating it as a fresh unfilled SELL.
+            sell_resubmit_counts.pop(
+                _pending_sell_resubmit_key(market=market, stock_code=stock_code),
+                None,
+            )
         try:
             await telegram.notify_trade_execution(
                 stock_code=stock_code,
@@ -1951,6 +2023,7 @@ async def trading_cycle(
     buy_cooldown: dict[str, float] | None = None,
     realtime_hard_stop_monitor: RealtimeHardStopMonitor | None = None,
     realtime_hard_stop_client: KISWebSocketClient | None = None,
+    sell_resubmit_counts: dict[str, int] | None = None,
 ) -> None:
     """Execute one trading cycle for a single stock."""
     cycle_start_time = asyncio.get_event_loop().time()
@@ -2001,6 +2074,7 @@ async def trading_cycle(
         buy_cooldown=buy_cooldown,
         realtime_hard_stop_monitor=realtime_hard_stop_monitor,
         realtime_hard_stop_client=realtime_hard_stop_client,
+        sell_resubmit_counts=sell_resubmit_counts,
     )
     if execution_result["should_return"]:
         return
@@ -4329,6 +4403,7 @@ async def run(settings: Settings) -> None:
                                     buy_cooldown,
                                     realtime_hard_stop_monitor,
                                     realtime_hard_stop_client,
+                                    sell_resubmit_counts=sell_resubmit_counts,
                                 )
                                 break
                             except CircuitBreakerTripped as exc:

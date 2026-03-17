@@ -298,6 +298,30 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: LLM client 추상화와 Ollama provider 추가가 목표이며, 기존 Gemini 기본 경로를 유지하는 구성이 필요하다.
 
+### 2026-03-15 | session=codex-oor-811-rework-r3
+- branch: feature/issue-811-canonical-restart-before-remove-r3
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-811 Rework state, issue description, human review on PR #822, prior workpad comment, attached PR metadata
+- next_ticket: OOR-811
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: Rework reset requires closing PR #822 and deleting the previous Codex Workpad before rebuilding from origin/main@29e05fc with explicit handling for lock-timeout and restart-failure review feedback.
+
+### 2026-03-15 | session=codex-oor-821-rework-r3
+- branch: feature/issue-821-linear-korean-writing-rules-rework-r2
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-821 Rework state, issue description, human comments, PR #820/#825 review comments
+- next_ticket: OOR-821
+- process_gate_checked: process_ticket=OOR-821 merged_to_feature_branch=n/a
+- risks_or_notes: Rework flow resets prior attempt by closing PR #825, removing stale workpad, and rebuilding from origin/main@c3ac2f3 with stricter Korean-policy token validation to reduce section-external false positives.
+
+### 2026-03-16 | session=codex-oor-825-rework-r2-implementation
+- branch: feature/issue-825-sell-unfilled-loop-r2
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-825 Rework state, issue description, human comment, closed PR #830 metadata
+- next_ticket: OOR-825
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: `origin/main@e1575a8` 기준 새 브랜치에서 retry exhausted SELL state를 `trading_cycle` 로 전달해 terminal exit로 격상했다. `ruff`, `validate_docs_sync`, targeted regression, full `pytest --cov` 를 통과했다.
+
 ### 2026-03-15 | session=codex-oor-814-rework-r2-start
 - branch: feature/issue-814-token-refresh-r2
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
