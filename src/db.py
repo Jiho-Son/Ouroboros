@@ -427,6 +427,57 @@ def get_latest_buy_trade(
     }
 
 
+def get_latest_sell_trade(
+    conn: sqlite3.Connection,
+    stock_code: str,
+    market: str,
+    exchange_code: str | None = None,
+) -> dict[str, Any] | None:
+    """Fetch the most recent SELL trade for a stock and market."""
+    if exchange_code:
+        cursor = conn.execute(
+            """
+            SELECT decision_id, price, quantity, timestamp
+            FROM trades
+            WHERE stock_code = ?
+              AND market = ?
+              AND action = 'SELL'
+              AND (
+                  exchange_code = ?
+                  OR exchange_code IS NULL
+                  OR exchange_code = ''
+              )
+            ORDER BY
+              CASE WHEN exchange_code = ? THEN 0 ELSE 1 END,
+              timestamp DESC
+            LIMIT 1
+            """,
+            (stock_code, market, exchange_code, exchange_code),
+        )
+    else:
+        cursor = conn.execute(
+            """
+            SELECT decision_id, price, quantity, timestamp
+            FROM trades
+            WHERE stock_code = ?
+              AND market = ?
+              AND action = 'SELL'
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """,
+            (stock_code, market),
+        )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "decision_id": row[0],
+        "price": row[1],
+        "quantity": row[2],
+        "timestamp": row[3],
+    }
+
+
 def get_open_position(
     conn: sqlite3.Connection, stock_code: str, market: str
 ) -> dict[str, Any] | None:

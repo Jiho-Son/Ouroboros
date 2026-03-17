@@ -7,6 +7,7 @@ FX buffer checks, and overnight exit logic.  Extracted from ``src/main.py``.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from src.analysis.smart_scanner import ScanCandidate
@@ -195,6 +196,49 @@ def _should_block_buy_chasing_session_high(
     pullback_from_high_pct = ((session_high_price - current_price) / session_high_price) * 100.0
     blocked = price_change_pct >= min_gain_pct and pullback_from_high_pct <= max_pullback_pct
     return blocked, pullback_from_high_pct, min_gain_pct, max_pullback_pct
+
+
+def _should_block_buy_above_recent_sell(
+    *,
+    market: MarketInfo,
+    action: str,
+    current_price: float,
+    last_sell_price: float,
+    last_sell_timestamp: str | None,
+    settings: Settings | None,
+    now: datetime | None = None,
+) -> tuple[bool, int, int]:
+    """Block BUY when it would re-enter above the latest SELL price too soon."""
+    if action != "BUY" or current_price <= 0 or last_sell_price <= 0 or not last_sell_timestamp:
+        return False, 0, 0
+
+    try:
+        last_sell_at = datetime.fromisoformat(last_sell_timestamp)
+    except ValueError:
+        return False, 0, 0
+    if last_sell_at.tzinfo is None:
+        last_sell_at = last_sell_at.replace(tzinfo=UTC)
+
+    evaluation_time = now or datetime.now(UTC)
+    elapsed_seconds = max(0, int((evaluation_time - last_sell_at).total_seconds()))
+
+    from src.core.session_risk import _resolve_market_setting
+
+    window_seconds = max(
+        1,
+        int(
+            _resolve_market_setting(
+                market=market,
+                settings=settings,
+                key="SELL_REENTRY_PRICE_GUARD_SECONDS",
+                default=120,
+            )
+        ),
+    )
+    if elapsed_seconds >= window_seconds:
+        return False, elapsed_seconds, window_seconds
+
+    return current_price > last_sell_price, elapsed_seconds, window_seconds
 
 
 def _should_force_exit_for_overnight(

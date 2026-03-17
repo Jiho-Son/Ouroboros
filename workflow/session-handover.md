@@ -258,6 +258,14 @@
 - process_gate_checked: process_ticket=OOR-810 merged_to_feature_branch=n/a
 - risks_or_notes: Restart the rework from fresh origin/main@8784453 after the workflow hook fix; preserve the user's unstaged WORKFLOW.md change while re-running reproduction, validation, and publish preflight in this sandbox.
 
+### 2026-03-17 | session=codex-oor-815-start
+- branch: feature/issue-815-rebuy-after-sell
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-815
+- next_ticket: OOR-815
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: 매도 직후 1분 내 고가 재매수가 planner/scenario/runtime 중 어디서 재진입하는지 재현 신호부터 확보하고 가장 좁은 수정면에 회귀 테스트를 둔다.
+
 ### 2026-03-12 | session=codex-oor-370-start
 - branch: feature/issue-370-us-session-transition
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -321,3 +329,11 @@
 - next_ticket: OOR-825
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: `origin/main@e1575a8` 기준 새 브랜치에서 retry exhausted SELL state를 `trading_cycle` 로 전달해 terminal exit로 격상했다. `ruff`, `validate_docs_sync`, targeted regression, full `pytest --cov` 를 통과했다.
+
+### 2026-03-17 | session=codex-oor-815-start-r2
+- branch: feature/issue-815-rebuy-after-sell
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-815
+- next_ticket: OOR-815
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: 매도 직후 1분 내 고가 재매수가 planner/scenario/runtime 중 어디서 재진입하는지 재현 신호부터 확보하고 가장 좁은 수정면에 회귀 테스트를 둔다.
