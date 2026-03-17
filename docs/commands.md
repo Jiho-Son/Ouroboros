@@ -224,11 +224,16 @@ Operational policy:
 - Keep the continuously running canonical 운영 프로세스 only in the checkout whose
   git branch is `main`.
 - Manage the post-merge restart from Symphony `hooks.before_remove` in
-  [`WORKFLOW.md`](../WORKFLOW.md): the hook runs
-  `bash scripts/symphony_before_remove_canonical_restart.sh` from the merged
-  worktree before deletion, discovers the canonical `main` checkout with
+  [`WORKFLOW.md`](../WORKFLOW.md): the hook first resolves the worktree top-level
+  with `git rev-parse --show-toplevel`, then runs
+  `bash "$repo_root/scripts/symphony_before_remove_canonical_restart.sh"` before
+  deletion, discovers the canonical `main` checkout with
   `git worktree list --porcelain`, pulls `origin/main`, and restarts only that
   canonical runtime.
+- `--dry-run` on `scripts/symphony_before_remove_canonical_restart.sh` is now a
+  no-side-effect planning mode: it validates the canonical `main` checkout and
+  prints the intended restart inputs without calling `fetch origin` or writing
+  `canonical_restart.log` / marker files.
 - For squash merges where plain git ancestry cannot prove inclusion, the hook
   falls back to recent closed GitHub PR metadata (`head.ref` + `head.sha`)
   and may miss cases where additional commits were pushed after merge.
@@ -237,7 +242,8 @@ Operational policy:
   `TMUX_SESSION_PREFIX` per branch unless you override them explicitly.
 - The hook stores its dedupe marker and restart log under the canonical state
   root (`data/overnight/canonical_restart.*` by default), so non-`main`
-  worktree runtime state remains isolated.
+  worktree runtime state remains isolated. `canonical_restart.log` now records
+  hook invocation context plus skip/failure/start decisions for debugging.
 - When `flock` is unavailable the hook falls back to `mkdir` lock with timeout
   (`CANONICAL_RESTART_LOCK_WAIT_SECONDS`, default 30s) and exits with an error
   instead of waiting forever on stale lock state.

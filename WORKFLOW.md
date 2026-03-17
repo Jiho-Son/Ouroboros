@@ -23,7 +23,8 @@ hooks:
     git clone https://github.com/Jiho-Son/Ouroboros.git .
     bash .codex/worktree_init.sh --dry-run
   before_remove: |
-    bash scripts/symphony_before_remove_canonical_restart.sh
+    repo_root="$(git rev-parse --show-toplevel)" || exit 1
+    bash "$repo_root/scripts/symphony_before_remove_canonical_restart.sh"
 agent:
   max_concurrent_agents: 10
   max_turns: 20

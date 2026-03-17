@@ -329,3 +329,19 @@
 - next_ticket: OOR-814
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: Rework reset closes PR #819 and restarts from origin/main; this pass must address reviewer feedback on token-refresh fallback semantics and test assertions while preserving issue scope.
+
+### 2026-03-17 | session=codex-oor-826-start
+- branch: feature/issue-826-main-merge-restart-debug
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-826 Todo state, issue description, no existing workpad comment, no attachments
+- next_ticket: OOR-826
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: `origin/main@35e2cae` 기준 새 브랜치에서 main merge 후 restart hook 미동작을 재현하고 권한/훅/로그 경로를 우선 점검한다.
+
+### 2026-03-17 | session=codex-issue826-review-fix
+- branch: feature/issue-826-main-merge-restart-debug
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #826, PR #832 review comments
+- next_ticket: #826
+- process_gate_checked: process_ticket=#826 merged_to_feature_branch=n/a
+- risks_or_notes: PR #832 리뷰 반영으로 before_remove dry-run을 no-side-effect semantics로 정합화하고 canonical main checkout pull/restart 문서 및 회귀 테스트를 함께 수정한다.

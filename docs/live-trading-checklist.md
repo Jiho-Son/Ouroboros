@@ -94,8 +94,9 @@ python -m src.main --mode=live --dashboard
 
 ### 3-2-1. 운영 프로세스 규칙
 - [ ] 상시 유지하는 canonical 운영 프로세스는 `main` 브랜치 checkout에서만 실행한다.
-- [ ] canonical 운영 프로세스 재시작은 Symphony `hooks.before_remove` 가 merged worktree 삭제 직전에 `bash scripts/symphony_before_remove_canonical_restart.sh` 를 실행해 자동 처리하는지 확인한다.
-- [ ] canonical 재시작 dedupe marker/log 가 canonical 상태 루트(`data/overnight/canonical_restart.*` 기본값)에만 기록되고, 검증용 non-`main` worktree 아래에는 생기지 않는지 확인한다.
+- [ ] canonical 운영 프로세스 재시작은 Symphony `hooks.before_remove` 가 merged worktree 삭제 직전에 `git rev-parse --show-toplevel` 로 repo root를 해석한 뒤 `bash "$repo_root/scripts/symphony_before_remove_canonical_restart.sh"` 를 실행해 자동 처리하는지 확인한다.
+- [ ] canonical 재시작 dedupe marker/log 가 canonical 상태 루트(`data/overnight/canonical_restart.*` 기본값)에만 기록되고, `canonical_restart.log` 에 hook invocation/skip/fail/start 신호가 남는지 확인한다.
+- [ ] `scripts/symphony_before_remove_canonical_restart.sh --dry-run` 검증은 canonical `main` checkout 경로와 restart 계획만 stdout 으로 보여주고, `fetch origin` 이나 `canonical_restart.log`/marker 파일 쓰기를 발생시키지 않는지 확인한다.
 - [ ] 별도 worktree에서 검증용 런타임을 띄울 때는 동일 명령을 그대로 사용하되, 스크립트가 branch별 `LOG_DIR` / `DASHBOARD_PORT` / `LIVE_RUNTIME_LOCK_PATH` 를 자동 분리한다는 점을 확인한다.
 - [ ] `main` checkout에서는 기본 런타임 경로가 `data/overnight`, 기본 dashboard 포트가 `8080` 인지 확인한다.
 - [ ] non-`main` worktree에서는 `scripts/run_overnight.sh` 와 `scripts/runtime_verify_monitor.sh` 가 `data/overnight/<branch-slug>` 를 사용하고 `8080` 이외 포트를 자동 선택하는지 확인한다.
