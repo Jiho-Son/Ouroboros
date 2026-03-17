@@ -7,7 +7,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_TEMPLATE = REPO_ROOT / "WORKFLOW.md"
@@ -55,10 +54,32 @@ def _resolve_runtime_defaults(*, state_root: Path, branch: str) -> dict[str, str
 
 
 def _workflow_before_remove_command() -> str:
-    _, front_matter, _ = WORKFLOW_TEMPLATE.read_text(encoding="utf-8").split("---", 2)
-    workflow = yaml.safe_load(front_matter)
-    command = workflow["hooks"]["before_remove"]
-    assert isinstance(command, str) and command.strip()
+    command_lines: list[str] = []
+    in_hooks = False
+    in_before_remove = False
+
+    for raw_line in WORKFLOW_TEMPLATE.read_text(encoding="utf-8").splitlines():
+        if raw_line == "hooks:":
+            in_hooks = True
+            continue
+        if not in_hooks:
+            continue
+        if raw_line and not raw_line.startswith("  "):
+            break
+        if raw_line == "  before_remove: |":
+            in_before_remove = True
+            continue
+        if not in_before_remove:
+            continue
+        if raw_line.startswith("    "):
+            command_lines.append(raw_line[4:])
+            continue
+        if not raw_line.strip():
+            command_lines.append("")
+            continue
+        break
+
+    command = "\n".join(command_lines).strip()
     return command.strip()
 
 
