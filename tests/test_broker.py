@@ -120,6 +120,27 @@ class TestTokenManagement:
 
         await broker.close()
 
+    @pytest.mark.asyncio
+    async def test_refresh_network_error_after_deadline_reuses_unexpired_token(self, settings):
+        import aiohttp as _aiohttp
+
+        broker = KISBroker(settings)
+        now = asyncio.get_event_loop().time()
+        broker._access_token = "cached_token"
+        broker._token_expires_at = now + 300
+        broker._token_refresh_at = now - 1
+
+        with patch(
+            "aiohttp.ClientSession.post",
+            side_effect=_aiohttp.ClientError("timeout"),
+        ) as mock_post:
+            token = await broker._ensure_token()
+
+        assert token == "cached_token"
+        assert mock_post.call_count == 1
+
+        await broker.close()
+
     @pytest.mark.parametrize(
         ("issued_at", "expires_in", "expected"),
         [
