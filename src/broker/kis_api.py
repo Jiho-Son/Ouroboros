@@ -179,15 +179,17 @@ class KISBroker:
         Uses a lock to prevent concurrent token refresh attempts that would
         hit the API's 1-per-minute rate limit (EGW00133).
         """
+        running_loop = asyncio.get_running_loop()
+
         # Fast path: check without lock
-        now = asyncio.get_event_loop().time()
+        now = running_loop.time()
         if self._has_usable_token(now=now):
             return cast(str, self._access_token)
 
         # Slow path: acquire lock and refresh
         async with self._token_lock:
             # Re-check after acquiring lock (another coroutine may have refreshed)
-            now = asyncio.get_event_loop().time()
+            now = running_loop.time()
             if self._has_usable_token(now=now):
                 return cast(str, self._access_token)
 
@@ -211,7 +213,7 @@ class KISBroker:
                     remaining,
                 )
                 await asyncio.sleep(remaining)
-                now = asyncio.get_event_loop().time()
+                now = running_loop.time()
                 can_fallback_to_cached = self._has_unexpired_token(now=now)
 
             logger.info("Refreshing KIS access token")
@@ -230,7 +232,7 @@ class KISBroker:
                         text = await resp.text()
                         raise ConnectionError(f"Token refresh failed ({resp.status}): {text}")
                     data = await resp.json()
-            except Exception:
+            except (aiohttp.ClientError, ConnectionError, OSError):
                 if can_fallback_to_cached:
                     logger.warning(
                         "Token refresh failed but cached token is still valid;"

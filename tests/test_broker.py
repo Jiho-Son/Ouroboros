@@ -223,6 +223,52 @@ class TestTokenManagement:
         await broker.close()
 
     @pytest.mark.asyncio
+    async def test_token_refresh_cooldown_with_valid_cache_returns_immediately(self, settings):
+        broker = KISBroker(settings)
+        now = asyncio.get_event_loop().time()
+        broker._access_token = "cached_token"
+        broker._token_expires_at = now + 300
+        broker._token_refresh_at = now - 1
+        broker._last_refresh_attempt = now - 5
+
+        with (
+            patch("aiohttp.ClientSession.post") as mock_post,
+            patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        ):
+            token = await broker._ensure_token()
+
+        assert token == "cached_token"
+        assert mock_post.call_count == 0
+        mock_sleep.assert_not_awaited()
+
+        await broker.close()
+
+    @pytest.mark.asyncio
+    async def test_refresh_invalid_json_after_deadline_raises_decode_error(self, settings):
+        import json
+
+        broker = KISBroker(settings)
+        now = asyncio.get_event_loop().time()
+        broker._access_token = "cached_token"
+        broker._token_expires_at = now + 300
+        broker._token_refresh_at = now - 1
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(side_effect=json.JSONDecodeError("Expecting value", "", 0))
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        try:
+            with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+                with pytest.raises(json.JSONDecodeError):
+                    await broker._ensure_token()
+
+            assert mock_post.call_count == 1
+        finally:
+            await broker.close()
+
+    @pytest.mark.asyncio
     async def test_token_refresh_allowed_after_cooldown(self, settings):
         """Token refresh should be allowed after cooldown period expires."""
         broker = KISBroker(settings)
