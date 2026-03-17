@@ -8214,6 +8214,9 @@ class TestHandleOverseasPendingOrders:
         notify_kwargs = telegram.notify_unfilled_order.call_args[1]
         assert notify_kwargs["outcome"] == "cancelled"
         assert notify_kwargs["action"] == "SELL"
+        # cancel-only path must increment to 2 so trading_cycle can distinguish
+        # "retry exhausted" (>= 2) from "first resubmit still live" (== 1)
+        assert sell_resubmit_counts["NASD:AAPL"] == 2
 
     @pytest.mark.asyncio
     async def test_buy_resubmit_failure_notifies_cancelled(self) -> None:
@@ -8998,6 +9001,9 @@ class TestHandleDomesticPendingOrders:
         notify_kwargs = telegram.notify_unfilled_order.call_args[1]
         assert notify_kwargs["outcome"] == "cancelled"
         assert notify_kwargs["action"] == "SELL"
+        # cancel-only path must increment to 2 so trading_cycle can distinguish
+        # "retry exhausted" (>= 2) from "first resubmit still live" (== 1)
+        assert sell_resubmit_counts["KR:005930"] == 2
 
     @pytest.mark.asyncio
     async def test_buy_resubmit_failure_notifies_cancelled(self) -> None:
@@ -9257,7 +9263,7 @@ class TestDomesticLimitOrderPrice:
                 market=market,
                 stock_code=stock_code,
                 scan_candidates={},
-                sell_resubmit_counts={"KR:005930": 1},
+                sell_resubmit_counts={"KR:005930": 2},
             )
 
         broker.send_order.assert_called_once()
@@ -9335,7 +9341,7 @@ class TestDomesticLimitOrderPrice:
                 market=market,
                 stock_code=stock_code,
                 scan_candidates={},
-                sell_resubmit_counts={"KR:005930": 1},
+                sell_resubmit_counts={"KR:005930": 2},
             )
 
         broker.send_order.assert_called_once()
@@ -9661,7 +9667,7 @@ async def test_trading_cycle_uses_market_sell_overseas_when_pending_retry_budget
             stock_code="AAPL",
             scan_candidates={},
             settings=_make_settings(MODE="paper", PAPER_OVERSEAS_CASH=50000.0),
-            sell_resubmit_counts={"NASD:AAPL": 1},
+            sell_resubmit_counts={"NASD:AAPL": 2},
         )
 
     overseas_broker.send_overseas_order.assert_called_once()

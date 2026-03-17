@@ -625,6 +625,9 @@ async def handle_domestic_pending_orders(
                 # SELL pending — attempt one resubmit at a wider spread.
                 if sell_resubmit_counts.get(key, 0) >= 1:
                     # Already resubmitted once — only cancel (already done above).
+                    # Increment to 2 so trading_cycle() can distinguish this
+                    # "retry exhausted" state from "first resubmit still live" (count=1).
+                    sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                     logger.warning(
                         "SELL KR %s already resubmitted once — no further resubmit",
                         stock_code,
@@ -1098,6 +1101,9 @@ async def handle_overseas_pending_orders(
                     # SELL pending — attempt one resubmit at a wider spread.
                     if sell_resubmit_counts.get(key, 0) >= 1:
                         # Already resubmitted once — only cancel (already done above).
+                        # Increment to 2 so trading_cycle() can distinguish this
+                        # "retry exhausted" state from "first resubmit still live" (count=1).
+                        sell_resubmit_counts[key] = sell_resubmit_counts.get(key, 0) + 1
                         logger.warning(
                             "SELL %s %s already resubmitted once — no further resubmit",
                             order_exchange,

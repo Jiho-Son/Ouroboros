@@ -1672,7 +1672,7 @@ async def _execute_trading_cycle_action(
     terminal_order_price: float | None = None
     if decision.action == "SELL" and sell_resubmit_counts is not None:
         pending_sell_key = _pending_sell_resubmit_key(market=market, stock_code=stock_code)
-        if sell_resubmit_counts.get(pending_sell_key, 0) >= 1:
+        if sell_resubmit_counts.get(pending_sell_key, 0) >= 2:
             terminal_order_price, terminal_sell_mode = _resolve_terminal_sell_order_price(
                 market=market,
                 current_price=current_price,
@@ -1873,7 +1873,12 @@ async def _execute_trading_cycle_action(
 
     execution_result["order_succeeded"] = order_succeeded
     if order_succeeded:
-        if sell_resubmit_counts is not None:
+        if sell_resubmit_counts is not None and decision.action == "BUY":
+            # Clear stale SELL retry state only on a confirmed BUY — a new BUY
+            # lifecycle for the same symbol means the position was closed.
+            # SELL keys are intentionally kept until then: an accepted-but-unfilled
+            # terminal SELL must keep its count >= 2 so the next cycle re-escalates
+            # rather than treating it as a fresh unfilled SELL.
             sell_resubmit_counts.pop(
                 _pending_sell_resubmit_key(market=market, stock_code=stock_code),
                 None,
