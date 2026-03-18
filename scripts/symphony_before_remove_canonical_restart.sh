@@ -305,11 +305,33 @@ acquire_lock() {
 
 acquire_lock
 
+stash_output=""
+stash_needed="false"
+if [ -n "$(run_git -C "$CANONICAL_ROOT" status --porcelain 2>/dev/null)" ]; then
+    stash_needed="true"
+    if ! stash_output="$(run_git -C "$CANONICAL_ROOT" stash push -m "canonical_restart_autostash" 2>&1)"; then
+        log "[ERROR] stash before pull failed canonical_root=$CANONICAL_ROOT detail=$stash_output"
+        announce "canonical stash failed for root=$CANONICAL_ROOT"
+        exit 1
+    fi
+    log "[INFO] stashed local changes before pull canonical_root=$CANONICAL_ROOT"
+fi
+
 pull_output=""
 if ! pull_output="$(run_git -C "$CANONICAL_ROOT" pull --ff-only origin main 2>&1)"; then
     log "[ERROR] pull --ff-only origin main failed canonical_root=$CANONICAL_ROOT detail=$pull_output"
+    if [ "$stash_needed" = "true" ]; then
+        run_git -C "$CANONICAL_ROOT" stash pop 2>/dev/null || true
+    fi
     announce "canonical pull failed for root=$CANONICAL_ROOT"
     exit 1
+fi
+
+if [ "$stash_needed" = "true" ]; then
+    pop_output=""
+    if ! pop_output="$(run_git -C "$CANONICAL_ROOT" stash pop 2>&1)"; then
+        log "[WARN] stash pop after pull had conflicts canonical_root=$CANONICAL_ROOT detail=$pop_output"
+    fi
 fi
 
 if [ -f "$MARKER_FILE" ]; then
