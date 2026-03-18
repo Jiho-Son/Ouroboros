@@ -18,6 +18,7 @@ TEST_ID_IN_TEXT = re.compile(r"\bTEST-[A-Z0-9-]+-\d{3}\b")
 READ_ONLY_FILES = {"src/core/risk_manager.py"}
 PLACEHOLDER_VALUES = {"", "tbd", "n/a", "na", "none", "<link>", "<required>"}
 TIMEZONE_TOKEN_PATTERN = re.compile(r"\b(?:KST|UTC)\b")
+ATX_HEADER_PATTERN = re.compile(r"#{1,6}(?:\s|$)")
 KOREAN_POLICY_WORKFLOW_HEADER = "## Korean Communication Policy (Mandatory)"
 KOREAN_POLICY_WORKFLOW_KEYWORD_GROUPS = (
     ("korean-default-language", ("한글", "기본", "서술형")),
@@ -189,8 +190,7 @@ def _extract_markdown_section(text: str, header: str) -> str | None:
 
     end_index = len(lines)
     for idx in range(start_index, len(lines)):
-        stripped = lines[idx].lstrip()
-        if stripped.startswith("# ") or stripped.startswith("## "):
+        if ATX_HEADER_PATTERN.match(lines[idx]):
             end_index = idx
             break
     return "\n".join(lines[start_index:end_index])
