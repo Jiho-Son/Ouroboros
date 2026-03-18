@@ -361,3 +361,11 @@
 - next_ticket: OOR-815
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: 매도 직후 1분 내 고가 재매수가 planner/scenario/runtime 중 어디서 재진입하는지 재현 신호부터 확보하고 가장 좁은 수정면에 회귀 테스트를 둔다.
+
+### 2026-03-18 | session=codex-oor-822-start
+- branch: feature/issue-822-korean-policy-validator-stability
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-822 Todo→In Progress 상태, 이슈 설명/Acceptance Criteria, 기존 workpad 없음, 첨부 PR 없음
+- next_ticket: OOR-822
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: Korean policy 검증의 날짜 하드코딩, H1/H2 경계 파싱, 누락 키워드 메시지를 재현한 뒤 TDD로 안정화하고 회귀 테스트를 남긴다.

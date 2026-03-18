@@ -25,7 +25,6 @@ KOREAN_POLICY_WORKFLOW_KEYWORD_GROUPS = (
     ("linear-surfaces", ("Linear", "workpad", "코멘트", "최종 보고")),
 )
 KOREAN_POLICY_CONSTRAINT_KEYWORD_GROUPS = (
-    ("history-date", ("2026-03-15",)),
     ("korean-default-language", ("한글", "기본")),
     ("technical-token-preservation", ("기술", "토큰", "원문", "표기")),
 )
@@ -190,7 +189,8 @@ def _extract_markdown_section(text: str, header: str) -> str | None:
 
     end_index = len(lines)
     for idx in range(start_index, len(lines)):
-        if lines[idx].startswith("## "):
+        stripped = lines[idx].lstrip()
+        if stripped.startswith("# ") or stripped.startswith("## "):
             end_index = idx
             break
     return "\n".join(lines[start_index:end_index])
@@ -204,8 +204,12 @@ def _validate_keyword_groups(
     errors: list[str],
 ) -> None:
     for group_name, keywords in keyword_groups:
-        if any(keyword not in text for keyword in keywords):
-            errors.append(f"{path}: missing Korean policy keyword group -> {group_name}")
+        missing_keywords = [keyword for keyword in keywords if keyword not in text]
+        if missing_keywords:
+            errors.append(
+                f"{path}: missing Korean policy keyword group -> {group_name} "
+                f"(missing keywords: {', '.join(missing_keywords)})"
+            )
 
 
 def validate_korean_communication_tokens(

@@ -460,3 +460,76 @@ def test_validate_korean_communication_tokens_checks_keywords_inside_policy_sect
     errors: list[str] = []
     module.validate_korean_communication_tokens(errors)
     assert any("WORKFLOW.md: missing Korean policy keyword group" in err for err in errors)
+
+
+def test_validate_korean_communication_tokens_constraints_do_not_require_fixed_date(
+    tmp_path, monkeypatch
+) -> None:
+    module = _load_module()
+    docs = tmp_path / "docs"
+    docs.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    (tmp_path / "WORKFLOW.md").write_text(
+        "\n".join(
+            [
+                "## Korean Communication Policy (Mandatory)",
+                "- Symphony unattended Linear 작업의 서술형 문장은 한글을 기본 언어로 사용한다.",
+                "- 기술 토큰(코드/경로/명령/식별자)은 원문 표기를 유지한다.",
+                "- 이 규칙은 Linear workpad, 이슈 코멘트, 최종 보고에 동일하게 적용한다.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (docs / "agent-constraints.md").write_text(
+        "\n".join(
+            [
+                "### 2026-03-18",
+                "- Symphony unattended Linear 실행에서 workpad/코멘트/최종 보고의 "
+                "서술형 문장은 한글을 기본으로 작성한다.",
+                "- 기술 토큰은 원문 표기를 유지한다.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    errors: list[str] = []
+    module.validate_korean_communication_tokens(errors)
+    assert errors == []
+
+
+def test_extract_markdown_section_stops_at_h1_boundary() -> None:
+    module = _load_module()
+
+    section = module._extract_markdown_section(
+        "\n".join(
+            [
+                "## Korean Communication Policy (Mandatory)",
+                "- keep this line",
+                "# Next Top Header",
+                "- should not be included",
+            ]
+        ),
+        module.KOREAN_POLICY_WORKFLOW_HEADER,
+    )
+
+    assert section == "- keep this line"
+
+
+def test_validate_keyword_groups_reports_missing_keywords() -> None:
+    module = _load_module()
+    errors: list[str] = []
+
+    module._validate_keyword_groups(
+        "기술",
+        (("technical-token-preservation", ("기술", "토큰", "원문", "표기")),),
+        path=Path("docs/agent-constraints.md"),
+        errors=errors,
+    )
+
+    assert errors == [
+        "docs/agent-constraints.md: missing Korean policy keyword group -> "
+        "technical-token-preservation (missing keywords: 토큰, 원문, 표기)"
+    ]
