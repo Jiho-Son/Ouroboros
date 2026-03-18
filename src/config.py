@@ -137,7 +137,7 @@ class Settings(BaseSettings):
     TELEGRAM_NOTIFY_FAT_FINGER: bool = True  # Fat-finger rejection alerts
     TELEGRAM_NOTIFY_SYSTEM_EVENTS: bool = True  # System start/shutdown alerts
     TELEGRAM_NOTIFY_PLAYBOOK: bool = True  # Playbook generated/failed alerts
-    TELEGRAM_NOTIFY_SCENARIO_MATCH: bool = True  # Scenario matched alerts (most frequent)
+    TELEGRAM_NOTIFY_SCENARIO_MATCH: bool = False  # Scenario matched alerts (most frequent)
     TELEGRAM_NOTIFY_ERRORS: bool = True  # Error alerts
 
     # Overseas ranking API (KIS endpoint/TR_ID may vary by account/product)

@@ -39,6 +39,29 @@ def test_us_min_price_default_is_five():
     assert s.US_MIN_PRICE == 5.0
 
 
+def test_telegram_notify_scenario_match_default_is_disabled():
+    """Telegram scenario 알림은 기본적으로 비활성화되어야 한다."""
+    s = Settings(
+        KIS_APP_KEY="test",
+        KIS_APP_SECRET="test",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="test",
+    )
+    assert s.TELEGRAM_NOTIFY_SCENARIO_MATCH is False
+
+
+def test_telegram_notify_scenario_match_respects_explicit_override():
+    """명시적으로 켠 경우 scenario 알림 설정이 유지되어야 한다."""
+    s = Settings(
+        KIS_APP_KEY="test",
+        KIS_APP_SECRET="test",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="test",
+        TELEGRAM_NOTIFY_SCENARIO_MATCH=True,
+    )
+    assert s.TELEGRAM_NOTIFY_SCENARIO_MATCH is True
+
+
 def test_ollama_provider_does_not_require_gemini_api_key():
     """`LLM_PROVIDER=ollama`일 때는 Gemini 키 없이도 설정이 구성되어야 한다."""
     s = Settings(

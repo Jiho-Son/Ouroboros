@@ -31,6 +31,9 @@ Add to your `.env` file:
 TELEGRAM_BOT_TOKEN=1234567890:ABCdefGHIjklMNOpqrsTUVwxyz
 TELEGRAM_CHAT_ID=123456789
 TELEGRAM_ENABLED=true
+
+# Scenario match alerts are disabled by default; enable explicitly if needed.
+TELEGRAM_NOTIFY_SCENARIO_MATCH=false
 ```
 
 ### 4. Test the Bot
@@ -299,6 +302,10 @@ To disable commands but keep notifications:
 ```bash
 TELEGRAM_COMMANDS_ENABLED=false
 ```
+
+`scenario` match alerts stay off by default unless
+`TELEGRAM_NOTIFY_SCENARIO_MATCH=true` is set. During a run, the same filter can
+be toggled with `/notify scenario on` or `/notify scenario off`.
 
 ### How It Works
 

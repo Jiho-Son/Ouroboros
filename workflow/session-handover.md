@@ -377,3 +377,11 @@
 - next_ticket: OOR-822
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: Korean policy 검증의 날짜 하드코딩, H1/H2 경계 파싱, 누락 키워드 메시지를 재현한 뒤 TDD로 안정화하고 회귀 테스트를 남긴다.
+
+### 2026-03-18 | session=codex-oor-817-rework-r3
+- branch: feature/issue-817-telegram-notify-default-r2
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-817 Rework state, issue description, stale workpad comment 삭제, attachment 없음, GitHub PR 없음
+- next_ticket: OOR-817
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: `origin/main@60bff92` 기준 fresh branch 에서 Telegram notify 기본값 중 `scenario` 비활성 요구를 다시 재현하고, prior attempt 커밋은 재사용하지 않으며 failing test부터 시작한다.
