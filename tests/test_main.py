@@ -5,7 +5,7 @@ import json
 import logging
 import math
 from contextlib import ExitStack
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -44,6 +44,7 @@ from src.core.kill_switch_runtime import (
 from src.core.order_helpers import (
     _determine_order_quantity,
     _resolve_sell_qty_for_pnl,
+    _should_block_buy_above_recent_sell,
     _should_block_buy_chasing_session_high,
     _should_block_overseas_buy_for_fx_buffer,
     _should_force_exit_for_overnight,
@@ -6167,6 +6168,215 @@ class TestBuyChasingSessionHighGuard:
         assert call_args.kwargs["action"] == "HOLD"
         assert "session high" in call_args.kwargs["rationale"].lower()
 
+    @pytest.mark.asyncio
+    async def test_trading_cycle_suppresses_buy_above_recent_sell_price(
+        self,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
+    ) -> None:
+        db_conn = init_db(":memory:")
+        log_trade(
+            conn=db_conn,
+            stock_code="005930",
+            action="BUY",
+            confidence=90,
+            rationale="entry",
+            quantity=10,
+            price=100.0,
+            market="KR",
+            exchange_code="KRX",
+            decision_id="buy-1",
+        )
+        log_trade(
+            conn=db_conn,
+            stock_code="005930",
+            action="SELL",
+            confidence=90,
+            rationale="take profit exit",
+            quantity=10,
+            price=100.5,
+            pnl=5.0,
+            market="KR",
+            exchange_code="KRX",
+            decision_id="sell-1",
+        )
+
+        broker = MagicMock()
+        broker.get_current_price = AsyncMock(return_value=(101.0, 2.0, 0.0))
+        broker.get_current_price_with_output = AsyncMock(
+            return_value=(101.0, 2.0, 0.0, {"stck_hgpr": "110.0"})
+        )
+        broker.get_balance = AsyncMock(
+            return_value={
+                "output1": [],
+                "output2": [
+                    {
+                        "tot_evlu_amt": "10000000",
+                        "dnca_tot_amt": "5000000",
+                        "pchs_amt_smtl_amt": "5000000",
+                    }
+                ],
+            }
+        )
+        broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+        settings = _make_settings(MODE="paper")
+
+        with (
+            patch("src.main.log_trade"),
+            patch("src.main.get_session_info", return_value=MagicMock(session_id="KRX_REG")),
+            patch(
+                "src.core.session_risk.get_session_info",
+                return_value=MagicMock(session_id="KRX_REG"),
+            ),
+        ):
+            await trading_cycle(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_buy_match())),
+                playbook=_make_playbook(),
+                risk=MagicMock(validate_order=MagicMock(), check_circuit_breaker=MagicMock()),
+                db_conn=db_conn,
+                decision_logger=decision_logger,
+                context_store=MagicMock(
+                    get_latest_timeframe=MagicMock(return_value=None),
+                    set_context=MagicMock(),
+                ),
+                criticality_assessor=MagicMock(
+                    assess_market_conditions=MagicMock(return_value=MagicMock(value="NORMAL")),
+                    get_timeout=MagicMock(return_value=5.0),
+                ),
+                telegram=mock_telegram,
+                market=mock_market,
+                stock_code="005930",
+                scan_candidates={},
+                settings=settings,
+            )
+
+        broker.send_order.assert_not_called()
+        call_args = decision_logger.log_decision.call_args
+        assert call_args is not None
+        assert call_args.kwargs["action"] == "HOLD"
+        assert "recent sell" in call_args.kwargs["rationale"].lower()
+
+    @pytest.mark.asyncio
+    async def test_run_daily_session_suppresses_buy_above_recent_sell_price(
+        self,
+        mock_market: MagicMock,
+        mock_telegram: MagicMock,
+    ) -> None:
+        from src.analysis.smart_scanner import ScanCandidate
+
+        db_conn = init_db(":memory:")
+        log_trade(
+            conn=db_conn,
+            stock_code="005930",
+            action="BUY",
+            confidence=90,
+            rationale="entry",
+            quantity=10,
+            price=100.0,
+            market="KR",
+            exchange_code="KRX",
+            decision_id="buy-1",
+        )
+        log_trade(
+            conn=db_conn,
+            stock_code="005930",
+            action="SELL",
+            confidence=90,
+            rationale="take profit exit",
+            quantity=10,
+            price=100.5,
+            pnl=5.0,
+            market="KR",
+            exchange_code="KRX",
+            decision_id="sell-1",
+        )
+
+        settings = _make_settings(MODE="paper")
+
+        broker = MagicMock()
+        broker.get_balance = AsyncMock(
+            return_value={
+                "output1": [],
+                "output2": [
+                    {
+                        "tot_evlu_amt": "100000",
+                        "dnca_tot_amt": "50000",
+                        "pchs_amt_smtl_amt": "50000",
+                    }
+                ],
+            }
+        )
+        broker.get_current_price = AsyncMock(return_value=(101.0, 2.0, 0.0))
+        broker.get_current_price_with_output = AsyncMock(
+            return_value=(101.0, 2.0, 0.0, {"stck_hgpr": "110.0"})
+        )
+        broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+
+        smart_scanner = MagicMock()
+        smart_scanner.scan = AsyncMock(
+            return_value=[
+                ScanCandidate(
+                    stock_code="005930",
+                    name="Samsung",
+                    price=101.0,
+                    volume=1_000_000.0,
+                    volume_ratio=3.0,
+                    rsi=72.0,
+                    signal="momentum",
+                    score=88.0,
+                )
+            ]
+        )
+
+        playbook_store = MagicMock()
+        playbook_store.load = MagicMock(return_value=_make_playbook("KR"))
+
+        decision_logger = MagicMock()
+        decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+        async def _passthrough(fn, *a, label: str = "", **kw):  # type: ignore[override]
+            return await fn(*a, **kw)
+
+        with (
+            patch("src.main.get_open_position", return_value=None),
+            patch("src.main.get_open_markets", return_value=[mock_market]),
+            patch("src.main.get_session_info", return_value=MagicMock(session_id="KRX_REG")),
+            patch(
+                "src.core.session_risk.get_session_info",
+                return_value=MagicMock(session_id="KRX_REG"),
+            ),
+            patch("src.main._retry_connection", new=_passthrough),
+            patch("src.main.log_trade"),
+        ):
+            await run_daily_session(
+                broker=broker,
+                overseas_broker=MagicMock(),
+                scenario_engine=MagicMock(evaluate=MagicMock(return_value=_make_buy_match())),
+                playbook_store=playbook_store,
+                pre_market_planner=MagicMock(),
+                risk=MagicMock(validate_order=MagicMock(), check_circuit_breaker=MagicMock()),
+                db_conn=db_conn,
+                decision_logger=decision_logger,
+                context_store=MagicMock(),
+                criticality_assessor=MagicMock(),
+                telegram=mock_telegram,
+                settings=settings,
+                smart_scanner=smart_scanner,
+                daily_start_eval=0.0,
+            )
+
+        broker.send_order.assert_not_called()
+        call_args = decision_logger.log_decision.call_args
+        assert call_args is not None
+        assert call_args.kwargs["action"] == "HOLD"
+        assert "recent sell" in call_args.kwargs["rationale"].lower()
+
 
 @pytest.mark.asyncio
 async def test_buy_suppressed_when_open_position_exists() -> None:
@@ -6860,6 +7070,92 @@ def test_buy_chasing_session_high_guard_allows_non_chase_entries(
     )
 
     assert not blocked
+
+
+def test_recent_sell_guard_blocks_higher_price_reentry_within_window() -> None:
+    settings = _make_settings()
+    market = MagicMock()
+    market.is_domestic = True
+    market.code = "KR"
+
+    now = datetime(2026, 3, 18, 0, 0, tzinfo=UTC)
+    blocked, elapsed_seconds, window_seconds = _should_block_buy_above_recent_sell(
+        market=market,
+        action="BUY",
+        current_price=101.0,
+        last_sell_price=100.5,
+        last_sell_timestamp=(now - timedelta(seconds=30)).isoformat(),
+        settings=settings,
+        now=now,
+    )
+
+    assert blocked
+    assert elapsed_seconds == 30
+    assert window_seconds == 120
+
+
+def test_recent_sell_guard_allows_lower_price_reentry_within_window() -> None:
+    settings = _make_settings()
+    market = MagicMock()
+    market.is_domestic = True
+    market.code = "KR"
+
+    now = datetime(2026, 3, 18, 0, 0, tzinfo=UTC)
+    blocked, elapsed_seconds, window_seconds = _should_block_buy_above_recent_sell(
+        market=market,
+        action="BUY",
+        current_price=100.0,
+        last_sell_price=100.5,
+        last_sell_timestamp=(now - timedelta(seconds=30)).isoformat(),
+        settings=settings,
+        now=now,
+    )
+
+    assert not blocked
+    assert elapsed_seconds == 30
+    assert window_seconds == 120
+
+
+def test_recent_sell_guard_allows_higher_price_reentry_after_expiry() -> None:
+    settings = _make_settings()
+    market = MagicMock()
+    market.is_domestic = True
+    market.code = "KR"
+
+    now = datetime(2026, 3, 18, 0, 0, tzinfo=UTC)
+    blocked, elapsed_seconds, window_seconds = _should_block_buy_above_recent_sell(
+        market=market,
+        action="BUY",
+        current_price=101.0,
+        last_sell_price=100.5,
+        last_sell_timestamp=(now - timedelta(seconds=180)).isoformat(),
+        settings=settings,
+        now=now,
+    )
+
+    assert not blocked
+    assert elapsed_seconds == 180
+    assert window_seconds == 120
+
+
+def test_recent_sell_guard_allows_buy_without_sell_history() -> None:
+    settings = _make_settings()
+    market = MagicMock()
+    market.is_domestic = True
+    market.code = "KR"
+
+    blocked, elapsed_seconds, window_seconds = _should_block_buy_above_recent_sell(
+        market=market,
+        action="BUY",
+        current_price=101.0,
+        last_sell_price=0.0,
+        last_sell_timestamp=None,
+        settings=settings,
+    )
+
+    assert not blocked
+    assert elapsed_seconds == 0
+    assert window_seconds == 0
 
 
 def test_split_trade_pnl_components_overseas_fx_split_preserves_total() -> None:

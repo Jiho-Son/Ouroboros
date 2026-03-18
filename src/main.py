@@ -72,6 +72,7 @@ from src.core.order_helpers import (
     _resolve_buy_suppression_position,
     _resolve_domestic_quote_market_div_code,
     _resolve_sell_qty_for_pnl,
+    _should_block_buy_above_recent_sell,
     _should_block_buy_chasing_session_high,
     _should_block_overseas_buy_for_fx_buffer,
     _should_force_exit_for_overnight,
@@ -93,6 +94,7 @@ from src.core.session_risk import (
 )
 from src.db import (
     get_latest_buy_trade,
+    get_latest_sell_trade,
     get_open_position,
     get_recent_symbols,
     init_db,
@@ -1393,6 +1395,46 @@ async def _evaluate_trading_cycle_decision(
                     remaining,
                 )
         if decision.action == "BUY":
+            latest_sell = get_latest_sell_trade(
+                db_conn,
+                stock_code,
+                market.code,
+                exchange_code=market.exchange_code,
+            )
+            last_sell_price = safe_float(latest_sell.get("price"), 0.0) if latest_sell else 0.0
+            blocked_recent_sell, elapsed_seconds, window_seconds = (
+                _should_block_buy_above_recent_sell(
+                    market=market,
+                    action=decision.action,
+                    current_price=current_price,
+                    last_sell_price=last_sell_price,
+                    last_sell_timestamp=(
+                        str(latest_sell.get("timestamp") or "") if latest_sell else None
+                    ),
+                    settings=settings,
+                )
+            )
+            if blocked_recent_sell:
+                decision = TradeDecision(
+                    action="HOLD",
+                    confidence=decision.confidence,
+                    rationale=(
+                        "Recent sell guard blocked BUY "
+                        f"(last_sell={last_sell_price:.4f}, current={current_price:.4f}, "
+                        f"elapsed={elapsed_seconds}s, window={window_seconds}s)"
+                    ),
+                )
+                logger.info(
+                    "BUY suppressed for %s (%s): recent sell guard "
+                    "(last_sell=%.4f current=%.4f elapsed=%ds window=%ds)",
+                    stock_code,
+                    market.name,
+                    last_sell_price,
+                    current_price,
+                    elapsed_seconds,
+                    window_seconds,
+                )
+        if decision.action == "BUY":
             blocked, pullback_pct, min_gain_pct, max_pullback_pct = (
                 _should_block_buy_chasing_session_high(
                     market=market,
@@ -2501,6 +2543,47 @@ async def _process_daily_session_stock(
                     stock_code,
                     market.name,
                     remaining,
+                )
+        if decision.action == "BUY":
+            latest_sell = get_latest_sell_trade(
+                db_conn,
+                stock_code,
+                market.code,
+                exchange_code=market.exchange_code,
+            )
+            last_sell_price = safe_float(latest_sell.get("price"), 0.0) if latest_sell else 0.0
+            blocked_recent_sell, elapsed_seconds, window_seconds = (
+                _should_block_buy_above_recent_sell(
+                    market=market,
+                    action=decision.action,
+                    current_price=stock_data["current_price"],
+                    last_sell_price=last_sell_price,
+                    last_sell_timestamp=(
+                        str(latest_sell.get("timestamp") or "") if latest_sell else None
+                    ),
+                    settings=settings,
+                )
+            )
+            if blocked_recent_sell:
+                decision = TradeDecision(
+                    action="HOLD",
+                    confidence=decision.confidence,
+                    rationale=(
+                        "Recent sell guard blocked BUY "
+                        f"(last_sell={last_sell_price:.4f}, "
+                        f"current={stock_data['current_price']:.4f}, "
+                        f"elapsed={elapsed_seconds}s, window={window_seconds}s)"
+                    ),
+                )
+                logger.info(
+                    "BUY suppressed for %s (%s): recent sell guard "
+                    "(last_sell=%.4f current=%.4f elapsed=%ds window=%ds)",
+                    stock_code,
+                    market.name,
+                    last_sell_price,
+                    stock_data["current_price"],
+                    elapsed_seconds,
+                    window_seconds,
                 )
         if decision.action == "BUY":
             blocked, pullback_pct, min_gain_pct, max_pullback_pct = (

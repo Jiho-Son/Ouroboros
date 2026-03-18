@@ -3,7 +3,13 @@
 import os
 import tempfile
 
-from src.db import get_latest_buy_trade, get_open_position, init_db, log_trade
+from src.db import (
+    get_latest_buy_trade,
+    get_latest_sell_trade,
+    get_open_position,
+    init_db,
+    log_trade,
+)
 
 
 def test_get_open_position_returns_latest_buy() -> None:
@@ -366,6 +372,43 @@ def test_get_latest_buy_trade_prefers_exchange_code_match() -> None:
     )
     assert matched is not None
     assert matched["decision_id"] == "matched-buy"
+
+
+def test_get_latest_sell_trade_prefers_exchange_code_match() -> None:
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="SELL",
+        confidence=80,
+        rationale="legacy sell",
+        quantity=10,
+        price=120.0,
+        market="US_NASDAQ",
+        exchange_code="",
+        decision_id="legacy-sell",
+    )
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="SELL",
+        confidence=85,
+        rationale="matched sell",
+        quantity=5,
+        price=125.0,
+        market="US_NASDAQ",
+        exchange_code="NASD",
+        decision_id="matched-sell",
+    )
+    matched = get_latest_sell_trade(
+        conn,
+        stock_code="AAPL",
+        market="US_NASDAQ",
+        exchange_code="NASD",
+    )
+    assert matched is not None
+    assert matched["decision_id"] == "matched-sell"
+    assert matched["price"] == 125.0
 
 
 def test_decision_logs_session_id_migration_backfills_unknown() -> None:

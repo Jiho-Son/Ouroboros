@@ -670,6 +670,7 @@ STOP_LOSS_COOLDOWN_MINUTES=120  # Cooldown after stop-loss before re-entry (same
 US_MIN_PRICE=5.0              # Minimum US stock price for BUY ($)
 BUY_CHASE_MIN_INTRADAY_GAIN_PCT=4.0      # Minimum day gain before the chase guard activates
 BUY_CHASE_MAX_PULLBACK_FROM_HIGH_PCT=0.5 # Maximum pullback from session high still treated as "buying the top"
+SELL_REENTRY_PRICE_GUARD_SECONDS=120     # Block re-buying above the latest SELL price for a short window
 
 # Optional — v3 Session Risk Management
 SESSION_RISK_RELOAD_ENABLED=true   # Reload risk params at session boundaries
