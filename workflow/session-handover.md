@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-03-18 | session=codex-pr834-review-followup
+- branch: feature/issue-822-korean-policy-validator-stability
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #822, #834
+- next_ticket: #822
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: PR #834 리뷰 코멘트를 검토하고 타당성 검증 후 필요한 코드 수정, PR 코멘트, 리뷰 스레드 답글을 정리한다.
+
 ### 2026-03-12 | session=codex-oor-816-start
 - branch: feature/issue-816-buy-entry-timing
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -361,3 +369,11 @@
 - next_ticket: OOR-815
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: 매도 직후 1분 내 고가 재매수가 planner/scenario/runtime 중 어디서 재진입하는지 재현 신호부터 확보하고 가장 좁은 수정면에 회귀 테스트를 둔다.
+
+### 2026-03-18 | session=codex-oor-822-start
+- branch: feature/issue-822-korean-policy-validator-stability
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-822 Todo→In Progress 상태, 이슈 설명/Acceptance Criteria, 기존 workpad 없음, 첨부 PR 없음
+- next_ticket: OOR-822
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: Korean policy 검증의 날짜 하드코딩, H1/H2 경계 파싱, 누락 키워드 메시지를 재현한 뒤 TDD로 안정화하고 회귀 테스트를 남긴다.
