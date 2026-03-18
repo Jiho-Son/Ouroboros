@@ -377,3 +377,11 @@
 - next_ticket: OOR-822
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: Korean policy 검증의 날짜 하드코딩, H1/H2 경계 파싱, 누락 키워드 메시지를 재현한 뒤 TDD로 안정화하고 회귀 테스트를 남긴다.
+
+### 2026-03-18 | session=codex-oor-823-rework-start
+- branch: feature/issue-823-pending-orders-quote-dedupe
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-823 Rework 상태, 이슈 설명/Acceptance Criteria, 삭제한 prior workpad, issue attachment 없음, PR #827 review comments
+- next_ticket: OOR-823
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: `origin/main@60bff92` 기준 fresh branch로 재시작하며, OOR-813 동작을 유지한 채 `pending_orders`의 4중 호가 조회/ask-bid 추출 중복을 공통 helper로 접는다.
