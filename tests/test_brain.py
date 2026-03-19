@@ -8,8 +8,6 @@ import pytest
 
 from src.brain.decision_engine import DecisionEngine
 
-GeminiClient = DecisionEngine
-
 # ---------------------------------------------------------------------------
 # Response Parsing
 # ---------------------------------------------------------------------------
@@ -19,7 +17,7 @@ class TestResponseParsing:
     """Gemini responses must be parsed into validated TradeDecision objects."""
 
     def test_valid_buy_response(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         raw = '{"action": "BUY", "confidence": 90, "rationale": "Strong momentum"}'
         decision = client.parse_response(raw)
         assert decision.action == "BUY"
@@ -27,13 +25,13 @@ class TestResponseParsing:
         assert decision.rationale == "Strong momentum"
 
     def test_valid_sell_response(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         raw = '{"action": "SELL", "confidence": 85, "rationale": "Overbought RSI"}'
         decision = client.parse_response(raw)
         assert decision.action == "SELL"
 
     def test_valid_hold_response(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         raw = '{"action": "HOLD", "confidence": 95, "rationale": "Sideways market"}'
         decision = client.parse_response(raw)
         assert decision.action == "HOLD"
@@ -48,20 +46,20 @@ class TestConfidenceThreshold:
     """If confidence < 80, the action MUST be forced to HOLD."""
 
     def test_low_confidence_buy_becomes_hold(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         raw = '{"action": "BUY", "confidence": 65, "rationale": "Weak signal"}'
         decision = client.parse_response(raw)
         assert decision.action == "HOLD"
         assert decision.confidence == 65
 
     def test_low_confidence_sell_becomes_hold(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         raw = '{"action": "SELL", "confidence": 79, "rationale": "Uncertain"}'
         decision = client.parse_response(raw)
         assert decision.action == "HOLD"
 
     def test_exactly_threshold_is_allowed(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         raw = '{"action": "BUY", "confidence": 80, "rationale": "Just enough"}'
         decision = client.parse_response(raw)
         assert decision.action == "BUY"
@@ -76,25 +74,25 @@ class TestMalformedJsonHandling:
     """Gemini may return garbage — the parser must not crash."""
 
     def test_empty_string_returns_hold(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         decision = client.parse_response("")
         assert decision.action == "HOLD"
         assert decision.confidence == 0
 
     def test_plain_text_returns_hold(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         decision = client.parse_response("I think you should buy Samsung stock")
         assert decision.action == "HOLD"
         assert decision.confidence == 0
 
     def test_partial_json_returns_hold(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         decision = client.parse_response('{"action": "BUY", "confidence":')
         assert decision.action == "HOLD"
         assert decision.confidence == 0
 
     def test_json_with_missing_fields_returns_hold(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         raw = '{"action": "BUY"}'
         decision = client.parse_response(raw)
         assert decision.action == "HOLD"
@@ -105,14 +103,14 @@ class TestMalformedJsonHandling:
 
     def test_non_trade_decision_json_preserves_raw_in_rationale(self, settings):
         """Playbook JSON (no action/confidence/rationale) must be preserved for planner."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         playbook_json = '{"market_outlook": "neutral", "stocks": []}'
         decision = client.parse_response(playbook_json)
         assert decision.action == "HOLD"
         assert decision.rationale == playbook_json
 
     def test_json_with_invalid_action_returns_hold(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         decision = client.parse_response(
             '{"action": "YOLO", "confidence": 99, "rationale": "moon"}'
         )
@@ -121,7 +119,7 @@ class TestMalformedJsonHandling:
 
     def test_json_wrapped_in_markdown_code_block(self, settings):
         """Gemini often wraps JSON in ```json ... ``` blocks."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         raw = '```json\n{"action": "BUY", "confidence": 92, "rationale": "Good"}\n```'
         decision = client.parse_response(raw)
         assert decision.action == "BUY"
@@ -137,7 +135,7 @@ class TestPromptConstruction:
     """The prompt sent to Gemini must include all required market data."""
 
     def test_prompt_contains_stock_code(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         market_data = {
             "stock_code": "005930",
             "current_price": 72000,
@@ -148,7 +146,7 @@ class TestPromptConstruction:
         assert "005930" in prompt
 
     def test_prompt_contains_price(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         market_data = {
             "stock_code": "005930",
             "current_price": 72000,
@@ -159,7 +157,7 @@ class TestPromptConstruction:
         assert "72000" in prompt
 
     def test_prompt_enforces_json_output_format(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         market_data = {
             "stock_code": "005930",
             "current_price": 72000,
@@ -181,7 +179,7 @@ class TestBatchDecisionParsing:
     """Batch response parser must handle JSON arrays correctly."""
 
     def test_parse_valid_batch_response(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         stocks_data = [
             {"stock_code": "AAPL", "current_price": 185.5},
             {"stock_code": "MSFT", "current_price": 420.0},
@@ -200,7 +198,7 @@ class TestBatchDecisionParsing:
         assert decisions["MSFT"].confidence == 50
 
     def test_parse_batch_with_markdown_wrapper(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         stocks_data = [{"stock_code": "AAPL", "current_price": 185.5}]
         raw = """```json
 [{"code": "AAPL", "action": "BUY", "confidence": 90, "rationale": "Good"}]
@@ -212,7 +210,7 @@ class TestBatchDecisionParsing:
         assert decisions["AAPL"].confidence == 90
 
     def test_parse_batch_empty_response_returns_hold_for_all(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         stocks_data = [
             {"stock_code": "AAPL", "current_price": 185.5},
             {"stock_code": "MSFT", "current_price": 420.0},
@@ -226,7 +224,7 @@ class TestBatchDecisionParsing:
         assert decisions["MSFT"].action == "HOLD"
 
     def test_parse_batch_malformed_json_returns_hold_for_all(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         stocks_data = [{"stock_code": "AAPL", "current_price": 185.5}]
         raw = "This is not JSON"
 
@@ -236,7 +234,7 @@ class TestBatchDecisionParsing:
         assert decisions["AAPL"].confidence == 0
 
     def test_parse_batch_not_array_returns_hold_for_all(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         stocks_data = [{"stock_code": "AAPL", "current_price": 185.5}]
         raw = '{"code": "AAPL", "action": "BUY", "confidence": 90, "rationale": "Good"}'
 
@@ -246,7 +244,7 @@ class TestBatchDecisionParsing:
         assert decisions["AAPL"].confidence == 0
 
     def test_parse_batch_missing_stock_gets_hold(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         stocks_data = [
             {"stock_code": "AAPL", "current_price": 185.5},
             {"stock_code": "MSFT", "current_price": 420.0},
@@ -261,7 +259,7 @@ class TestBatchDecisionParsing:
         assert decisions["MSFT"].confidence == 0
 
     def test_parse_batch_invalid_action_becomes_hold(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         stocks_data = [{"stock_code": "AAPL", "current_price": 185.5}]
         raw = '[{"code": "AAPL", "action": "YOLO", "confidence": 90, "rationale": "Moon"}]'
 
@@ -270,7 +268,7 @@ class TestBatchDecisionParsing:
         assert decisions["AAPL"].action == "HOLD"
 
     def test_parse_batch_low_confidence_becomes_hold(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         stocks_data = [{"stock_code": "AAPL", "current_price": 185.5}]
         raw = '[{"code": "AAPL", "action": "BUY", "confidence": 65, "rationale": "Weak"}]'
 
@@ -280,7 +278,7 @@ class TestBatchDecisionParsing:
         assert decisions["AAPL"].confidence == 65
 
     def test_parse_batch_missing_fields_gets_hold(self, settings):
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         stocks_data = [{"stock_code": "AAPL", "current_price": 185.5}]
         raw = '[{"code": "AAPL", "action": "BUY"}]'  # Missing confidence and rationale
 
@@ -301,7 +299,7 @@ class TestPromptOverride:
     @pytest.mark.asyncio
     async def test_prompt_override_is_sent_to_gemini(self, settings):
         """When prompt_override is in market_data, it should be used as the prompt."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
 
         custom_prompt = "You are a playbook generator. Return JSON with scenarios."
         playbook_json = '{"market_outlook": "neutral", "stocks": []}'
@@ -335,7 +333,7 @@ class TestPromptOverride:
     @pytest.mark.asyncio
     async def test_prompt_override_skips_parse_response(self, settings):
         """prompt_override bypasses parse_response — no Missing fields warning, raw preserved."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         client._enable_optimization = True
 
         custom_prompt = "Custom playbook prompt"
@@ -366,7 +364,7 @@ class TestPromptOverride:
     @pytest.mark.asyncio
     async def test_prompt_override_takes_priority_over_optimization(self, settings):
         """prompt_override must win over enable_optimization=True."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         client._enable_optimization = True
 
         custom_prompt = "Explicit playbook prompt"
@@ -397,7 +395,7 @@ class TestPromptOverride:
     @pytest.mark.asyncio
     async def test_without_prompt_override_uses_build_prompt(self, settings):
         """Without prompt_override, decide() should use build_prompt as before."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
 
         mock_response = MagicMock()
         mock_response.text = '{"action": "HOLD", "confidence": 50, "rationale": "ok"}'
@@ -422,28 +420,26 @@ class TestPromptOverride:
             assert "005930" in actual_prompt
 
 
-class _StubLLMClient:
+class _StubLLMProvider:
     def __init__(self, response_text: str) -> None:
         self._response_text = response_text
         self.calls: list[dict[str, str]] = []
-        self.aio = MagicMock()
-        self.aio.models = MagicMock()
-        self.aio.models.generate_content = AsyncMock(side_effect=self._generate_content)
+        self.generate_text = AsyncMock(side_effect=self._generate_text)
 
-    async def _generate_content(self, *, model: str, contents: str) -> MagicMock:
-        self.calls.append({"model": model, "contents": contents})
-        return MagicMock(text=self._response_text)
+    async def _generate_text(self, *, model: str, prompt: str) -> str:
+        self.calls.append({"model": model, "prompt": prompt})
+        return self._response_text
 
 
 @pytest.mark.asyncio
 async def test_decide_uses_injected_llm_provider(settings):
     """Decision generation should delegate raw prompt execution to the configured provider."""
-    llm_client = _StubLLMClient(
+    llm_provider = _StubLLMProvider(
         '{"action": "BUY", "confidence": 92, "rationale": "Local model approved"}'
     )
-    client = GeminiClient(
+    client = DecisionEngine(
         settings,
-        llm_client=llm_client,
+        llm_provider=llm_provider,
         enable_cache=False,
         enable_optimization=False,
     )
@@ -458,10 +454,10 @@ async def test_decide_uses_injected_llm_provider(settings):
 
     assert decision.action == "BUY"
     assert decision.confidence == 92
-    assert llm_client.calls == [
+    assert llm_provider.calls == [
         {
             "model": settings.GEMINI_MODEL,
-            "contents": client.build_prompt_sync(
+            "prompt": client.build_prompt_sync(
                 {
                     "stock_code": "005930",
                     "current_price": 72000,

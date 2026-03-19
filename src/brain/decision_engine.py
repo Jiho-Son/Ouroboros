@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -63,6 +64,12 @@ class DecisionEngine:
     ) -> None:
         if llm_provider is not None and llm_client is not None:
             raise ValueError("Pass only one of llm_provider or llm_client")
+        if llm_client is not None:
+            warnings.warn(
+                "llm_client is deprecated, use llm_provider instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
         self._settings = settings
         self._confidence_threshold = settings.CONFIDENCE_THRESHOLD
@@ -369,6 +376,11 @@ class DecisionEngine:
         if hasattr(self._provider, "generate_text"):
             return await self._provider.generate_text(model=self._model_name, prompt=prompt)
 
+        warnings.warn(
+            "legacy LLM client fallback is deprecated; implement generate_text instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         response = await self._client.aio.models.generate_content(
             model=self._model_name,
             contents=prompt,

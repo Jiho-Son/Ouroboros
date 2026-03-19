@@ -479,8 +479,6 @@ class TestMarketData:
 # DecisionEngine Integration Tests
 # ---------------------------------------------------------------------------
 
-GeminiClient = DecisionEngine
-
 
 class TestDecisionEngineWithExternalData:
     """Test DecisionEngine integration with external data sources."""
@@ -491,7 +489,7 @@ class TestDecisionEngineWithExternalData:
         calendar = EconomicCalendar()
         market_data = MarketData()
 
-        client = GeminiClient(
+        client = DecisionEngine(
             settings,
             news_api=news_api,
             economic_calendar=calendar,
@@ -504,7 +502,7 @@ class TestDecisionEngineWithExternalData:
 
     def test_gemini_client_works_without_external_data(self, settings):
         """DecisionEngine should work without external data sources."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
         assert client._news_api is None
         assert client._economic_calendar is None
         assert client._market_data is None
@@ -512,7 +510,7 @@ class TestDecisionEngineWithExternalData:
     @pytest.mark.asyncio
     async def test_build_prompt_includes_news_sentiment(self, settings):
         """build_prompt should include news sentiment when available."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
 
         market_data = {
             "stock_code": "AAPL",
@@ -562,7 +560,7 @@ class TestDecisionEngineWithExternalData:
             )
         )
 
-        client = GeminiClient(settings, economic_calendar=calendar)
+        client = DecisionEngine(settings, economic_calendar=calendar)
 
         market_data = {
             "stock_code": "AAPL",
@@ -588,7 +586,7 @@ class TestDecisionEngineWithExternalData:
                 breadth=MagicMock(advance_decline_ratio=2.5),
             )
 
-            client = GeminiClient(settings, market_data=market_data_provider)
+            client = DecisionEngine(settings, market_data=market_data_provider)
 
             market_data = {
                 "stock_code": "AAPL",
@@ -605,7 +603,7 @@ class TestDecisionEngineWithExternalData:
     @pytest.mark.asyncio
     async def test_build_prompt_graceful_when_no_external_data(self, settings):
         """build_prompt should work gracefully without external data."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
 
         market_data = {
             "stock_code": "AAPL",
@@ -622,7 +620,7 @@ class TestDecisionEngineWithExternalData:
 
     def test_build_prompt_sync_backward_compatibility(self, settings):
         """build_prompt_sync should maintain backward compatibility."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
 
         market_data = {
             "stock_code": "005930",
@@ -642,7 +640,7 @@ class TestDecisionEngineWithExternalData:
     @pytest.mark.asyncio
     async def test_decide_with_news_sentiment_parameter(self, settings):
         """decide should accept optional news_sentiment parameter."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
 
         market_data = {
             "stock_code": "AAPL",

@@ -33,8 +33,6 @@ class LLMAsyncNamespace(Protocol):
 class LLMProvider(Protocol):
     """Low-level provider protocol used by the decision engine."""
 
-    aio: LLMAsyncNamespace
-
     async def generate_text(self, *, model: str, prompt: str) -> str:
         """Generate raw text for the given model and prompt."""
 
@@ -110,7 +108,9 @@ def build_llm_provider(settings: Settings) -> LLMProvider:
             base_url=settings.OLLAMA_BASE_URL,
             timeout_seconds=settings.OLLAMA_REQUEST_TIMEOUT_SECONDS,
         )
-    return GeminiProvider(api_key=settings.GEMINI_API_KEY or "")
+    if not settings.GEMINI_API_KEY:
+        raise ValueError("LLM_PROVIDER=gemini 이지만 GEMINI_API_KEY가 설정되지 않았습니다")
+    return GeminiProvider(api_key=settings.GEMINI_API_KEY)
 
 
 def build_llm_client(settings: Settings) -> LLMProvider:
