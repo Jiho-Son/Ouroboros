@@ -152,6 +152,13 @@ async def _fetch_optional_orderbook_top_levels(
     return extract_orderbook_top_levels(payload)
 
 
+def _require_retry_price(price: float | None, *, message: str) -> float:
+    """Raise even under `python -O` when retry-price resolution invariants break."""
+    if price is None:
+        raise AssertionError(message)
+    return price
+
+
 def _require_order_acceptance(
     result: dict[str, Any],
     *,
@@ -493,8 +500,9 @@ async def handle_domestic_pending_orders(
                                 action="BUY",
                             )
                             continue
-                        assert new_price is not None, (
-                            "BUY retry price should resolve when gap is not rejected"
+                        new_price = _require_retry_price(
+                            new_price,
+                            message="BUY retry price should resolve when gap is not rejected",
                         )
                         validate_order_policy(
                             market=MARKETS["KR"],
@@ -654,7 +662,10 @@ async def handle_domestic_pending_orders(
                             # not apply BUY-style gap-cap rejection.
                             enforce_gap_cap=False,
                         )
-                        assert new_price is not None, "SELL retry price should always resolve"
+                        new_price = _require_retry_price(
+                            new_price,
+                            message="SELL retry price should always resolve",
+                        )
                         validate_order_policy(
                             market=MARKETS["KR"],
                             order_type="SELL",
@@ -928,8 +939,9 @@ async def handle_overseas_pending_orders(
                                     action="BUY",
                                 )
                                 continue
-                            assert new_price is not None, (
-                                "BUY retry price should resolve when gap is not rejected"
+                            new_price = _require_retry_price(
+                                new_price,
+                                message="BUY retry price should resolve when gap is not rejected",
                             )
                             market_info = next(
                                 (
@@ -1112,8 +1124,9 @@ async def handle_overseas_pending_orders(
                                 # not apply BUY-style gap-cap rejection.
                                 enforce_gap_cap=False,
                             )
-                            assert new_price is not None, (
-                                "SELL retry price should always resolve"
+                            new_price = _require_retry_price(
+                                new_price,
+                                message="SELL retry price should always resolve",
                             )
                             market_info = next(
                                 (

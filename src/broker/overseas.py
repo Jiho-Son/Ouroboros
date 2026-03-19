@@ -158,6 +158,8 @@ class OverseasBroker:
     @staticmethod
     def _extract_orderbook_top_levels(payload: dict[str, Any]) -> tuple[float | None, float | None]:
         """Extract top ask/bid from shared pending-order orderbook payload variants."""
+        # KIS overseas payloads are expected to expose a single authoritative orderbook
+        # container in production, so the shared helper's alias precedence is sufficient.
         return extract_orderbook_top_levels(payload)
 
     async def get_overseas_orderbook(self, exchange_code: str, stock_code: str) -> dict[str, Any]:

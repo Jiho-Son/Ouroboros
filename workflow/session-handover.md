@@ -417,3 +417,11 @@
 - next_ticket: OOR-824
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: `config.py` gap-cap JSON 이중 파싱, pending-order executable quote extraction/async contract/SELL retry policy, dead branch 정리를 PR #829 후속 범위로 묶어 재현 후 TDD로 수정한다.
+
+### 2026-03-19 | session=codex-pr839-review-followup
+- branch: feature/issue-824-pending-order-executable-quote-follow-ups
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-824, PR #839 review summary 및 inline review threads 확인 시작
+- next_ticket: OOR-824
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: PR #839 리뷰 지적을 코드 기준으로 재검증한 뒤 필요한 수정만 반영하고, 검증 후 thread reply 및 PR 코멘트를 남긴다.

@@ -9,7 +9,17 @@ from src.broker.overseas import OverseasBroker
 from src.broker.pending_orders import (
     _fetch_optional_orderbook_top_levels,
     _fetch_optional_quote_payload,
+    _require_retry_price,
 )
+
+
+class TestRequireRetryPrice:
+    def test_returns_price_when_present(self) -> None:
+        assert _require_retry_price(50300.0, message="retry price should resolve") == 50300.0
+
+    def test_raises_assertion_error_when_price_missing(self) -> None:
+        with pytest.raises(AssertionError, match="retry price should resolve"):
+            _require_retry_price(None, message="retry price should resolve")
 
 
 class TestFetchOptionalQuotePayload:
@@ -26,7 +36,7 @@ class TestFetchOptionalQuotePayload:
         assert payload == {}
 
     @pytest.mark.asyncio
-    async def test_requires_async_quote_method(self) -> None:
+    async def test_raises_type_error_for_sync_quote_method(self) -> None:
         broker = SimpleNamespace(
             get_orderbook_by_market=lambda **kwargs: {
                 "output1": {"stck_askp1": "50300", "stck_bidp1": "49900"}
@@ -61,6 +71,7 @@ class TestFetchOptionalOrderbookTopLevels:
 
     @pytest.mark.asyncio
     async def test_returns_none_when_quote_method_is_sync_only(self) -> None:
+        """The best-effort orderbook wrapper logs and skips optional sync-only quote hooks."""
         broker = SimpleNamespace(
             get_orderbook_by_market=lambda **kwargs: {
                 "output1": {"stck_askp1": "50300", "stck_bidp1": "49900"}
