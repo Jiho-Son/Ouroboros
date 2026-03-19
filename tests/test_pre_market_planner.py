@@ -573,7 +573,8 @@ class TestBuildPrompt:
         prompt = planner._build_prompt("KR", [_candidate()], {}, None, cross)
 
         assert "Other Market (US)" in prompt
-        assert "+1.50%" in prompt
+        assert "Realized PnL (USD, raw): +1.50" in prompt
+        assert "+1.50%" not in prompt
         assert "Cut losses early" in prompt
 
     def test_prompt_contains_context_data(self) -> None:
@@ -609,7 +610,8 @@ class TestBuildPrompt:
 
         assert "My Market Previous Day (KR)" in prompt
         assert "2026-02-07" in prompt
-        assert "-0.80%" in prompt
+        assert "Realized PnL (KRW, raw): -0.80" in prompt
+        assert "-0.80%" not in prompt
         assert "Avoid midday entries" in prompt
 
 

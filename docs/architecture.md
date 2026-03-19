@@ -342,11 +342,12 @@ High-frequency trading with individual stock analysis:
 
 - Generates comprehensive trade performance summary
 - Stores results in L6_DAILY context layer
-- Tracks win rate, P&L, confidence accuracy
+- Tracks win rate, raw realized P&L (market quote currency), confidence accuracy
 
 **DailyScorecard** (`scorecard.py`) — Performance scoring
 
 - Calculates daily metrics (trades, P&L, win rate, avg confidence)
+- `total_pnl` is stored as raw realized P&L, not a percentage
 - Enables trend tracking across days
 
 **Stop-Loss Monitoring** — Real-time position protection

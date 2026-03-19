@@ -46,6 +46,16 @@ _ACTION_MAP: dict[str, ScenarioAction] = {
     "REDUCE_ALL": ScenarioAction.REDUCE_ALL,
 }
 
+_RAW_PNL_UNIT_BY_MARKET: dict[str, str] = {
+    "KR": "KRW",
+    "US": "USD",
+}
+
+
+def _raw_pnl_unit_for_market(market: str) -> str:
+    """Return the display unit for raw realized PnL values in scorecards."""
+    return _RAW_PNL_UNIT_BY_MARKET.get(market, market)
+
 
 class PreMarketPlanner:
     """Generates a DayPlaybook by calling the decision engine once before market open.
@@ -278,9 +288,10 @@ class PreMarketPlanner:
 
         cross_market_text = ""
         if cross_market:
+            cross_market_pnl_unit = _raw_pnl_unit_for_market(cross_market.market)
             cross_market_text = (
                 f"\n## Other Market ({cross_market.market}) Summary\n"
-                f"- P&L: {cross_market.total_pnl:+.2f}%\n"
+                f"- Realized PnL ({cross_market_pnl_unit}, raw): {cross_market.total_pnl:+.2f}\n"
                 f"- Win Rate: {cross_market.win_rate:.0f}%\n"
                 f"- Index Change: {cross_market.index_change_pct:+.2f}%\n"
             )
@@ -289,10 +300,12 @@ class PreMarketPlanner:
 
         self_market_text = ""
         if self_market_scorecard:
+            self_market_pnl_unit = _raw_pnl_unit_for_market(market)
             self_market_text = (
                 f"\n## My Market Previous Day ({market})\n"
                 f"- Date: {self_market_scorecard['date']}\n"
-                f"- P&L: {self_market_scorecard['total_pnl']:+.2f}%\n"
+                f"- Realized PnL ({self_market_pnl_unit}, raw): "
+                f"{self_market_scorecard['total_pnl']:+.2f}\n"
                 f"- Win Rate: {self_market_scorecard['win_rate']:.0f}%\n"
             )
             lessons = self_market_scorecard.get("lessons", [])
