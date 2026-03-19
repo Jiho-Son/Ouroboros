@@ -1,7 +1,5 @@
 # OOR-823 Pending-Order Quote Dedupe Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** Remove duplicated pending-order orderbook lookup code while preserving OOR-813 retry behavior and fallback semantics.
 
 **Architecture:** Add one shared orderbook extraction utility in `src/broker/`, keep one pending-order helper for optional quote lookup and side selection, then switch the four domestic/overseas BUY/SELL retry paths to that helper. Cover the refactor with RED-first helper tests and the existing pending-order regression suite.

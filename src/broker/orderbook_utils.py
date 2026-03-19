@@ -9,10 +9,14 @@ _ASK_KEYS = ("pask1", "askp1", "stck_askp1", "ask_price_1")
 _BID_KEYS = ("pbid1", "bidp1", "stck_bidp1", "bid_price_1")
 
 
-def extract_orderbook_top_levels(payload: dict[str, Any]) -> tuple[float | None, float | None]:
+def extract_orderbook_top_levels(
+    payload: dict[str, Any],
+    *,
+    container_keys: tuple[str, ...] = _CONTAINER_KEYS,
+) -> tuple[float | None, float | None]:
     """Extract the first positive top-of-book ask/bid across supported payload aliases."""
     output: Any = payload
-    for container_key in _CONTAINER_KEYS:
+    for container_key in container_keys:
         candidate = payload.get(container_key)
         if candidate not in (None, ""):
             output = candidate

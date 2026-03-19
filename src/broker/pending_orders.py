@@ -143,6 +143,9 @@ async def _fetch_optional_orderbook_top_levels(
     method_name: str,
     kwargs: dict[str, Any],
     log_context: str,
+    extractor: Callable[[dict[str, Any]], tuple[float | None, float | None]] = (
+        extract_orderbook_top_levels
+    ),
 ) -> tuple[float | None, float | None]:
     """Fetch optional orderbook payload and resolve executable top levels."""
     try:
@@ -154,7 +157,7 @@ async def _fetch_optional_orderbook_top_levels(
     except Exception as exc:
         logger.warning("Failed to fetch %s: %s", log_context, exc)
         return None, None
-    return extract_orderbook_top_levels(payload)
+    return extractor(payload)
 
 
 def _require_order_acceptance(
@@ -893,6 +896,7 @@ async def handle_overseas_pending_orders(
                                     "stock_code": stock_code,
                                 },
                                 log_context=f"overseas orderbook for {order_exchange} {stock_code}",
+                                extractor=OverseasBroker._extract_orderbook_top_levels,
                             )
                             new_price, _, gap_rejected = _resolve_retry_price_from_executable_quote(
                                 order_type="BUY",
@@ -1103,6 +1107,7 @@ async def handle_overseas_pending_orders(
                                     "stock_code": stock_code,
                                 },
                                 log_context=f"overseas orderbook for {order_exchange} {stock_code}",
+                                extractor=OverseasBroker._extract_orderbook_top_levels,
                             )
                             new_price, _, _ = _resolve_retry_price_from_executable_quote(
                                 order_type="SELL",
