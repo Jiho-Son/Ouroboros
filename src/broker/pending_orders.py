@@ -6,7 +6,6 @@ Extracted from ``src/main.py`` to reduce module size.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -127,11 +126,7 @@ async def _fetch_optional_quote_payload(
     method = getattr(obj, method_name, None)
     if method is None or not callable(method):
         return {}
-    result = method(**kwargs)
-    if inspect.isawaitable(result):
-        resolved = await result
-    else:
-        resolved = result
+    resolved = await method(**kwargs)
     if isinstance(resolved, dict):
         return resolved
     return {}
@@ -143,9 +138,6 @@ async def _fetch_optional_orderbook_top_levels(
     method_name: str,
     kwargs: dict[str, Any],
     log_context: str,
-    extractor: Callable[[dict[str, Any]], tuple[float | None, float | None]] = (
-        extract_orderbook_top_levels
-    ),
 ) -> tuple[float | None, float | None]:
     """Fetch optional orderbook payload and resolve executable top levels."""
     try:
@@ -157,7 +149,14 @@ async def _fetch_optional_orderbook_top_levels(
     except Exception as exc:
         logger.warning("Failed to fetch %s: %s", log_context, exc)
         return None, None
-    return extractor(payload)
+    return extract_orderbook_top_levels(payload)
+
+
+def _require_retry_price(price: float | None, *, message: str) -> float:
+    """Raise even under `python -O` when retry-price resolution invariants break."""
+    if price is None:
+        raise AssertionError(message)
+    return price
 
 
 def _require_order_acceptance(
@@ -501,8 +500,10 @@ async def handle_domestic_pending_orders(
                                 action="BUY",
                             )
                             continue
-                        if new_price is None:
-                            raise ValueError(f"Failed to resolve BUY retry price for {stock_code}")
+                        new_price = _require_retry_price(
+                            new_price,
+                            message="BUY retry price should resolve when gap is not rejected",
+                        )
                         validate_order_policy(
                             market=MARKETS["KR"],
                             order_type="BUY",
@@ -657,10 +658,14 @@ async def handle_domestic_pending_orders(
                             fallback_price=fallback_price,
                             executable_quote=executable_bid,
                             settings=settings,
+                            # Intentional policy: SELL retries prioritize exit liquidity and do
+                            # not apply BUY-style gap-cap rejection.
                             enforce_gap_cap=False,
                         )
-                        if new_price is None:
-                            raise ValueError(f"Failed to resolve SELL retry price for {stock_code}")
+                        new_price = _require_retry_price(
+                            new_price,
+                            message="SELL retry price should always resolve",
+                        )
                         validate_order_policy(
                             market=MARKETS["KR"],
                             order_type="SELL",
@@ -896,7 +901,6 @@ async def handle_overseas_pending_orders(
                                     "stock_code": stock_code,
                                 },
                                 log_context=f"overseas orderbook for {order_exchange} {stock_code}",
-                                extractor=OverseasBroker._extract_orderbook_top_levels,
                             )
                             new_price, _, gap_rejected = _resolve_retry_price_from_executable_quote(
                                 order_type="BUY",
@@ -935,10 +939,10 @@ async def handle_overseas_pending_orders(
                                     action="BUY",
                                 )
                                 continue
-                            if new_price is None:
-                                raise ValueError(
-                                    f"Failed to resolve BUY retry price for {stock_code}"
-                                )
+                            new_price = _require_retry_price(
+                                new_price,
+                                message="BUY retry price should resolve when gap is not rejected",
+                            )
                             market_info = next(
                                 (
                                     m
@@ -1107,7 +1111,6 @@ async def handle_overseas_pending_orders(
                                     "stock_code": stock_code,
                                 },
                                 log_context=f"overseas orderbook for {order_exchange} {stock_code}",
-                                extractor=OverseasBroker._extract_orderbook_top_levels,
                             )
                             new_price, _, _ = _resolve_retry_price_from_executable_quote(
                                 order_type="SELL",
@@ -1117,12 +1120,14 @@ async def handle_overseas_pending_orders(
                                 fallback_price=fallback_price,
                                 executable_quote=executable_bid,
                                 settings=settings,
+                                # Intentional policy: SELL retries prioritize exit liquidity and do
+                                # not apply BUY-style gap-cap rejection.
                                 enforce_gap_cap=False,
                             )
-                            if new_price is None:
-                                raise ValueError(
-                                    f"Failed to resolve SELL retry price for {stock_code}"
-                                )
+                            new_price = _require_retry_price(
+                                new_price,
+                                message="SELL retry price should always resolve",
+                            )
                             market_info = next(
                                 (
                                     m

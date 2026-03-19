@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
-from functools import cached_property
 
-from pydantic import Field, model_validator
+from pydantic import Field, PrivateAttr, model_validator
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
     """Application settings — loaded from .env or environment variables."""
+
+    _executable_quote_gap_caps_by_market_cache: dict[str, float] = PrivateAttr(default_factory=dict)
 
     # KIS Open API
     KIS_APP_KEY: str
@@ -160,7 +161,13 @@ class Settings(BaseSettings):
     def _validate_selected_llm_provider(self) -> Settings:
         if self.LLM_PROVIDER == "gemini" and not self.GEMINI_API_KEY:
             raise ValueError("GEMINI_API_KEY is required when LLM_PROVIDER=gemini")
-        self._parse_executable_quote_gap_caps_by_market()
+        return self
+
+    @model_validator(mode="after")
+    def _validate_executable_quote_gap_caps_by_market(self) -> Settings:
+        self._executable_quote_gap_caps_by_market_cache = (
+            self._parse_executable_quote_gap_caps_by_market()
+        )
         return self
 
     def _parse_executable_quote_gap_caps_by_market(self) -> dict[str, float]:
@@ -214,10 +221,10 @@ class Settings(BaseSettings):
         raw = [m.strip() for m in self.ENABLED_MARKETS.split(",") if m.strip()]
         return expand_market_codes(raw)
 
-    @cached_property
+    @property
     def executable_quote_gap_caps_by_market(self) -> dict[str, float]:
         """Market-specific executable quote gap caps (percent)."""
-        return self._parse_executable_quote_gap_caps_by_market()
+        return self._executable_quote_gap_caps_by_market_cache
 
     @property
     def llm_model(self) -> str:

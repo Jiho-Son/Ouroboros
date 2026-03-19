@@ -122,3 +122,33 @@ def test_executable_quote_gap_caps_by_market_is_cached_per_instance():
     second = s.executable_quote_gap_caps_by_market
     assert first == {"KR": 0.5}
     assert second is first
+
+
+def test_executable_quote_gap_caps_validation_does_not_reparse_cached_property(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Settings construction + property access should not parse the same gap-cap JSON twice."""
+    original = Settings._parse_executable_quote_gap_caps_by_market
+    calls = 0
+
+    def _spy(self: Settings) -> dict[str, float]:
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    monkeypatch.setattr(Settings, "_parse_executable_quote_gap_caps_by_market", _spy)
+
+    s = Settings(
+        KIS_APP_KEY="test",
+        KIS_APP_SECRET="test",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="test",
+        EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON='{"KR": 0.5}',
+    )
+
+    first = s.executable_quote_gap_caps_by_market
+    second = s.executable_quote_gap_caps_by_market
+
+    assert first == {"KR": 0.5}
+    assert second is first
+    assert calls == 1

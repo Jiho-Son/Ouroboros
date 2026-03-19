@@ -8419,7 +8419,7 @@ class TestHandleOverseasPendingOrders:
 
     @pytest.mark.asyncio
     async def test_sell_pending_is_cancelled_then_resubmitted(self) -> None:
-        """First unfilled SELL should be cancelled then resubmitted at -0.4% price."""
+        """First unfilled SELL should use executable bid even when gap-cap would reject BUY."""
         settings = self._make_settings("US_NASDAQ")
         telegram = self._make_telegram()
 
@@ -8434,6 +8434,9 @@ class TestHandleOverseasPendingOrders:
         overseas_broker.get_overseas_pending_orders = AsyncMock(return_value=[pending_order])
         overseas_broker.cancel_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
         overseas_broker.get_overseas_price = AsyncMock(return_value={"output": {"last": "200.0"}})
+        overseas_broker.get_overseas_orderbook = AsyncMock(
+            return_value={"output2": {"pask1": "205.0", "pbid1": "180.0"}}
+        )
         overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
 
         sell_resubmit_counts: dict[str, int] = {}
@@ -8446,7 +8449,7 @@ class TestHandleOverseasPendingOrders:
         overseas_broker.send_overseas_order.assert_called_once()
         resubmit_kwargs = overseas_broker.send_overseas_order.call_args[1]
         assert resubmit_kwargs["order_type"] == "SELL"
-        assert resubmit_kwargs["price"] == round(200.0 * 0.996, 2)
+        assert resubmit_kwargs["price"] == 180.0
         assert sell_resubmit_counts.get("NASD:AAPL") == 1
         notify_kwargs = telegram.notify_unfilled_order.call_args[1]
         assert notify_kwargs["outcome"] == "resubmitted"
@@ -9209,10 +9212,11 @@ class TestHandleDomesticPendingOrders:
 
     @pytest.mark.asyncio
     async def test_sell_pending_is_cancelled_then_resubmitted(self) -> None:
-        """First unfilled SELL should be cancelled then resubmitted at -0.4% price."""
-        from src.broker.kis_api import kr_round_down
-
-        settings = self._make_settings()
+        """First unfilled KR SELL should use executable bid even when spread is wide."""
+        settings = self._make_settings(
+            EXECUTABLE_QUOTE_MAX_GAP_PCT=1.0,
+            EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON='{"KR": 0.5}',
+        )
         telegram = self._make_telegram()
 
         pending_order = {
@@ -9226,6 +9230,9 @@ class TestHandleDomesticPendingOrders:
         broker.get_domestic_pending_orders = AsyncMock(return_value=[pending_order])
         broker.cancel_domestic_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
         broker.get_current_price = AsyncMock(return_value=(50000.0, 0.0, 0.0))
+        broker.get_orderbook_by_market = AsyncMock(
+            return_value={"output1": {"stck_askp1": "51000", "stck_bidp1": "45000"}}
+        )
         broker.send_order = AsyncMock(return_value={"rt_cd": "0"})
 
         sell_resubmit_counts: dict[str, int] = {}
@@ -9236,8 +9243,7 @@ class TestHandleDomesticPendingOrders:
         broker.send_order.assert_called_once()
         resubmit_kwargs = broker.send_order.call_args[1]
         assert resubmit_kwargs["order_type"] == "SELL"
-        expected_price = kr_round_down(50000.0 * 0.996)
-        assert resubmit_kwargs["price"] == expected_price
+        assert resubmit_kwargs["price"] == 45000.0
         assert sell_resubmit_counts.get("KR:005930") == 1
         notify_kwargs = telegram.notify_unfilled_order.call_args[1]
         assert notify_kwargs["outcome"] == "resubmitted"
