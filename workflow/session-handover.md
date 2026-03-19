@@ -409,3 +409,11 @@
 - next_ticket: OOR-820
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: `GeminiClient` 명칭 누수와 provider wiring을 재현한 뒤 provider-agnostic entrypoint/factory 추상화로 정리하고 docs/tests까지 함께 갱신한다.
+
+### 2026-03-19 | session=codex-oor-824-start
+- branch: feature/issue-824-pending-order-executable-quote-follow-ups
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-824 Todo→In Progress 상태, 이슈 설명/Acceptance Criteria, PR #829 review follow-up, 기존 workpad 없음, 첨부 PR 없음
+- next_ticket: OOR-824
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: `config.py` gap-cap JSON 이중 파싱, pending-order executable quote extraction/async contract/SELL retry policy, dead branch 정리를 PR #829 후속 범위로 묶어 재현 후 TDD로 수정한다.

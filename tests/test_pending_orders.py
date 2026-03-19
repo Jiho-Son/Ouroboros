@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.broker.orderbook_utils import extract_orderbook_top_levels
 from src.broker.overseas import OverseasBroker
 from src.broker.pending_orders import (
     _fetch_optional_orderbook_top_levels,
@@ -24,6 +25,21 @@ class TestFetchOptionalQuotePayload:
 
         assert payload == {}
 
+    @pytest.mark.asyncio
+    async def test_requires_async_quote_method(self) -> None:
+        broker = SimpleNamespace(
+            get_orderbook_by_market=lambda **kwargs: {
+                "output1": {"stck_askp1": "50300", "stck_bidp1": "49900"}
+            }
+        )
+
+        with pytest.raises(TypeError):
+            await _fetch_optional_quote_payload(
+                obj=broker,
+                method_name="get_orderbook_by_market",
+                kwargs={"stock_code": "005930", "market_div_code": "J"},
+            )
+
 
 class TestFetchOptionalOrderbookTopLevels:
     @pytest.mark.asyncio
@@ -32,6 +48,24 @@ class TestFetchOptionalOrderbookTopLevels:
             raise RuntimeError("network error")
 
         broker = SimpleNamespace(get_orderbook_by_market=_raise)
+
+        ask, bid = await _fetch_optional_orderbook_top_levels(
+            obj=broker,
+            method_name="get_orderbook_by_market",
+            kwargs={"stock_code": "005930", "market_div_code": "J"},
+            log_context="test",
+        )
+
+        assert ask is None
+        assert bid is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_quote_method_is_sync_only(self) -> None:
+        broker = SimpleNamespace(
+            get_orderbook_by_market=lambda **kwargs: {
+                "output1": {"stck_askp1": "50300", "stck_bidp1": "49900"}
+            }
+        )
 
         ask, bid = await _fetch_optional_orderbook_top_levels(
             obj=broker,
@@ -62,13 +96,23 @@ class TestSharedTopLevelExtraction:
             200.8,
         )
 
-    def test_overseas_wrapper_prefers_output2_when_multiple_containers_exist(self) -> None:
+    def test_overseas_wrapper_uses_shared_helper_container_order(self) -> None:
         payload = {
             "output1": {"pask1": "999.9", "pbid1": "998.8"},
             "output2": {"pask1": "201.5", "pbid1": "200.8"},
         }
 
         assert OverseasBroker._extract_orderbook_top_levels(payload) == (
-            201.5,
-            200.8,
+            999.9,
+            998.8,
+        )
+
+    def test_shared_helper_accepts_output_container_shape(self) -> None:
+        payload = {
+            "output": {"pask1": "101.5", "pbid1": "101.1"},
+        }
+
+        assert extract_orderbook_top_levels(payload) == (
+            101.5,
+            101.1,
         )

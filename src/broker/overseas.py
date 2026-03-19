@@ -12,9 +12,6 @@ from src.broker.orderbook_utils import extract_orderbook_top_levels
 
 logger = logging.getLogger(__name__)
 
-_OVERSEAS_CONTAINER_KEYS = ("output2", "output", "output1")
-
-
 def _format_overseas_order_price(price: float) -> str:
     """Format overseas limit prices with KIS-supported precision."""
     if price <= 0:
@@ -161,7 +158,7 @@ class OverseasBroker:
     @staticmethod
     def _extract_orderbook_top_levels(payload: dict[str, Any]) -> tuple[float | None, float | None]:
         """Extract top ask/bid from shared pending-order orderbook payload variants."""
-        return extract_orderbook_top_levels(payload, container_keys=_OVERSEAS_CONTAINER_KEYS)
+        return extract_orderbook_top_levels(payload)
 
     async def get_overseas_orderbook(self, exchange_code: str, stock_code: str) -> dict[str, Any]:
         """Fetch overseas best bid/ask quote snapshot."""
