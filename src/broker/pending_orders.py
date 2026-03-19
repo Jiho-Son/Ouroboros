@@ -16,6 +16,7 @@ from src.broker.balance_utils import (
     _extract_held_qty_from_balance,
 )
 from src.broker.kis_api import KISBroker, kr_round_down
+from src.broker.orderbook_utils import extract_orderbook_top_levels
 from src.broker.overseas import OverseasBroker
 from src.config import Settings
 from src.core.order_policy import (
@@ -65,36 +66,6 @@ def _rollback_pending_position(
     if quantity is not None:
         kwargs["quantity"] = quantity
     rollback_open_position(**kwargs)
-
-
-def _extract_quote_from_mapping(
-    payload: dict[str, Any],
-    *,
-    ask_keys: tuple[str, ...],
-    bid_keys: tuple[str, ...],
-) -> tuple[float | None, float | None]:
-    """Extract top ask/bid from mapping-shaped quote payloads."""
-    # Domestic orderbook payloads are often wrapped under `output1`.
-    output = payload.get("output1") or payload.get("output2") or payload.get("output") or payload
-    if isinstance(output, list):
-        output = output[0] if output else {}
-    if not isinstance(output, dict):
-        return None, None
-
-    def _read(keys: tuple[str, ...]) -> float | None:
-        for key in keys:
-            raw = output.get(key)
-            if raw in (None, ""):
-                continue
-            try:
-                value = float(raw)
-            except (ValueError, TypeError):
-                continue
-            if value > 0:
-                return value
-        return None
-
-    return _read(ask_keys), _read(bid_keys)
 
 
 def _resolve_executable_gap_cap_pct(*, market_code: str, settings: Settings) -> float:
@@ -154,7 +125,7 @@ async def _fetch_optional_quote_payload(
 ) -> dict[str, Any]:
     """Call optional async quote fetch method when available."""
     method = getattr(obj, method_name, None)
-    if method is None:
+    if method is None or not callable(method):
         return {}
     result = method(**kwargs)
     if inspect.isawaitable(result):
@@ -164,6 +135,29 @@ async def _fetch_optional_quote_payload(
     if isinstance(resolved, dict):
         return resolved
     return {}
+
+
+async def _fetch_optional_orderbook_top_levels(
+    *,
+    obj: Any,
+    method_name: str,
+    kwargs: dict[str, Any],
+    log_context: str,
+    extractor: Callable[[dict[str, Any]], tuple[float | None, float | None]] = (
+        extract_orderbook_top_levels
+    ),
+) -> tuple[float | None, float | None]:
+    """Fetch optional orderbook payload and resolve executable top levels."""
+    try:
+        payload = await _fetch_optional_quote_payload(
+            obj=obj,
+            method_name=method_name,
+            kwargs=kwargs,
+        )
+    except Exception as exc:
+        logger.warning("Failed to fetch %s: %s", log_context, exc)
+        return None, None
+    return extractor(payload)
 
 
 def _require_order_acceptance(
@@ -462,26 +456,14 @@ async def handle_domestic_pending_orders(
                         if last_price <= 0:
                             raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
                         fallback_price = float(kr_round_down(last_price * _BUY_RETRY_MULTIPLIER))
-                        orderbook_payload: dict[str, Any] = {}
-                        try:
-                            orderbook_payload = await _fetch_optional_quote_payload(
-                                obj=broker,
-                                method_name="get_orderbook_by_market",
-                                kwargs={
-                                    "stock_code": stock_code,
-                                    "market_div_code": quote_market_div_code,
-                                },
-                            )
-                        except Exception as quote_exc:
-                            logger.warning(
-                                "Failed to fetch domestic orderbook for %s: %s",
-                                stock_code,
-                                quote_exc,
-                            )
-                        executable_ask, _ = _extract_quote_from_mapping(
-                            orderbook_payload,
-                            ask_keys=("askp1", "stck_askp1"),
-                            bid_keys=("bidp1", "stck_bidp1"),
+                        executable_ask, _ = await _fetch_optional_orderbook_top_levels(
+                            obj=broker,
+                            method_name="get_orderbook_by_market",
+                            kwargs={
+                                "stock_code": stock_code,
+                                "market_div_code": quote_market_div_code,
+                            },
+                            log_context=f"domestic orderbook for {stock_code}",
                         )
                         new_price, _, gap_rejected = _resolve_retry_price_from_executable_quote(
                             order_type="BUY",
@@ -658,26 +640,14 @@ async def handle_domestic_pending_orders(
                         if last_price <= 0:
                             raise ValueError(f"Invalid price ({last_price}) for {stock_code}")
                         fallback_price = float(kr_round_down(last_price * _SELL_RETRY_MULTIPLIER))
-                        orderbook_payload: dict[str, Any] = {}
-                        try:
-                            orderbook_payload = await _fetch_optional_quote_payload(
-                                obj=broker,
-                                method_name="get_orderbook_by_market",
-                                kwargs={
-                                    "stock_code": stock_code,
-                                    "market_div_code": quote_market_div_code,
-                                },
-                            )
-                        except Exception as quote_exc:
-                            logger.warning(
-                                "Failed to fetch domestic orderbook for %s: %s",
-                                stock_code,
-                                quote_exc,
-                            )
-                        _, executable_bid = _extract_quote_from_mapping(
-                            orderbook_payload,
-                            ask_keys=("askp1", "stck_askp1"),
-                            bid_keys=("bidp1", "stck_bidp1"),
+                        _, executable_bid = await _fetch_optional_orderbook_top_levels(
+                            obj=broker,
+                            method_name="get_orderbook_by_market",
+                            kwargs={
+                                "stock_code": stock_code,
+                                "market_div_code": quote_market_div_code,
+                            },
+                            log_context=f"domestic orderbook for {stock_code}",
                         )
                         new_price, _, _ = _resolve_retry_price_from_executable_quote(
                             order_type="SELL",
@@ -918,25 +888,15 @@ async def handle_overseas_pending_orders(
                                 last_price * _BUY_RETRY_MULTIPLIER,
                                 2 if last_price >= 1 else 4,
                             )
-                            orderbook_payload: dict[str, Any] = {}
-                            try:
-                                orderbook_payload = await _fetch_optional_quote_payload(
-                                    obj=overseas_broker,
-                                    method_name="get_overseas_orderbook",
-                                    kwargs={
-                                        "exchange_code": order_exchange,
-                                        "stock_code": stock_code,
-                                    },
-                                )
-                            except Exception as quote_exc:
-                                logger.warning(
-                                    "Failed to fetch overseas orderbook for %s %s: %s",
-                                    order_exchange,
-                                    stock_code,
-                                    quote_exc,
-                                )
-                            executable_ask, _ = OverseasBroker._extract_orderbook_top_levels(
-                                orderbook_payload
+                            executable_ask, _ = await _fetch_optional_orderbook_top_levels(
+                                obj=overseas_broker,
+                                method_name="get_overseas_orderbook",
+                                kwargs={
+                                    "exchange_code": order_exchange,
+                                    "stock_code": stock_code,
+                                },
+                                log_context=f"overseas orderbook for {order_exchange} {stock_code}",
+                                extractor=OverseasBroker._extract_orderbook_top_levels,
                             )
                             new_price, _, gap_rejected = _resolve_retry_price_from_executable_quote(
                                 order_type="BUY",
@@ -1139,25 +1099,15 @@ async def handle_overseas_pending_orders(
                                 last_price * _SELL_RETRY_MULTIPLIER,
                                 2 if last_price >= 1 else 4,
                             )
-                            orderbook_payload: dict[str, Any] = {}
-                            try:
-                                orderbook_payload = await _fetch_optional_quote_payload(
-                                    obj=overseas_broker,
-                                    method_name="get_overseas_orderbook",
-                                    kwargs={
-                                        "exchange_code": order_exchange,
-                                        "stock_code": stock_code,
-                                    },
-                                )
-                            except Exception as quote_exc:
-                                logger.warning(
-                                    "Failed to fetch overseas orderbook for %s %s: %s",
-                                    order_exchange,
-                                    stock_code,
-                                    quote_exc,
-                                )
-                            _, executable_bid = OverseasBroker._extract_orderbook_top_levels(
-                                orderbook_payload
+                            _, executable_bid = await _fetch_optional_orderbook_top_levels(
+                                obj=overseas_broker,
+                                method_name="get_overseas_orderbook",
+                                kwargs={
+                                    "exchange_code": order_exchange,
+                                    "stock_code": stock_code,
+                                },
+                                log_context=f"overseas orderbook for {order_exchange} {stock_code}",
+                                extractor=OverseasBroker._extract_orderbook_top_levels,
                             )
                             new_price, _, _ = _resolve_retry_price_from_executable_quote(
                                 order_type="SELL",

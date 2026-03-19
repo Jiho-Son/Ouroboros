@@ -288,7 +288,11 @@ def _run_symphony_before_remove_hook(
     timeout_sec: float = 10.0,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path, Path, Path]:
     workspace_root = tmp_path / "workspace"
-    canonical_root = tmp_path / "canonical-main"
+    canonical_root = (
+        tmp_path / "repos" / "ouroboros_hub"
+        if invocation_mode == "workflow"
+        else tmp_path / "canonical-main"
+    )
     bare_root = tmp_path / "canonical-bare"
     state_root = tmp_path / "state-root"
     hooks_log = tmp_path / "restart-hooks.log"
@@ -353,6 +357,7 @@ def _run_symphony_before_remove_hook(
             "FAKE_GH_WORKSPACE_BRANCH": workspace_branch,
             "FAKE_GH_WORKSPACE_SHA": "workspace-sha-1",
             "CANONICAL_RESTART_DISABLE_FLOCK": "true" if disable_flock else "false",
+            "HOME": str(tmp_path),
             "PATH": f"{tmp_path}:{env.get('PATH', '')}",
         }
     )
