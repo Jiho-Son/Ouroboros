@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from src.brain.llm_client import LLMClient, build_llm_client
+from src.brain.llm_client import LLMProvider, build_llm_provider
 from src.config import Settings
 from src.db import init_db
 from src.decision_logging.decision_logger import DecisionLogger
@@ -52,10 +52,10 @@ class {class_name}(BaseStrategy):
 class EvolutionOptimizer:
     """Analyzes trade history and evolves trading strategies."""
 
-    def __init__(self, settings: Settings, llm_client: LLMClient | None = None) -> None:
+    def __init__(self, settings: Settings, llm_client: LLMProvider | None = None) -> None:
         self._settings = settings
         self._db_path = settings.DB_PATH
-        self._client = llm_client or build_llm_client(settings)
+        self._client = llm_client or build_llm_provider(settings)
         self._model_name = settings.llm_model
         self._conn = init_db(self._db_path)
         self._decision_logger = DecisionLogger(self._conn)

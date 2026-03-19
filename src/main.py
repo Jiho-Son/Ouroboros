@@ -30,7 +30,7 @@ from src.analysis.atr_helpers import (
 from src.analysis.smart_scanner import ScanCandidate, SmartVolatilityScanner
 from src.analysis.volatility import VolatilityAnalyzer
 from src.brain.context_selector import ContextSelector
-from src.brain.gemini_client import GeminiClient, TradeDecision
+from src.brain.decision_engine import DecisionEngine, TradeDecision
 from src.broker.balance_utils import (
     _extract_avg_price_from_balance,
     _extract_buy_fx_rate,
@@ -3532,7 +3532,7 @@ async def run(settings: Settings) -> None:
 
     broker = KISBroker(settings)
     overseas_broker = OverseasBroker(broker)
-    brain = GeminiClient(settings)
+    brain = DecisionEngine(settings)
     risk = RiskManager(settings)
     db_conn = init_db(settings.DB_PATH)
     decision_logger = DecisionLogger(db_conn)
@@ -3548,9 +3548,9 @@ async def run(settings: Settings) -> None:
     context_selector = ContextSelector(context_store)
     scenario_engine = ScenarioEngine()
     playbook_store = PlaybookStore(db_conn)
-    daily_reviewer = DailyReviewer(db_conn, context_store, gemini_client=brain)
+    daily_reviewer = DailyReviewer(db_conn, context_store, decision_engine=brain)
     pre_market_planner = PreMarketPlanner(
-        gemini_client=brain,
+        decision_engine=brain,
         context_store=context_store,
         context_selector=context_selector,
         settings=settings,

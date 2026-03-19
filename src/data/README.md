@@ -86,12 +86,12 @@ print(f"Sentiment: {indicators.sentiment.name}")
 print(f"A/D Ratio: {indicators.breadth.advance_decline_ratio}")
 ```
 
-## Integration with GeminiClient
+## Integration with DecisionEngine
 
 The external data sources are seamlessly integrated into the AI decision engine:
 
 ```python
-from src.brain.gemini_client import GeminiClient
+from src.brain.decision_engine import DecisionEngine
 from src.data.news_api import NewsAPI
 from src.data.economic_calendar import EconomicCalendar
 from src.data.market_data import MarketData
@@ -106,7 +106,7 @@ calendar.load_hardcoded_events()
 market_data = MarketData(api_key=settings.MARKET_DATA_API_KEY)
 
 # Create enhanced client
-client = GeminiClient(
+client = DecisionEngine(
     settings,
     news_api=news_api,
     economic_calendar=calendar,

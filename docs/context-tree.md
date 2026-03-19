@@ -246,12 +246,12 @@ deleted = store.cleanup_expired_contexts()
 - L6: 90 days
 - L7: 7 days
 
-## Integration with Gemini Brain
+## Integration with Decision Engine
 
 The context tree provides hierarchical memory for decision-making:
 
 ```python
-from src.brain.gemini_client import GeminiClient
+from src.brain.decision_engine import DecisionEngine
 
 # Build prompt with multi-layer context
 def build_enhanced_prompt(stock_code: str, store: ContextStore) -> str:

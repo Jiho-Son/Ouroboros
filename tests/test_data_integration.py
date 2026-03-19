@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.brain.gemini_client import GeminiClient
+from src.brain.decision_engine import DecisionEngine
 from src.data.economic_calendar import EconomicCalendar, EconomicEvent
 from src.data.market_data import MarketBreadth, MarketData, MarketSentiment
 from src.data.news_api import NewsAPI, NewsArticle, NewsSentiment
@@ -476,20 +476,20 @@ class TestMarketData:
 
 
 # ---------------------------------------------------------------------------
-# GeminiClient Integration Tests
+# DecisionEngine Integration Tests
 # ---------------------------------------------------------------------------
 
 
-class TestGeminiClientWithExternalData:
-    """Test GeminiClient integration with external data sources."""
+class TestDecisionEngineWithExternalData:
+    """Test DecisionEngine integration with external data sources."""
 
     def test_gemini_client_accepts_optional_data_sources(self, settings):
-        """GeminiClient should accept optional external data sources."""
+        """DecisionEngine should accept optional external data sources."""
         news_api = NewsAPI(api_key="test_key")
         calendar = EconomicCalendar()
         market_data = MarketData()
 
-        client = GeminiClient(
+        client = DecisionEngine(
             settings,
             news_api=news_api,
             economic_calendar=calendar,
@@ -501,8 +501,8 @@ class TestGeminiClientWithExternalData:
         assert client._market_data is market_data
 
     def test_gemini_client_works_without_external_data(self, settings):
-        """GeminiClient should work without external data sources."""
-        client = GeminiClient(settings)
+        """DecisionEngine should work without external data sources."""
+        client = DecisionEngine(settings)
         assert client._news_api is None
         assert client._economic_calendar is None
         assert client._market_data is None
@@ -510,7 +510,7 @@ class TestGeminiClientWithExternalData:
     @pytest.mark.asyncio
     async def test_build_prompt_includes_news_sentiment(self, settings):
         """build_prompt should include news sentiment when available."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
 
         market_data = {
             "stock_code": "AAPL",
@@ -560,7 +560,7 @@ class TestGeminiClientWithExternalData:
             )
         )
 
-        client = GeminiClient(settings, economic_calendar=calendar)
+        client = DecisionEngine(settings, economic_calendar=calendar)
 
         market_data = {
             "stock_code": "AAPL",
@@ -586,7 +586,7 @@ class TestGeminiClientWithExternalData:
                 breadth=MagicMock(advance_decline_ratio=2.5),
             )
 
-            client = GeminiClient(settings, market_data=market_data_provider)
+            client = DecisionEngine(settings, market_data=market_data_provider)
 
             market_data = {
                 "stock_code": "AAPL",
@@ -603,7 +603,7 @@ class TestGeminiClientWithExternalData:
     @pytest.mark.asyncio
     async def test_build_prompt_graceful_when_no_external_data(self, settings):
         """build_prompt should work gracefully without external data."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
 
         market_data = {
             "stock_code": "AAPL",
@@ -620,7 +620,7 @@ class TestGeminiClientWithExternalData:
 
     def test_build_prompt_sync_backward_compatibility(self, settings):
         """build_prompt_sync should maintain backward compatibility."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
 
         market_data = {
             "stock_code": "005930",
@@ -640,7 +640,7 @@ class TestGeminiClientWithExternalData:
     @pytest.mark.asyncio
     async def test_decide_with_news_sentiment_parameter(self, settings):
         """decide should accept optional news_sentiment parameter."""
-        client = GeminiClient(settings)
+        client = DecisionEngine(settings)
 
         market_data = {
             "stock_code": "AAPL",
