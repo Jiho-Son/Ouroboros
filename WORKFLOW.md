@@ -24,7 +24,8 @@ hooks:
     bash .codex/worktree_init.sh --dry-run
   before_remove: |
     repo_root="$(git rev-parse --show-toplevel)" || exit 1
-    bash "$repo_root/scripts/symphony_before_remove_canonical_restart.sh"
+    bash "$repo_root/scripts/symphony_before_remove_canonical_restart.sh" \
+      --canonical-root "$HOME/repos/ouroboros_hub"
 agent:
   max_concurrent_agents: 10
   max_turns: 20
