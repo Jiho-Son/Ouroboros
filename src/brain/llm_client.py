@@ -30,10 +30,17 @@ class LLMAsyncNamespace(Protocol):
     models: LLMModelClient
 
 
-class LLMClient(Protocol):
-    """Low-level provider client protocol used by the decision engine."""
+class LLMProvider(Protocol):
+    """Low-level provider protocol used by the decision engine."""
 
     aio: LLMAsyncNamespace
+
+    async def generate_text(self, *, model: str, prompt: str) -> str:
+        """Generate raw text for the given model and prompt."""
+
+
+# Backward-compatible alias for older call sites/tests.
+LLMClient = LLMProvider
 
 
 @dataclass(slots=True)
@@ -71,8 +78,19 @@ class _OllamaAsyncNamespace:
         self.models = _OllamaAsyncModels(base_url=base_url, timeout_seconds=timeout_seconds)
 
 
-class OllamaLLMClient:
-    """Low-level client wrapper that mimics the Google SDK async surface."""
+class GeminiProvider:
+    """Gemini-backed provider wrapper."""
+
+    def __init__(self, *, api_key: str) -> None:
+        self.aio = genai.Client(api_key=api_key).aio
+
+    async def generate_text(self, *, model: str, prompt: str) -> str:
+        response = await self.aio.models.generate_content(model=model, contents=prompt)
+        return response.text
+
+
+class OllamaProvider:
+    """Ollama-backed provider wrapper."""
 
     def __init__(self, *, base_url: str, timeout_seconds: float) -> None:
         self.aio = _OllamaAsyncNamespace(
@@ -80,12 +98,21 @@ class OllamaLLMClient:
             timeout_seconds=timeout_seconds,
         )
 
+    async def generate_text(self, *, model: str, prompt: str) -> str:
+        response = await self.aio.models.generate_content(model=model, contents=prompt)
+        return response.text
 
-def build_llm_client(settings: Settings) -> LLMClient:
-    """Return the configured low-level LLM client."""
+
+def build_llm_provider(settings: Settings) -> LLMProvider:
+    """Return the configured low-level LLM provider."""
     if settings.LLM_PROVIDER == "ollama":
-        return OllamaLLMClient(
+        return OllamaProvider(
             base_url=settings.OLLAMA_BASE_URL,
             timeout_seconds=settings.OLLAMA_REQUEST_TIMEOUT_SECONDS,
         )
-    return genai.Client(api_key=settings.GEMINI_API_KEY)
+    return GeminiProvider(api_key=settings.GEMINI_API_KEY or "")
+
+
+def build_llm_client(settings: Settings) -> LLMProvider:
+    """Backward-compatible alias for older call sites."""
+    return build_llm_provider(settings)

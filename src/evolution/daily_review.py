@@ -8,7 +8,7 @@ import re
 import sqlite3
 from dataclasses import asdict
 
-from src.brain.gemini_client import GeminiClient
+from src.brain.decision_engine import DecisionEngine
 from src.context.layer import ContextLayer
 from src.context.store import ContextStore
 from src.evolution.scorecard import DailyScorecard
@@ -23,11 +23,16 @@ class DailyReviewer:
         self,
         conn: sqlite3.Connection,
         context_store: ContextStore,
-        gemini_client: GeminiClient | None = None,
+        decision_engine: DecisionEngine | None = None,
+        gemini_client: DecisionEngine | None = None,
     ) -> None:
+        if decision_engine is not None and gemini_client is not None:
+            raise ValueError("Pass only one of decision_engine or gemini_client")
+
         self._conn = conn
         self._context_store = context_store
-        self._gemini = gemini_client
+        self._decision_engine = decision_engine or gemini_client
+        self._gemini = self._decision_engine
 
     def generate_scorecard(self, date: str, market: str) -> DailyScorecard:
         """Generate a market-scoped scorecard from decision logs and trades."""
@@ -129,8 +134,8 @@ class DailyReviewer:
         )
 
     async def generate_lessons(self, scorecard: DailyScorecard) -> list[str]:
-        """Generate concise lessons from scorecard metrics using Gemini."""
-        if self._gemini is None:
+        """Generate concise lessons from scorecard metrics using the decision engine."""
+        if self._decision_engine is None:
             return []
 
         prompt = (
@@ -149,7 +154,7 @@ class DailyReviewer:
         )
 
         try:
-            decision = await self._gemini.decide(
+            decision = await self._decision_engine.decide(
                 {
                     "stock_code": "REVIEW",
                     "market_name": scorecard.market,

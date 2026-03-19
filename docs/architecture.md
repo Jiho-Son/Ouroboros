@@ -138,7 +138,7 @@ High-frequency trading with individual stock analysis:
 
 ### 3. Brain (`src/brain/`)
 
-**GeminiClient** (`gemini_client.py`) — AI decision engine backed by the configured LLM provider
+**DecisionEngine** (`decision_engine.py`) — provider-agnostic AI decision engine
 
 - Constructs structured prompts from market data
 - Parses JSON responses into `TradeDecision` objects (`action`, `confidence`, `rationale`)
@@ -149,8 +149,8 @@ High-frequency trading with individual stock analysis:
 **Provider Selection** (`llm_client.py`) — low-level provider adapters
 
 - `LLM_PROVIDER=gemini|ollama` selects the raw prompt execution backend
-- `GeminiClient` and `EvolutionOptimizer` share the same provider factory
-- Ollama uses a local `/api/generate` call path while preserving the async client surface expected by higher-level code
+- `DecisionEngine` and `EvolutionOptimizer` share the same provider factory
+- `GeminiProvider` and `OllamaProvider` encapsulate provider-specific SDK/HTTP behavior behind the shared abstraction
 
 **PromptOptimizer** (`prompt_optimizer.py`) — Token efficiency optimization
 

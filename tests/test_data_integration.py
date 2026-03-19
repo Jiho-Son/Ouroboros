@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.brain.gemini_client import GeminiClient
+from src.brain.decision_engine import DecisionEngine
 from src.data.economic_calendar import EconomicCalendar, EconomicEvent
 from src.data.market_data import MarketBreadth, MarketData, MarketSentiment
 from src.data.news_api import NewsAPI, NewsArticle, NewsSentiment
@@ -476,15 +476,17 @@ class TestMarketData:
 
 
 # ---------------------------------------------------------------------------
-# GeminiClient Integration Tests
+# DecisionEngine Integration Tests
 # ---------------------------------------------------------------------------
 
+GeminiClient = DecisionEngine
 
-class TestGeminiClientWithExternalData:
-    """Test GeminiClient integration with external data sources."""
+
+class TestDecisionEngineWithExternalData:
+    """Test DecisionEngine integration with external data sources."""
 
     def test_gemini_client_accepts_optional_data_sources(self, settings):
-        """GeminiClient should accept optional external data sources."""
+        """DecisionEngine should accept optional external data sources."""
         news_api = NewsAPI(api_key="test_key")
         calendar = EconomicCalendar()
         market_data = MarketData()
@@ -501,7 +503,7 @@ class TestGeminiClientWithExternalData:
         assert client._market_data is market_data
 
     def test_gemini_client_works_without_external_data(self, settings):
-        """GeminiClient should work without external data sources."""
+        """DecisionEngine should work without external data sources."""
         client = GeminiClient(settings)
         assert client._news_api is None
         assert client._economic_calendar is None

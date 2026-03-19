@@ -38,7 +38,7 @@ When modifying code, follow this priority order:
 |---|---|
 | `core/risk_manager.py` | READ-ONLY. Changes require human approval + 2 passing test suites. |
 | `broker/kis_api.py` | Rate limiter must never be removed. Token refresh must remain automatic. |
-| `brain/gemini_client.py` | Confidence < 80 MUST force HOLD. This rule cannot be weakened. |
+| `brain/decision_engine.py` | Confidence < 80 MUST force HOLD. This rule cannot be weakened. |
 | `evolution/optimizer.py` | Generated strategies must pass ALL tests before activation. |
 | `strategies/*` | New strategies are welcome but must inherit `BaseStrategy`. |
 

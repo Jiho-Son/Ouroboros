@@ -401,3 +401,11 @@
 - next_ticket: #823
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: PR #837 리뷰 코멘트 대응으로 overseas 컨테이너 우선순위 회귀 방지, helper 예외 경로 테스트 추가, 계획 문서 내부 AI 지시문 제거를 함께 반영한다.
+
+### 2026-03-19 | session=codex-oor-820-start
+- branch: feature/issue-820-llm-provider-abstraction
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-820 Todo 상태, 이슈 설명/Acceptance Criteria, 기존 workpad 없음, 첨부 PR 없음
+- next_ticket: OOR-820
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: `GeminiClient` 명칭 누수와 provider wiring을 재현한 뒤 provider-agnostic entrypoint/factory 추상화로 정리하고 docs/tests까지 함께 갱신한다.

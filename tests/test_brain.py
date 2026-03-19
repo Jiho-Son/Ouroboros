@@ -1,4 +1,4 @@
-"""TDD tests for brain/gemini_client.py — written BEFORE implementation."""
+"""TDD tests for brain/decision_engine.py — written BEFORE implementation."""
 
 from __future__ import annotations
 
@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.brain.gemini_client import GeminiClient
+from src.brain.decision_engine import DecisionEngine
+
+GeminiClient = DecisionEngine
 
 # ---------------------------------------------------------------------------
 # Response Parsing

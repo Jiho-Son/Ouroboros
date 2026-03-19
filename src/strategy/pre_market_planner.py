@@ -1,6 +1,6 @@
-"""Pre-market planner — generates DayPlaybook via Gemini before market open.
+"""Pre-market planner — generates DayPlaybook via the decision engine before market open.
 
-One Gemini API call per market per day. Candidates come from SmartVolatilityScanner.
+One decision-engine call per market per day. Candidates come from SmartVolatilityScanner.
 On failure, returns a smart rule-based fallback playbook that uses scanner signals
 (momentum/oversold) to generate BUY conditions, avoiding the all-HOLD problem.
 """
@@ -14,7 +14,7 @@ from typing import Any
 
 from src.analysis.smart_scanner import ScanCandidate
 from src.brain.context_selector import ContextSelector, DecisionType
-from src.brain.gemini_client import GeminiClient
+from src.brain.decision_engine import DecisionEngine
 from src.config import Settings
 from src.context.store import ContextLayer, ContextStore
 from src.strategy.models import (
@@ -48,24 +48,25 @@ _ACTION_MAP: dict[str, ScenarioAction] = {
 
 
 class PreMarketPlanner:
-    """Generates a DayPlaybook by calling Gemini once before market open.
+    """Generates a DayPlaybook by calling the decision engine once before market open.
 
     Flow:
     1. Collect strategic context (L5-L7) + cross-market context
     2. Build a structured prompt with scan candidates
-    3. Call Gemini for JSON scenario generation
+    3. Call the decision engine for JSON scenario generation
     4. Parse and validate response into DayPlaybook
     5. On failure → defensive playbook (HOLD everything)
     """
 
     def __init__(
         self,
-        gemini_client: GeminiClient,
+        decision_engine: DecisionEngine,
         context_store: ContextStore,
         context_selector: ContextSelector,
         settings: Settings,
     ) -> None:
-        self._gemini = gemini_client
+        self._decision_engine = decision_engine
+        self._gemini = decision_engine
         self._context_store = context_store
         self._context_selector = context_selector
         self._settings = settings
@@ -77,7 +78,7 @@ class PreMarketPlanner:
         today: date | None = None,
         current_holdings: list[dict] | None = None,
     ) -> DayPlaybook:
-        """Generate a DayPlaybook for a market using Gemini.
+        """Generate a DayPlaybook for a market using the decision engine.
 
         Args:
             market: Market code ("KR" or "US")
@@ -114,13 +115,13 @@ class PreMarketPlanner:
                 current_holdings=current_holdings,
             )
 
-            # 3. Call Gemini
+            # 3. Call decision engine
             market_data = {
                 "stock_code": "PLANNER",
                 "current_price": 0,
                 "prompt_override": prompt,
             }
-            decision = await self._gemini.decide(market_data)
+            decision = await self._decision_engine.decide(market_data)
 
             # 4. Parse response
             playbook = self._parse_response(
