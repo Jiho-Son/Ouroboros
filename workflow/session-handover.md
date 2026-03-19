@@ -385,3 +385,11 @@
 - next_ticket: OOR-823
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: `origin/main@60bff92` 기준 fresh branch로 재시작하며, OOR-813 동작을 유지한 채 `pending_orders`의 4중 호가 조회/ask-bid 추출 중복을 공통 helper로 접는다.
+
+### 2026-03-19 | session=codex-oor-823-main-sync
+- branch: feature/issue-823-pending-orders-quote-dedupe
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-823 live workpad, PR #837 checks, origin/main merge commit 1e83227, CI failure in tests/test_runtime_overnight_scripts.py
+- next_ticket: OOR-823
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: PR CI가 최신 main merge ref에서만 실패해 main sync를 수행했고, workflow hook의 explicit canonical-root 경로와 runtime-overnight fixture mismatch를 수정한 뒤 전체 게이트를 재검증한다.
