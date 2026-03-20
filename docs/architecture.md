@@ -16,6 +16,7 @@ Optimized for cost-sensitive/provider-limited deployments:
 
 - **Batch decisions**: 1 API call per market per session
 - **Fixed schedule**: 4 sessions per day at 6-hour intervals (configurable)
+- **Startup-anchored cadence**: the first batch runs immediately when the process starts, and later batches are spaced from that startup timestamp rather than snapped to market session boundaries
 - **API efficiency**: Processes all stocks in a market simultaneously
 - **Use case**: Cost-conscious deployments or providers with tighter rate/cost budgets
 - **Configuration**:
@@ -26,6 +27,8 @@ Optimized for cost-sensitive/provider-limited deployments:
   ```
 
 **Example**: With 2 markets (US, KR) and 4 sessions/day = 8 API calls/day (within 20 call limit)
+
+**Operational note**: For KR regular hours (`09:00-15:30 KST`), starting the process after roughly `09:30 KST` means the next 6-hour batch lands after market close, so the runtime can trade only in the initial morning batch and then stay idle for the rest of that KR session. Use `TRADE_MODE=realtime` when continuous intraday monitoring is required.
 
 ### Realtime Mode
 
@@ -640,7 +643,7 @@ OLLAMA_REQUEST_TIMEOUT_SECONDS=60
 MODE=live                     # runtime paper execution banned (#426)
 TRADE_MODE=daily              # daily | realtime
 DAILY_SESSIONS=4              # Sessions per day (daily mode only)
-SESSION_INTERVAL_HOURS=6      # Hours between sessions (daily mode only)
+SESSION_INTERVAL_HOURS=6      # Hours between sessions from process start (daily mode only)
 
 # Optional — Database
 DB_PATH=data/trades.db

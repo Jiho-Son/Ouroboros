@@ -457,3 +457,11 @@
 - next_ticket: OOR-829
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: implementation plan은 실행 체크리스트만 남기고 설계 판단 근거는 design doc 단일 문서로 정리한다. 선택적 마이너 코멘트는 문서 가독성 개선 범위에서만 반영한다.
+
+### 2026-03-20 | session=codex-oor-839-start
+- branch: feature/issue-839-kr-no-trades
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-839
+- next_ticket: OOR-839
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: KR 초반 거래 후 추가 거래 부재 현상을 재현 로그와 코드 경로로 먼저 확인하고, 의도 여부 판단 뒤에만 최소 수정/검증을 진행한다.
