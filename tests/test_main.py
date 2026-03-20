@@ -7151,6 +7151,73 @@ def test_recent_sell_guard_allows_buy_without_sell_history() -> None:
     assert window_seconds == 0
 
 
+def test_apply_recent_sell_guard_returns_hold_decision_with_consistent_messages(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    decision = main_module.TradeDecision(action="BUY", confidence=91, rationale="entry")
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.name = "Korea"
+
+    with (
+        patch(
+            "src.main.get_latest_sell_trade",
+            return_value={"price": 100.5, "timestamp": "2026-03-18T00:00:00+00:00"},
+        ),
+        patch("src.main._resolve_recent_sell_guard_window_seconds", return_value=120),
+        patch("src.main._should_block_buy_above_recent_sell", return_value=(True, 30, 120)),
+        caplog.at_level(logging.INFO),
+    ):
+        updated = main_module._apply_recent_sell_guard(
+            decision=decision,
+            db_conn=MagicMock(),
+            stock_code="005930",
+            market=market,
+            current_price=101.0,
+            settings=_make_settings(),
+        )
+
+    assert updated.action == "HOLD"
+    assert updated.confidence == 91
+    assert updated.rationale == (
+        "Recent sell guard blocked BUY "
+        "(last_sell=100.5000, current=101.0000, elapsed=30s, window=120s)"
+    )
+    assert (
+        "BUY suppressed for 005930 (Korea): recent sell guard "
+        "(last_sell=100.5000 current=101.0000 elapsed=30s window=120s)"
+        in caplog.text
+    )
+
+
+def test_apply_recent_sell_guard_returns_original_decision_when_not_blocked() -> None:
+    decision = main_module.TradeDecision(action="BUY", confidence=91, rationale="entry")
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.name = "Korea"
+
+    with (
+        patch(
+            "src.main.get_latest_sell_trade",
+            return_value={"price": 100.5, "timestamp": "2026-03-18T00:00:00+00:00"},
+        ),
+        patch("src.main._resolve_recent_sell_guard_window_seconds", return_value=120),
+        patch("src.main._should_block_buy_above_recent_sell", return_value=(False, 30, 120)),
+    ):
+        updated = main_module._apply_recent_sell_guard(
+            decision=decision,
+            db_conn=MagicMock(),
+            stock_code="005930",
+            market=market,
+            current_price=101.0,
+            settings=_make_settings(),
+        )
+
+    assert updated is decision
+
+
 def test_resolve_recent_sell_guard_window_seconds_uses_session_profile_override() -> None:
     settings = _make_settings(
         SELL_REENTRY_PRICE_GUARD_SECONDS=120,

@@ -457,7 +457,6 @@
 - next_ticket: OOR-829
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: implementation plan은 실행 체크리스트만 남기고 설계 판단 근거는 design doc 단일 문서로 정리한다. 선택적 마이너 코멘트는 문서 가독성 개선 범위에서만 반영한다.
-
 ### 2026-03-20 | session=codex-oor-830-start
 - branch: feature/issue-830-recent-sell-market-setting-cleanup
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -473,3 +472,11 @@
 - next_ticket: OOR-830
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: `_resolve_market_setting` 모듈 레벨 import가 이미 안전하게 동작하므로 `src/core/order_helpers.py` 내부의 동일 심볼 lazy import 잔존 여부를 정리하고, 리뷰 스레드에는 반영 근거와 검증 결과를 남긴다.
+
+### 2026-03-20 | session=codex-oor-831-start
+- branch: feature/issue-831-recent-sell-guard-helper
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-831
+- next_ticket: OOR-831
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: PR #833 리뷰 후속으로 recent SELL guard 중복 블록을 공용 helper 계약으로 통합하고 로그/rationale 일관성을 검증한다.
