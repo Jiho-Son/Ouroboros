@@ -7185,6 +7185,24 @@ def test_resolve_recent_sell_guard_window_seconds_clamps_override_to_positive_wi
     assert value == 1
 
 
+def test_resolve_recent_sell_guard_window_seconds_clamps_negative_override_to_positive_window(
+) -> None:
+    settings = _make_settings(
+        SELL_REENTRY_PRICE_GUARD_SECONDS=120,
+        SESSION_RISK_PROFILES_JSON='{"NXT_AFTER": {"SELL_REENTRY_PRICE_GUARD_SECONDS": -10}}',
+    )
+    market = MagicMock()
+    market.code = "KR"
+
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="NXT_AFTER"),
+    ):
+        value = _resolve_recent_sell_guard_window_seconds(market=market, settings=settings)
+
+    assert value == 1
+
+
 def test_split_trade_pnl_components_overseas_fx_split_preserves_total() -> None:
     market = MagicMock()
     market.is_domestic = False

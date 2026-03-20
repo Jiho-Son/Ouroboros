@@ -147,8 +147,6 @@ def _should_block_overseas_buy_for_fx_buffer(
     ):
         return False, total_cash - order_amount, 0.0
     remaining = total_cash - order_amount
-    # Lazy import to avoid circular dependency (will move to session_risk in Task 3)
-    from src.core.session_risk import _resolve_market_setting
 
     required = float(
         _resolve_market_setting(
@@ -176,8 +174,6 @@ def _should_block_buy_chasing_session_high(
     if current_price <= 0 or session_high_price <= 0 or current_price > session_high_price:
         return False, 0.0, 0.0, 0.0
 
-    from src.core.session_risk import _resolve_market_setting
-
     min_gain_pct = float(
         _resolve_market_setting(
             market=market,
@@ -201,14 +197,16 @@ def _should_block_buy_chasing_session_high(
 
 def _resolve_recent_sell_guard_window_seconds(
     *,
-    market: MarketInfo,
+    market: MarketInfo | None,
     settings: Settings | None,
 ) -> int:
     """Resolve the recent-SELL guard window in one place.
 
     This helper keeps the session-aware setting lookup outside the pure
     recent-SELL comparison helper, so reviewers can see the `session_risk`
-    dependency explicitly instead of via an in-function lazy import.
+    dependency explicitly instead of via an in-function lazy import. Current
+    BUY callsites pass a concrete `MarketInfo`, but the helper accepts `None`
+    to match `_resolve_market_setting` for future reuse in fallback contexts.
     """
     return max(
         1,
@@ -270,8 +268,6 @@ def _should_force_exit_for_overnight(
         return True
     if settings is None:
         return False
-    # Lazy import to avoid circular dependency (will move to session_risk in Task 3)
-    from src.core.session_risk import _resolve_market_setting
 
     overnight_enabled = _resolve_market_setting(
         market=market,

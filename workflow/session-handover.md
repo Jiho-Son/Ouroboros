@@ -465,3 +465,11 @@
 - next_ticket: OOR-830
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: `src/core/order_helpers.py` 의 `_resolve_market_setting` 지연 import 책임 경계를 먼저 재현하고, `window_seconds` 주입 vs 공용 helper 분리안을 비교한 뒤 테스트/최소 문서를 함께 정리한다.
+
+### 2026-03-20 | session=codex-pr844-review-followup
+- branch: feature/issue-830-recent-sell-market-setting-cleanup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: PR #844 review 본문 확인, import 일관성/docstring/test 보강 필요 여부 재검증
+- next_ticket: OOR-830
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: `_resolve_market_setting` 모듈 레벨 import가 이미 안전하게 동작하므로 `src/core/order_helpers.py` 내부의 동일 심볼 lazy import 잔존 여부를 정리하고, 리뷰 스레드에는 반영 근거와 검증 결과를 남긴다.
