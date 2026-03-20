@@ -441,3 +441,11 @@
 - next_ticket: OOR-828
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: `test_workflow_before_remove_hook_resolves_script_from_nested_worktree_dir` 의 merge-detection 의도를 재현으로 먼저 고정한 뒤, `github_merged=False` 조건에서도 git ancestry 경로만으로 통과함이 드러나도록 테스트 서술과 fixture 입력을 최소 수정한다.
+
+### 2026-03-20 | session=codex-oor-829-start
+- branch: feature/issue-829-recent-sell-fee-buffer-design
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-829
+- next_ticket: OOR-829
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: OOR-815 recent SELL guard 불변식을 기준으로 fee/slippage buffer 도입 필요성을 재검토하고, 적용 여부와 근거를 코드/테스트/문서에 함께 정리한다.
