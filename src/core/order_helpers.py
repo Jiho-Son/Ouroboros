@@ -14,6 +14,7 @@ from src.analysis.smart_scanner import ScanCandidate
 from src.broker.balance_utils import _extract_held_qty_from_balance
 from src.config import Settings
 from src.core.order_policy import get_session_info
+from src.core.session_risk import _resolve_market_setting
 from src.db import get_open_position
 from src.markets.schedule import MarketInfo
 
@@ -146,8 +147,6 @@ def _should_block_overseas_buy_for_fx_buffer(
     ):
         return False, total_cash - order_amount, 0.0
     remaining = total_cash - order_amount
-    # Lazy import to avoid circular dependency (will move to session_risk in Task 3)
-    from src.core.session_risk import _resolve_market_setting
 
     required = float(
         _resolve_market_setting(
@@ -175,8 +174,6 @@ def _should_block_buy_chasing_session_high(
     if current_price <= 0 or session_high_price <= 0 or current_price > session_high_price:
         return False, 0.0, 0.0, 0.0
 
-    from src.core.session_risk import _resolve_market_setting
-
     min_gain_pct = float(
         _resolve_market_setting(
             market=market,
@@ -198,17 +195,46 @@ def _should_block_buy_chasing_session_high(
     return blocked, pullback_from_high_pct, min_gain_pct, max_pullback_pct
 
 
+def _resolve_recent_sell_guard_window_seconds(
+    *,
+    market: MarketInfo | None,
+    settings: Settings | None,
+) -> int:
+    """Resolve the recent-SELL guard window in one place.
+
+    This helper keeps the session-aware setting lookup outside the pure
+    recent-SELL comparison helper, so reviewers can see the `session_risk`
+    dependency explicitly instead of via an in-function lazy import. Current
+    BUY callsites pass a concrete `MarketInfo`, but the helper accepts `None`
+    to match `_resolve_market_setting` for future reuse in fallback contexts.
+    """
+    return max(
+        1,
+        int(
+            _resolve_market_setting(
+                market=market,
+                settings=settings,
+                key="SELL_REENTRY_PRICE_GUARD_SECONDS",
+                default=120,
+            )
+        ),
+    )
+
+
 def _should_block_buy_above_recent_sell(
     *,
-    market: MarketInfo,
     action: str,
     current_price: float,
     last_sell_price: float,
     last_sell_timestamp: str | None,
-    settings: Settings | None,
+    window_seconds: int,
     now: datetime | None = None,
 ) -> tuple[bool, int, int]:
-    """Block BUY when it would re-enter at a strictly higher price too soon."""
+    """Block BUY when it would re-enter at a strictly higher price too soon.
+
+    The caller resolves `window_seconds` up front so this helper only compares
+    explicit inputs and has no direct dependency on `session_risk`.
+    """
     if action != "BUY" or current_price <= 0 or last_sell_price <= 0 or not last_sell_timestamp:
         return False, 0, 0
 
@@ -221,20 +247,6 @@ def _should_block_buy_above_recent_sell(
 
     evaluation_time = now or datetime.now(UTC)
     elapsed_seconds = max(0, int((evaluation_time - last_sell_at).total_seconds()))
-
-    from src.core.session_risk import _resolve_market_setting
-
-    window_seconds = max(
-        1,
-        int(
-            _resolve_market_setting(
-                market=market,
-                settings=settings,
-                key="SELL_REENTRY_PRICE_GUARD_SECONDS",
-                default=120,
-            )
-        ),
-    )
     if elapsed_seconds >= window_seconds:
         return False, elapsed_seconds, window_seconds
 
@@ -256,8 +268,6 @@ def _should_force_exit_for_overnight(
         return True
     if settings is None:
         return False
-    # Lazy import to avoid circular dependency (will move to session_risk in Task 3)
-    from src.core.session_risk import _resolve_market_setting
 
     overnight_enabled = _resolve_market_setting(
         market=market,
