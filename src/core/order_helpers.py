@@ -208,7 +208,7 @@ def _should_block_buy_above_recent_sell(
     settings: Settings | None,
     now: datetime | None = None,
 ) -> tuple[bool, int, int]:
-    """Block BUY when it would re-enter above the latest SELL price too soon."""
+    """Block BUY when it would re-enter at a strictly higher price too soon."""
     if action != "BUY" or current_price <= 0 or last_sell_price <= 0 or not last_sell_timestamp:
         return False, 0, 0
 
@@ -238,6 +238,7 @@ def _should_block_buy_above_recent_sell(
     if elapsed_seconds >= window_seconds:
         return False, elapsed_seconds, window_seconds
 
+    # OOR-815/OOR-829 intentionally use a strict higher-price comparison here.
     return current_price > last_sell_price, elapsed_seconds, window_seconds
 
 

@@ -240,6 +240,8 @@ High-frequency trading with individual stock analysis:
 - No AI calls during trading hours — pure Python matching logic
 - Returns matched scenarios with confidence scores
 - BUY execution adds a final session-high chase guard: if intraday gain is already stretched and price is still pinned near the session high, the order path suppresses BUY to HOLD until price pulls back further.
+- BUY execution also checks the latest SELL inside `SELL_REENTRY_PRICE_GUARD_SECONDS`.
+- The comparison stays strict (`current_price > last_sell_price`) and does not add a fee/slippage buffer until a market-aware cost model exists.
 - Configurable `MAX_SCENARIOS_PER_STOCK` (default 5)
 - Periodic rescan at `RESCAN_INTERVAL_SECONDS` (default 300)
 
@@ -671,7 +673,7 @@ STOP_LOSS_COOLDOWN_MINUTES=120  # Cooldown after stop-loss before re-entry (same
 US_MIN_PRICE=5.0              # Minimum US stock price for BUY ($)
 BUY_CHASE_MIN_INTRADAY_GAIN_PCT=4.0      # Minimum day gain before the chase guard activates
 BUY_CHASE_MAX_PULLBACK_FROM_HIGH_PCT=0.5 # Maximum pullback from session high still treated as "buying the top"
-SELL_REENTRY_PRICE_GUARD_SECONDS=120     # Block re-buying above the latest SELL price for a short window
+SELL_REENTRY_PRICE_GUARD_SECONDS=120     # Block only strictly higher re-buys above the latest SELL price for a short window
 
 # Optional — v3 Session Risk Management
 SESSION_RISK_RELOAD_ENABLED=true   # Reload risk params at session boundaries

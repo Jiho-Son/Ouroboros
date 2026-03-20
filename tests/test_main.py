@@ -7116,6 +7116,28 @@ def test_recent_sell_guard_allows_lower_price_reentry_within_window() -> None:
     assert window_seconds == 120
 
 
+def test_recent_sell_guard_allows_equal_price_reentry_within_window() -> None:
+    settings = _make_settings()
+    market = MagicMock()
+    market.is_domestic = True
+    market.code = "KR"
+
+    now = datetime(2026, 3, 18, 0, 0, tzinfo=UTC)
+    blocked, elapsed_seconds, window_seconds = _should_block_buy_above_recent_sell(
+        market=market,
+        action="BUY",
+        current_price=100.5,
+        last_sell_price=100.5,
+        last_sell_timestamp=(now - timedelta(seconds=30)).isoformat(),
+        settings=settings,
+        now=now,
+    )
+
+    assert not blocked
+    assert elapsed_seconds == 30
+    assert window_seconds == 120
+
+
 def test_recent_sell_guard_allows_higher_price_reentry_after_expiry() -> None:
     settings = _make_settings()
     market = MagicMock()
