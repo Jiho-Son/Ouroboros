@@ -449,3 +449,11 @@
 - next_ticket: OOR-829
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: OOR-815 recent SELL guard 불변식을 기준으로 fee/slippage buffer 도입 필요성을 재검토하고, 적용 여부와 근거를 코드/테스트/문서에 함께 정리한다.
+
+### 2026-03-20 | session=codex-pr842-review-followup
+- branch: feature/issue-829-recent-sell-fee-buffer-design
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: PR #842 review summary 확인, 문서 중복/Claude 지시문 제거 필요성 재검증
+- next_ticket: OOR-829
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: implementation plan은 실행 체크리스트만 남기고 설계 판단 근거는 design doc 단일 문서로 정리한다. 선택적 마이너 코멘트는 문서 가독성 개선 범위에서만 반영한다.

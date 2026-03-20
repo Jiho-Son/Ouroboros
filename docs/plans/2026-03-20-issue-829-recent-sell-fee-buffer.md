@@ -1,8 +1,8 @@
 # Recent SELL Fee Buffer Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** Record why `OOR-829` keeps the recent-SELL guard strict and add regression coverage for the no-buffer boundary.
+
+**Design source of truth:** See [`2026-03-20-issue-829-recent-sell-fee-buffer-design.md`](./2026-03-20-issue-829-recent-sell-fee-buffer-design.md) for the fee-buffer alternatives, recommendation, and final decision. This plan only tracks the execution steps required to apply that decision.
 
 **Architecture:** Do not change the runtime threshold model. Keep the existing helper behavior, add one boundary test for equal-price re-entry, and update docs so reviewers can see that the strict guard is intentional.
 
@@ -41,7 +41,7 @@ Tighten the helper docstring/comment so the code itself reflects the strict comp
 
 **Step 3: Record the design rationale**
 
-Capture the strict-guard recommendation, rejected buffer alternatives, and validation commands in the design doc.
+Keep the rationale in the design doc and reference it from review/PR discussion instead of duplicating the same decision text here.
 
 ### Task 3: Re-verify touched surfaces
 
