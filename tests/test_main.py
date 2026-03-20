@@ -43,6 +43,7 @@ from src.core.kill_switch_runtime import (
 )
 from src.core.order_helpers import (
     _determine_order_quantity,
+    _resolve_recent_sell_guard_window_seconds,
     _resolve_sell_qty_for_pnl,
     _should_block_buy_above_recent_sell,
     _should_block_buy_chasing_session_high,
@@ -7073,19 +7074,13 @@ def test_buy_chasing_session_high_guard_allows_non_chase_entries(
 
 
 def test_recent_sell_guard_blocks_higher_price_reentry_within_window() -> None:
-    settings = _make_settings()
-    market = MagicMock()
-    market.is_domestic = True
-    market.code = "KR"
-
     now = datetime(2026, 3, 18, 0, 0, tzinfo=UTC)
     blocked, elapsed_seconds, window_seconds = _should_block_buy_above_recent_sell(
-        market=market,
         action="BUY",
         current_price=101.0,
         last_sell_price=100.5,
         last_sell_timestamp=(now - timedelta(seconds=30)).isoformat(),
-        settings=settings,
+        window_seconds=120,
         now=now,
     )
 
@@ -7095,19 +7090,13 @@ def test_recent_sell_guard_blocks_higher_price_reentry_within_window() -> None:
 
 
 def test_recent_sell_guard_allows_lower_price_reentry_within_window() -> None:
-    settings = _make_settings()
-    market = MagicMock()
-    market.is_domestic = True
-    market.code = "KR"
-
     now = datetime(2026, 3, 18, 0, 0, tzinfo=UTC)
     blocked, elapsed_seconds, window_seconds = _should_block_buy_above_recent_sell(
-        market=market,
         action="BUY",
         current_price=100.0,
         last_sell_price=100.5,
         last_sell_timestamp=(now - timedelta(seconds=30)).isoformat(),
-        settings=settings,
+        window_seconds=120,
         now=now,
     )
 
@@ -7117,19 +7106,13 @@ def test_recent_sell_guard_allows_lower_price_reentry_within_window() -> None:
 
 
 def test_recent_sell_guard_allows_equal_price_reentry_within_window() -> None:
-    settings = _make_settings()
-    market = MagicMock()
-    market.is_domestic = True
-    market.code = "KR"
-
     now = datetime(2026, 3, 18, 0, 0, tzinfo=UTC)
     blocked, elapsed_seconds, window_seconds = _should_block_buy_above_recent_sell(
-        market=market,
         action="BUY",
         current_price=100.5,
         last_sell_price=100.5,
         last_sell_timestamp=(now - timedelta(seconds=30)).isoformat(),
-        settings=settings,
+        window_seconds=120,
         now=now,
     )
 
@@ -7139,19 +7122,13 @@ def test_recent_sell_guard_allows_equal_price_reentry_within_window() -> None:
 
 
 def test_recent_sell_guard_allows_higher_price_reentry_after_expiry() -> None:
-    settings = _make_settings()
-    market = MagicMock()
-    market.is_domestic = True
-    market.code = "KR"
-
     now = datetime(2026, 3, 18, 0, 0, tzinfo=UTC)
     blocked, elapsed_seconds, window_seconds = _should_block_buy_above_recent_sell(
-        market=market,
         action="BUY",
         current_price=101.0,
         last_sell_price=100.5,
         last_sell_timestamp=(now - timedelta(seconds=180)).isoformat(),
-        settings=settings,
+        window_seconds=120,
         now=now,
     )
 
@@ -7161,23 +7138,51 @@ def test_recent_sell_guard_allows_higher_price_reentry_after_expiry() -> None:
 
 
 def test_recent_sell_guard_allows_buy_without_sell_history() -> None:
-    settings = _make_settings()
-    market = MagicMock()
-    market.is_domestic = True
-    market.code = "KR"
-
     blocked, elapsed_seconds, window_seconds = _should_block_buy_above_recent_sell(
-        market=market,
         action="BUY",
         current_price=101.0,
         last_sell_price=0.0,
         last_sell_timestamp=None,
-        settings=settings,
+        window_seconds=120,
     )
 
     assert not blocked
     assert elapsed_seconds == 0
     assert window_seconds == 0
+
+
+def test_resolve_recent_sell_guard_window_seconds_uses_session_profile_override() -> None:
+    settings = _make_settings(
+        SELL_REENTRY_PRICE_GUARD_SECONDS=120,
+        SESSION_RISK_PROFILES_JSON='{"NXT_AFTER": {"SELL_REENTRY_PRICE_GUARD_SECONDS": 45}}',
+    )
+    market = MagicMock()
+    market.code = "KR"
+
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="NXT_AFTER"),
+    ):
+        value = _resolve_recent_sell_guard_window_seconds(market=market, settings=settings)
+
+    assert value == 45
+
+
+def test_resolve_recent_sell_guard_window_seconds_clamps_override_to_positive_window() -> None:
+    settings = _make_settings(
+        SELL_REENTRY_PRICE_GUARD_SECONDS=120,
+        SESSION_RISK_PROFILES_JSON='{"NXT_AFTER": {"SELL_REENTRY_PRICE_GUARD_SECONDS": 0}}',
+    )
+    market = MagicMock()
+    market.code = "KR"
+
+    with patch(
+        "src.core.session_risk.get_session_info",
+        return_value=MagicMock(session_id="NXT_AFTER"),
+    ):
+        value = _resolve_recent_sell_guard_window_seconds(market=market, settings=settings)
+
+    assert value == 1
 
 
 def test_split_trade_pnl_components_overseas_fx_split_preserves_total() -> None:

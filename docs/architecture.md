@@ -241,6 +241,7 @@ High-frequency trading with individual stock analysis:
 - Returns matched scenarios with confidence scores
 - BUY execution adds a final session-high chase guard: if intraday gain is already stretched and price is still pinned near the session high, the order path suppresses BUY to HOLD until price pulls back further.
 - BUY execution also checks the latest SELL inside `SELL_REENTRY_PRICE_GUARD_SECONDS`.
+- The session-aware window is resolved by one shared helper before the pure recent-SELL comparison runs, so the guard itself does not import `session_risk`.
 - The comparison stays strict (`current_price > last_sell_price`) and does not add a fee/slippage buffer until a market-aware cost model exists.
 - Configurable `MAX_SCENARIOS_PER_STOCK` (default 5)
 - Periodic rescan at `RESCAN_INTERVAL_SECONDS` (default 300)

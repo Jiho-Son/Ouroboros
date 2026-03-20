@@ -71,6 +71,7 @@ from src.core.order_helpers import (
     _determine_order_quantity,
     _resolve_buy_suppression_position,
     _resolve_domestic_quote_market_div_code,
+    _resolve_recent_sell_guard_window_seconds,
     _resolve_sell_qty_for_pnl,
     _should_block_buy_above_recent_sell,
     _should_block_buy_chasing_session_high,
@@ -1402,16 +1403,19 @@ async def _evaluate_trading_cycle_decision(
                 exchange_code=market.exchange_code,
             )
             last_sell_price = safe_float(latest_sell.get("price"), 0.0) if latest_sell else 0.0
+            recent_sell_window_seconds = _resolve_recent_sell_guard_window_seconds(
+                market=market,
+                settings=settings,
+            )
             blocked_recent_sell, elapsed_seconds, window_seconds = (
                 _should_block_buy_above_recent_sell(
-                    market=market,
                     action=decision.action,
                     current_price=current_price,
                     last_sell_price=last_sell_price,
                     last_sell_timestamp=(
                         str(latest_sell.get("timestamp") or "") if latest_sell else None
                     ),
-                    settings=settings,
+                    window_seconds=recent_sell_window_seconds,
                 )
             )
             if blocked_recent_sell:
@@ -2552,16 +2556,19 @@ async def _process_daily_session_stock(
                 exchange_code=market.exchange_code,
             )
             last_sell_price = safe_float(latest_sell.get("price"), 0.0) if latest_sell else 0.0
+            recent_sell_window_seconds = _resolve_recent_sell_guard_window_seconds(
+                market=market,
+                settings=settings,
+            )
             blocked_recent_sell, elapsed_seconds, window_seconds = (
                 _should_block_buy_above_recent_sell(
-                    market=market,
                     action=decision.action,
                     current_price=stock_data["current_price"],
                     last_sell_price=last_sell_price,
                     last_sell_timestamp=(
                         str(latest_sell.get("timestamp") or "") if latest_sell else None
                     ),
-                    settings=settings,
+                    window_seconds=recent_sell_window_seconds,
                 )
             )
             if blocked_recent_sell:
