@@ -433,3 +433,11 @@
 - next_ticket: OOR-827
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: 손실 증가 원인을 재현 가능한 데이터/로그로 먼저 고정하고, planner-scorer-risk/runtime 경로를 따라 근본 원인을 문서화하거나 필요한 최소 수정만 반영한다.
+
+### 2026-03-20 | session=codex-oor-828-start
+- branch: feature/issue-828-before-remove-git-ancestry-path
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-828 Todo→In Progress 상태, 이슈 설명/Acceptance Criteria, 기존 workpad 없음, 첨부 PR 없음
+- next_ticket: OOR-828
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: `test_workflow_before_remove_hook_resolves_script_from_nested_worktree_dir` 의 merge-detection 의도를 재현으로 먼저 고정한 뒤, `github_merged=False` 조건에서도 git ancestry 경로만으로 통과함이 드러나도록 테스트 서술과 fixture 입력을 최소 수정한다.

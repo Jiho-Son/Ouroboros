@@ -417,14 +417,15 @@ def test_before_remove_canonical_restart_skips_unmerged_worktree(
     assert "pull:" not in git_log.read_text(encoding="utf-8")
 
 
-def test_workflow_before_remove_hook_resolves_script_from_nested_worktree_dir(
+def test_workflow_before_remove_hook_uses_git_ancestry_signal_from_nested_dir(
     tmp_path: Path,
 ) -> None:
     completed, _canonical_root, hooks_log, marker_path, _git_log, _restart_log = (
         _run_symphony_before_remove_hook(
             tmp_path=tmp_path,
+            # Keep the GitHub fallback disabled so this covers the git ancestry path only.
             merged_by_git=True,
-            github_merged=True,
+            github_merged=False,
             target_sha="main-sha-workflow-hook",
             invocation_mode="workflow",
             cwd_relative="nested/context",
