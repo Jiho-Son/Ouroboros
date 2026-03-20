@@ -1271,6 +1271,13 @@ def _apply_recent_sell_guard(
     current_price: float,
     settings: Settings | None,
 ) -> TradeDecision:
+    """Apply the DB-backed recent SELL reentry guard for any decision.
+
+    Non-BUY decisions pass through unchanged so callers can invoke this helper
+    unconditionally. ``settings=None`` is allowed because the window resolver
+    falls back to the default guard window. This helper stays in ``main.py``
+    because it depends on DB access via ``get_latest_sell_trade``.
+    """
     if decision.action != "BUY":
         return decision
 
@@ -1280,6 +1287,9 @@ def _apply_recent_sell_guard(
         market.code,
         exchange_code=market.exchange_code,
     )
+    if latest_sell is None:
+        return decision
+
     last_sell_price = safe_float(latest_sell.get("price"), 0.0) if latest_sell else 0.0
     recent_sell_window_seconds = _resolve_recent_sell_guard_window_seconds(
         market=market,
@@ -1450,15 +1460,14 @@ async def _evaluate_trading_cycle_decision(
                     market.name,
                     remaining,
                 )
-        if decision.action == "BUY":
-            decision = _apply_recent_sell_guard(
-                decision=decision,
-                db_conn=db_conn,
-                stock_code=stock_code,
-                market=market,
-                current_price=current_price,
-                settings=settings,
-            )
+        decision = _apply_recent_sell_guard(
+            decision=decision,
+            db_conn=db_conn,
+            stock_code=stock_code,
+            market=market,
+            current_price=current_price,
+            settings=settings,
+        )
         if decision.action == "BUY":
             blocked, pullback_pct, min_gain_pct, max_pullback_pct = (
                 _should_block_buy_chasing_session_high(
@@ -2569,15 +2578,14 @@ async def _process_daily_session_stock(
                     market.name,
                     remaining,
                 )
-        if decision.action == "BUY":
-            decision = _apply_recent_sell_guard(
-                decision=decision,
-                db_conn=db_conn,
-                stock_code=stock_code,
-                market=market,
-                current_price=stock_data["current_price"],
-                settings=settings,
-            )
+        decision = _apply_recent_sell_guard(
+            decision=decision,
+            db_conn=db_conn,
+            stock_code=stock_code,
+            market=market,
+            current_price=stock_data["current_price"],
+            settings=settings,
+        )
         if decision.action == "BUY":
             blocked, pullback_pct, min_gain_pct, max_pullback_pct = (
                 _should_block_buy_chasing_session_high(

@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-03-21 | session=codex-pr845-review-followup
+- branch: feature/issue-831-recent-sell-guard-helper
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #831, PR #845
+- next_ticket: #831
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #845 리뷰 지적을 기술적으로 검토한 뒤 필요한 수정만 반영하고, push 및 GitHub thread reply/comment까지 마무리한다.
+
 ### 2026-03-18 | session=codex-pr834-review-followup
 - branch: feature/issue-822-korean-policy-validator-stability
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
