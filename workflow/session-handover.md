@@ -425,3 +425,11 @@
 - next_ticket: OOR-824
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: PR #839 리뷰 지적을 코드 기준으로 재검증한 뒤 필요한 수정만 반영하고, 검증 후 thread reply 및 PR 코멘트를 남긴다.
+
+### 2026-03-19 | session=codex-oor-827-start
+- branch: feature/issue-827-loss-increase-investigation
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-827 Todo 상태, 이슈 설명, 기존 workpad 없음, 첨부 PR 없음
+- next_ticket: OOR-827
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: 손실 증가 원인을 재현 가능한 데이터/로그로 먼저 고정하고, planner-scorer-risk/runtime 경로를 따라 근본 원인을 문서화하거나 필요한 최소 수정만 반영한다.
