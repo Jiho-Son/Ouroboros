@@ -397,7 +397,7 @@ def test_get_latest_buy_trade_returns_latest_row_when_exchange_code_is_none() ->
         quantity=5,
         price=121.0,
         market="US_NASDAQ",
-        exchange_code="",
+        exchange_code="NYSE",
         decision_id="latest-buy",
     )
     conn.execute(
