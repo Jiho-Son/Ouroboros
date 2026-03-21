@@ -433,7 +433,7 @@ def get_latest_sell_trade(
     market: str,
     exchange_code: str | None = None,
 ) -> dict[str, Any] | None:
-    """Fetch the most recent SELL trade for a stock and market."""
+    """Fetch the most recent eligible SELL trade for a stock and market."""
     if exchange_code:
         cursor = conn.execute(
             """
@@ -448,8 +448,10 @@ def get_latest_sell_trade(
                   OR exchange_code = ''
               )
             ORDER BY
-              CASE WHEN exchange_code = ? THEN 0 ELSE 1 END,
-              timestamp DESC
+              timestamp DESC,
+              -- Recent-sell guard must use the freshest SELL first; a matching
+              -- exchange_code only breaks ties against legacy blank rows.
+              CASE WHEN exchange_code = ? THEN 0 ELSE 1 END
             LIMIT 1
             """,
             (stock_code, market, exchange_code, exchange_code),
