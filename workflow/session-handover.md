@@ -500,7 +500,15 @@
 ### 2026-03-21 | session=codex-pr846-review-followup
 - branch: feature/issue-832-sell-trade-exchange-priority
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
-- open_issues_reviewed: PR #846 review summary/inline comments 확인 예정, OOR-832 범위 재검증
+- open_issues_reviewed: PR #846 review summary 확인, inline review thread 없음, OOR-832 범위 재검증
 - next_ticket: OOR-832
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
-- risks_or_notes: 외부 리뷰 코멘트를 코드/테스트 기준으로 재검증한 뒤 필요한 수정만 반영하고, 검증 결과와 함께 inline thread reply 및 PR comment를 남긴다.
+- risks_or_notes: `tests/test_db.py` 에서 동일 timestamp로 고정한 SELL row가 실제로 exchange_code tie-breaker만 검증하는지 재확인했고, thread reply 대신 top-level PR comment로 반영 결과와 검증 명령을 남긴다.
+
+### 2026-03-21 | session=codex-pr846-review-apply
+- branch: feature/issue-832-sell-trade-exchange-priority
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: PR #846 follow-up review summary 확인, 남은 관찰 사항은 `timestamp` 단언 보강과 handover 기록 구체화
+- next_ticket: OOR-832
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: `test_get_latest_sell_trade_prefers_exchange_code_match` 에 동일 timestamp 단언을 추가해 tie-breaker 의미를 고정하고, 이번 세션에서 review 반영 내용과 검증 결과를 PR comment/push로 마무리한다.

@@ -415,6 +415,7 @@ def test_get_latest_sell_trade_prefers_exchange_code_match() -> None:
     assert matched is not None
     assert matched["decision_id"] == "matched-sell"
     assert matched["price"] == 125.0
+    assert matched["timestamp"] == "2026-03-20T00:00:00+00:00"
 
 
 def test_get_latest_sell_trade_prefers_latest_timestamp_before_exchange_code() -> None:
