@@ -400,6 +400,12 @@ def test_get_latest_sell_trade_prefers_exchange_code_match() -> None:
         exchange_code="NASD",
         decision_id="matched-sell",
     )
+    conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE decision_id IN (?, ?)",
+        ("2026-03-20T00:00:00+00:00", "legacy-sell", "matched-sell"),
+    )
+    conn.commit()
+
     matched = get_latest_sell_trade(
         conn,
         stock_code="AAPL",

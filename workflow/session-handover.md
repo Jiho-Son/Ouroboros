@@ -496,3 +496,11 @@
 - next_ticket: OOR-832
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: `get_latest_sell_trade()` 의 `exchange_code` 우선 정렬이 실제 정책인지 먼저 재현/근거로 고정하고, guard window가 참조하는 SELL 선택 규칙을 테스트로 잠근다.
+
+### 2026-03-21 | session=codex-pr846-review-followup
+- branch: feature/issue-832-sell-trade-exchange-priority
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: PR #846 review summary/inline comments 확인 예정, OOR-832 범위 재검증
+- next_ticket: OOR-832
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: 외부 리뷰 코멘트를 코드/테스트 기준으로 재검증한 뒤 필요한 수정만 반영하고, 검증 결과와 함께 inline thread reply 및 PR comment를 남긴다.
