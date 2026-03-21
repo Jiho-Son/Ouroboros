@@ -488,3 +488,27 @@
 - next_ticket: OOR-831
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: PR #833 리뷰 후속으로 recent SELL guard 중복 블록을 공용 helper 계약으로 통합하고 로그/rationale 일관성을 검증한다.
+
+### 2026-03-21 | session=codex-oor-832-start
+- branch: feature/issue-832-sell-trade-exchange-priority
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-832 Todo 상태, 이슈 설명/Acceptance Criteria, 기존 workpad 없음, 첨부 PR 없음
+- next_ticket: OOR-832
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: `get_latest_sell_trade()` 의 `exchange_code` 우선 정렬이 실제 정책인지 먼저 재현/근거로 고정하고, guard window가 참조하는 SELL 선택 규칙을 테스트로 잠근다.
+
+### 2026-03-21 | session=codex-pr846-review-followup
+- branch: feature/issue-832-sell-trade-exchange-priority
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: PR #846 review summary 확인, inline review thread 없음, OOR-832 범위 재검증
+- next_ticket: OOR-832
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: `tests/test_db.py` 에서 동일 timestamp로 고정한 SELL row가 실제로 exchange_code tie-breaker만 검증하는지 재확인했고, thread reply 대신 top-level PR comment로 반영 결과와 검증 명령을 남긴다.
+
+### 2026-03-21 | session=codex-pr846-review-apply
+- branch: feature/issue-832-sell-trade-exchange-priority
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: PR #846 follow-up review summary 확인, 남은 관찰 사항은 `timestamp` 단언 보강과 handover 기록 구체화
+- next_ticket: OOR-832
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: `test_get_latest_sell_trade_prefers_exchange_code_match` 에 동일 timestamp 단언을 추가해 tie-breaker 의미를 고정하고, 이번 세션에서 review 반영 내용과 검증 결과를 PR comment/push로 마무리한다.

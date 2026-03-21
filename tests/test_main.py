@@ -7222,6 +7222,64 @@ def test_apply_recent_sell_guard_returns_original_decision_when_not_blocked() ->
     assert updated is decision
 
 
+def test_apply_recent_sell_guard_uses_latest_sell_timestamp_from_db_lookup() -> None:
+    now = datetime.now(UTC)
+    db_conn = init_db(":memory:")
+    decision = main_module.TradeDecision(action="BUY", confidence=91, rationale="entry")
+    market = MARKETS["US_NASDAQ"]
+
+    log_trade(
+        conn=db_conn,
+        stock_code="AAPL",
+        action="SELL",
+        confidence=80,
+        rationale="older matched sell",
+        quantity=1,
+        price=100.0,
+        market=market.code,
+        exchange_code=market.exchange_code,
+        decision_id="older-matched-sell",
+    )
+    log_trade(
+        conn=db_conn,
+        stock_code="AAPL",
+        action="SELL",
+        confidence=85,
+        rationale="newer legacy sell",
+        quantity=1,
+        price=101.0,
+        market=market.code,
+        exchange_code="",
+        decision_id="newer-legacy-sell",
+    )
+    db_conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE decision_id = ?",
+        ((now - timedelta(seconds=180)).isoformat(), "older-matched-sell"),
+    )
+    db_conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE decision_id = ?",
+        ((now - timedelta(seconds=30)).isoformat(), "newer-legacy-sell"),
+    )
+    db_conn.commit()
+
+    with patch("src.main._resolve_recent_sell_guard_window_seconds", return_value=60):
+        updated = main_module._apply_recent_sell_guard(
+            decision=decision,
+            db_conn=db_conn,
+            stock_code="AAPL",
+            market=market,
+            current_price=102.0,
+            settings=_make_settings(),
+        )
+
+    assert updated.action == "HOLD"
+    assert "Recent sell guard blocked BUY" in updated.rationale
+    assert "last_sell=101.0000" in updated.rationale
+    assert "current=102.0000" in updated.rationale
+    assert "window=60s" in updated.rationale
+    assert "last_sell=100.0000" not in updated.rationale
+
+
 def test_apply_recent_sell_guard_returns_original_decision_without_sell_history() -> None:
     decision = main_module.TradeDecision(action="BUY", confidence=91, rationale="entry")
     market = MagicMock()

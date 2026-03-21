@@ -400,6 +400,12 @@ def test_get_latest_sell_trade_prefers_exchange_code_match() -> None:
         exchange_code="NASD",
         decision_id="matched-sell",
     )
+    conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE decision_id IN (?, ?)",
+        ("2026-03-20T00:00:00+00:00", "legacy-sell", "matched-sell"),
+    )
+    conn.commit()
+
     matched = get_latest_sell_trade(
         conn,
         stock_code="AAPL",
@@ -409,6 +415,56 @@ def test_get_latest_sell_trade_prefers_exchange_code_match() -> None:
     assert matched is not None
     assert matched["decision_id"] == "matched-sell"
     assert matched["price"] == 125.0
+    assert matched["timestamp"] == "2026-03-20T00:00:00+00:00"
+
+
+def test_get_latest_sell_trade_prefers_latest_timestamp_before_exchange_code() -> None:
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="SELL",
+        confidence=80,
+        rationale="older matched sell",
+        quantity=10,
+        price=120.0,
+        market="US_NASDAQ",
+        exchange_code="NASD",
+        decision_id="older-matched-sell",
+    )
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="SELL",
+        confidence=85,
+        rationale="newer legacy sell",
+        quantity=5,
+        price=121.0,
+        market="US_NASDAQ",
+        exchange_code="",
+        decision_id="newer-legacy-sell",
+    )
+    conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE decision_id = ?",
+        ("2026-03-20T00:00:00+00:00", "older-matched-sell"),
+    )
+    conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE decision_id = ?",
+        ("2026-03-20T00:01:00+00:00", "newer-legacy-sell"),
+    )
+    conn.commit()
+
+    matched = get_latest_sell_trade(
+        conn,
+        stock_code="AAPL",
+        market="US_NASDAQ",
+        exchange_code="NASD",
+    )
+
+    assert matched is not None
+    assert matched["decision_id"] == "newer-legacy-sell"
+    assert matched["price"] == 121.0
+    assert matched["timestamp"] == "2026-03-20T00:01:00+00:00"
 
 
 def test_decision_logs_session_id_migration_backfills_unknown() -> None:
