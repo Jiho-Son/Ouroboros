@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-03-21 | session=codex-pr845-review-followup
+- branch: feature/issue-831-recent-sell-guard-helper
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #831, PR #845
+- next_ticket: #831
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #845 리뷰 지적을 기술적으로 검토한 뒤 필요한 수정만 반영하고, push 및 GitHub thread reply/comment까지 마무리한다.
+
 ### 2026-03-18 | session=codex-pr834-review-followup
 - branch: feature/issue-822-korean-policy-validator-stability
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -457,7 +465,6 @@
 - next_ticket: OOR-829
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: implementation plan은 실행 체크리스트만 남기고 설계 판단 근거는 design doc 단일 문서로 정리한다. 선택적 마이너 코멘트는 문서 가독성 개선 범위에서만 반영한다.
-
 ### 2026-03-20 | session=codex-oor-830-start
 - branch: feature/issue-830-recent-sell-market-setting-cleanup
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -473,3 +480,11 @@
 - next_ticket: OOR-830
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: `_resolve_market_setting` 모듈 레벨 import가 이미 안전하게 동작하므로 `src/core/order_helpers.py` 내부의 동일 심볼 lazy import 잔존 여부를 정리하고, 리뷰 스레드에는 반영 근거와 검증 결과를 남긴다.
+
+### 2026-03-20 | session=codex-oor-831-start
+- branch: feature/issue-831-recent-sell-guard-helper
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-831
+- next_ticket: OOR-831
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: PR #833 리뷰 후속으로 recent SELL guard 중복 블록을 공용 helper 계약으로 통합하고 로그/rationale 일관성을 검증한다.

@@ -6261,7 +6261,9 @@ class TestBuyChasingSessionHighGuard:
         call_args = decision_logger.log_decision.call_args
         assert call_args is not None
         assert call_args.kwargs["action"] == "HOLD"
-        assert "recent sell" in call_args.kwargs["rationale"].lower()
+        assert call_args.kwargs["rationale"].startswith(
+            "Recent sell guard blocked BUY (last_sell="
+        )
 
     @pytest.mark.asyncio
     async def test_run_daily_session_suppresses_buy_above_recent_sell_price(
@@ -6376,7 +6378,9 @@ class TestBuyChasingSessionHighGuard:
         call_args = decision_logger.log_decision.call_args
         assert call_args is not None
         assert call_args.kwargs["action"] == "HOLD"
-        assert "recent sell" in call_args.kwargs["rationale"].lower()
+        assert call_args.kwargs["rationale"].startswith(
+            "Recent sell guard blocked BUY (last_sell="
+        )
 
 
 @pytest.mark.asyncio
@@ -7149,6 +7153,120 @@ def test_recent_sell_guard_allows_buy_without_sell_history() -> None:
     assert not blocked
     assert elapsed_seconds == 0
     assert window_seconds == 0
+
+
+def test_apply_recent_sell_guard_returns_hold_decision_with_consistent_messages(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    decision = main_module.TradeDecision(action="BUY", confidence=91, rationale="entry")
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.name = "Korea"
+
+    with (
+        patch(
+            "src.main.get_latest_sell_trade",
+            return_value={"price": 100.5, "timestamp": "2026-03-18T00:00:00+00:00"},
+        ),
+        patch("src.main._resolve_recent_sell_guard_window_seconds", return_value=120),
+        patch("src.main._should_block_buy_above_recent_sell", return_value=(True, 30, 120)),
+        caplog.at_level(logging.INFO),
+    ):
+        updated = main_module._apply_recent_sell_guard(
+            decision=decision,
+            db_conn=MagicMock(),
+            stock_code="005930",
+            market=market,
+            current_price=101.0,
+            settings=_make_settings(),
+        )
+
+    assert updated.action == "HOLD"
+    assert updated.confidence == 91
+    assert updated.rationale == (
+        "Recent sell guard blocked BUY "
+        "(last_sell=100.5000, current=101.0000, elapsed=30s, window=120s)"
+    )
+    assert (
+        "BUY suppressed for 005930 (Korea): recent sell guard "
+        "(last_sell=100.5000 current=101.0000 elapsed=30s window=120s)"
+        in caplog.text
+    )
+
+
+def test_apply_recent_sell_guard_returns_original_decision_when_not_blocked() -> None:
+    decision = main_module.TradeDecision(action="BUY", confidence=91, rationale="entry")
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.name = "Korea"
+
+    with (
+        patch(
+            "src.main.get_latest_sell_trade",
+            return_value={"price": 100.5, "timestamp": "2026-03-18T00:00:00+00:00"},
+        ),
+        patch("src.main._resolve_recent_sell_guard_window_seconds", return_value=120),
+        patch("src.main._should_block_buy_above_recent_sell", return_value=(False, 30, 120)),
+    ):
+        updated = main_module._apply_recent_sell_guard(
+            decision=decision,
+            db_conn=MagicMock(),
+            stock_code="005930",
+            market=market,
+            current_price=101.0,
+            settings=_make_settings(),
+        )
+
+    assert updated is decision
+
+
+def test_apply_recent_sell_guard_returns_original_decision_without_sell_history() -> None:
+    decision = main_module.TradeDecision(action="BUY", confidence=91, rationale="entry")
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.name = "Korea"
+
+    with (
+        patch("src.main.get_latest_sell_trade", return_value=None),
+        patch("src.main._resolve_recent_sell_guard_window_seconds") as resolve_window,
+        patch("src.main._should_block_buy_above_recent_sell") as block_buy,
+    ):
+        updated = main_module._apply_recent_sell_guard(
+            decision=decision,
+            db_conn=MagicMock(),
+            stock_code="005930",
+            market=market,
+            current_price=101.0,
+            settings=_make_settings(),
+        )
+
+    assert updated is decision
+    resolve_window.assert_not_called()
+    block_buy.assert_not_called()
+
+
+def test_apply_recent_sell_guard_returns_original_decision_for_non_buy() -> None:
+    decision = main_module.TradeDecision(action="HOLD", confidence=91, rationale="wait")
+    market = MagicMock()
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.name = "Korea"
+
+    with patch("src.main.get_latest_sell_trade") as latest_sell_trade:
+        updated = main_module._apply_recent_sell_guard(
+            decision=decision,
+            db_conn=MagicMock(),
+            stock_code="005930",
+            market=market,
+            current_price=101.0,
+            settings=_make_settings(),
+        )
+
+    assert updated is decision
+    latest_sell_trade.assert_not_called()
 
 
 def test_resolve_recent_sell_guard_window_seconds_uses_session_profile_override() -> None:
