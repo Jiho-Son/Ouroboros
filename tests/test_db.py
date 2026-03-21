@@ -374,6 +374,54 @@ def test_get_latest_buy_trade_prefers_exchange_code_match() -> None:
     assert matched["decision_id"] == "matched-buy"
 
 
+def test_get_latest_buy_trade_returns_latest_row_when_exchange_code_is_none() -> None:
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="BUY",
+        confidence=80,
+        rationale="older buy",
+        quantity=10,
+        price=120.0,
+        market="US_NASDAQ",
+        exchange_code="NASD",
+        decision_id="older-buy",
+    )
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="BUY",
+        confidence=85,
+        rationale="latest legacy buy",
+        quantity=5,
+        price=121.0,
+        market="US_NASDAQ",
+        exchange_code="NYSE",
+        decision_id="latest-buy",
+    )
+    conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE decision_id = ?",
+        ("2026-03-20T00:00:00+00:00", "older-buy"),
+    )
+    conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE decision_id = ?",
+        ("2026-03-20T00:01:00+00:00", "latest-buy"),
+    )
+    conn.commit()
+
+    matched = get_latest_buy_trade(
+        conn,
+        stock_code="AAPL",
+        market="US_NASDAQ",
+        exchange_code=None,
+    )
+
+    assert matched is not None
+    assert matched["decision_id"] == "latest-buy"
+    assert matched["price"] == 121.0
+
+
 def test_get_latest_sell_trade_prefers_exchange_code_match() -> None:
     conn = init_db(":memory:")
     log_trade(
@@ -416,6 +464,55 @@ def test_get_latest_sell_trade_prefers_exchange_code_match() -> None:
     assert matched["decision_id"] == "matched-sell"
     assert matched["price"] == 125.0
     assert matched["timestamp"] == "2026-03-20T00:00:00+00:00"
+
+
+def test_get_latest_sell_trade_returns_latest_row_when_exchange_code_is_none() -> None:
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="SELL",
+        confidence=80,
+        rationale="older sell",
+        quantity=10,
+        price=120.0,
+        market="US_NASDAQ",
+        exchange_code="NASD",
+        decision_id="older-sell",
+    )
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="SELL",
+        confidence=85,
+        rationale="latest legacy sell",
+        quantity=5,
+        price=121.0,
+        market="US_NASDAQ",
+        exchange_code="",
+        decision_id="latest-sell",
+    )
+    conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE decision_id = ?",
+        ("2026-03-20T00:00:00+00:00", "older-sell"),
+    )
+    conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE decision_id = ?",
+        ("2026-03-20T00:01:00+00:00", "latest-sell"),
+    )
+    conn.commit()
+
+    matched = get_latest_sell_trade(
+        conn,
+        stock_code="AAPL",
+        market="US_NASDAQ",
+        exchange_code=None,
+    )
+
+    assert matched is not None
+    assert matched["decision_id"] == "latest-sell"
+    assert matched["price"] == 121.0
+    assert matched["timestamp"] == "2026-03-20T00:01:00+00:00"
 
 
 def test_get_latest_sell_trade_prefers_latest_timestamp_before_exchange_code() -> None:

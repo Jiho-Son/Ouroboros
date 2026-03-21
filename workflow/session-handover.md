@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-03-21 | session=codex-pr847-review-followup
+- branch: feature/issue-833-sell-trade-none-branch-test
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #833
+- next_ticket: #833
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #847 리뷰 코멘트 기준으로 test-only 수정과 pre-existing follow-up 정리를 수행한다.
+
 ### 2026-03-21 | session=codex-pr845-review-followup
 - branch: feature/issue-831-recent-sell-guard-helper
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -512,3 +520,11 @@
 - next_ticket: OOR-832
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: `test_get_latest_sell_trade_prefers_exchange_code_match` 에 동일 timestamp 단언을 추가해 tie-breaker 의미를 고정하고, 이번 세션에서 review 반영 내용과 검증 결과를 PR comment/push로 마무리한다.
+
+### 2026-03-21 | session=codex-oor-833-start-latest
+- branch: feature/issue-833-sell-trade-none-branch-test
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-833
+- next_ticket: OOR-833
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `get_latest_sell_trade()` 의 `exchange_code=None` 분기 회귀 테스트를 추가하고 `get_latest_buy_trade()` 와 helper 분기 대칭성을 검증한다.
