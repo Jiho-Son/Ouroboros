@@ -1290,7 +1290,7 @@ def _apply_recent_sell_guard(
     if latest_sell is None:
         return decision
 
-    last_sell_price = safe_float(latest_sell.get("price"), 0.0) if latest_sell else 0.0
+    last_sell_price = safe_float(latest_sell.get("price"), 0.0)
     recent_sell_window_seconds = _resolve_recent_sell_guard_window_seconds(
         market=market,
         settings=settings,
@@ -1299,7 +1299,7 @@ def _apply_recent_sell_guard(
         action=decision.action,
         current_price=current_price,
         last_sell_price=last_sell_price,
-        last_sell_timestamp=(str(latest_sell.get("timestamp") or "") if latest_sell else None),
+        last_sell_timestamp=str(latest_sell.get("timestamp") or ""),
         window_seconds=recent_sell_window_seconds,
     )
     if not blocked_recent_sell:
