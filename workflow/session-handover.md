@@ -609,3 +609,19 @@
 - next_ticket: OOR-838
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: `Merging` 상태에서 PR #852 의 mergeability/check/review 상태와 workpad를 최신 `HEAD` 기준으로 맞춘 뒤 squash merge 및 Linear `Done` 전이를 마무리한다.
+
+### 2026-03-22 | session=codex-oor-840-start
+- branch: feature/issue-840-daily-mode-runtime-warning
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-840
+- next_ticket: OOR-840
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: daily mode 배치 cadence가 startup anchor 기준이라는 점을 재현으로 확인한 뒤, startup/runtime warning과 문서 정합성을 가장 좁은 수정면으로 반영한다.
+
+### 2026-03-22 | session=codex-pr854-review-followup
+- branch: feature/issue-840-daily-mode-runtime-warning
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-840, PR #854 review threads 확인 예정
+- next_ticket: OOR-840
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #854 외부 리뷰 코멘트를 코드/테스트 기준으로 재검증하고, 필요한 수정은 failing test로 먼저 고정한 뒤 inline thread reply와 PR comment에 조치 근거를 남긴다.

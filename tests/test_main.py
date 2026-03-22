@@ -142,6 +142,136 @@ def test_log_realtime_hard_stop_monitor_start_includes_enabled_market_coverage(
     assert "source=websocket_hard_stop" in caplog.text
 
 
+def test_daily_mode_batch_cadence_detects_no_additional_kr_regular_session() -> None:
+    current_batch_started_at = datetime(
+        2026,
+        3,
+        23,
+        9,
+        31,
+        tzinfo=ZoneInfo("Asia/Seoul"),
+    ).astimezone(UTC)
+    next_scheduled_batch_at = datetime(
+        2026,
+        3,
+        23,
+        15,
+        31,
+        tzinfo=ZoneInfo("Asia/Seoul"),
+    )
+    next_scheduled_batch_at = next_scheduled_batch_at.astimezone(UTC)
+
+    assert (
+        main_module._daily_mode_has_additional_regular_session_batch(
+            market=MARKETS["KR"],
+            current_batch_started_at=current_batch_started_at,
+            next_scheduled_batch_at=next_scheduled_batch_at,
+            session_interval=timedelta(hours=6),
+        )
+        is False
+    )
+
+
+def test_daily_mode_batch_cadence_skips_false_warning_for_lunch_break_market() -> None:
+    next_scheduled_batch_at = datetime(
+        2026,
+        3,
+        23,
+        12,
+        0,
+        tzinfo=ZoneInfo("Asia/Tokyo"),
+    )
+    next_scheduled_batch_at = next_scheduled_batch_at.astimezone(UTC)
+
+    assert (
+        main_module._daily_mode_has_additional_regular_session_batch(
+            market=MARKETS["JP"],
+            current_batch_started_at=next_scheduled_batch_at,
+            next_scheduled_batch_at=next_scheduled_batch_at,
+            session_interval=timedelta(hours=2),
+        )
+        is True
+    )
+
+
+def test_daily_mode_batch_cadence_returns_false_for_nonpositive_interval() -> None:
+    next_scheduled_batch_at = datetime(
+        2026,
+        3,
+        23,
+        15,
+        31,
+        tzinfo=ZoneInfo("Asia/Seoul"),
+    ).astimezone(UTC)
+
+    with patch("src.main.is_market_open") as is_market_open_mock:
+        assert (
+            main_module._daily_mode_has_additional_regular_session_batch(
+                market=MARKETS["KR"],
+                current_batch_started_at=next_scheduled_batch_at,
+                next_scheduled_batch_at=next_scheduled_batch_at,
+                session_interval=timedelta(0),
+            )
+            is False
+        )
+
+    is_market_open_mock.assert_not_called()
+
+
+def test_daily_mode_batch_cadence_anchors_market_close_to_current_batch_date() -> None:
+    current_batch_started_at = datetime(
+        2026,
+        3,
+        23,
+        15,
+        20,
+        tzinfo=ZoneInfo("Asia/Seoul"),
+    ).astimezone(UTC)
+    next_scheduled_batch_at = current_batch_started_at + timedelta(hours=10)
+
+    assert (
+        main_module._daily_mode_has_additional_regular_session_batch(
+            market=MARKETS["KR"],
+            current_batch_started_at=current_batch_started_at,
+            next_scheduled_batch_at=next_scheduled_batch_at,
+            session_interval=timedelta(hours=10),
+        )
+        is False
+    )
+
+
+def test_daily_mode_batch_cadence_uses_is_market_open_for_future_batches() -> None:
+    current_batch_started_at = datetime(
+        2026,
+        3,
+        23,
+        9,
+        0,
+        tzinfo=ZoneInfo("Asia/Seoul"),
+    ).astimezone(UTC)
+    next_scheduled_batch_at = datetime(
+        2026,
+        3,
+        23,
+        15,
+        0,
+        tzinfo=ZoneInfo("Asia/Seoul"),
+    ).astimezone(UTC)
+
+    with patch("src.main.is_market_open", side_effect=[False, True]) as is_market_open_mock:
+        assert (
+            main_module._daily_mode_has_additional_regular_session_batch(
+                market=MARKETS["KR"],
+                current_batch_started_at=current_batch_started_at,
+                next_scheduled_batch_at=next_scheduled_batch_at,
+                session_interval=timedelta(minutes=15),
+            )
+            is True
+        )
+
+    assert is_market_open_mock.call_count == 2
+
+
 def test_resolve_terminal_sell_order_price_uses_limit_in_low_liquidity_session() -> None:
     market = MagicMock()
     market.code = "KR"
@@ -12123,6 +12253,150 @@ async def test_run_realtime_mode_restarts_completed_hard_stop_task() -> None:
 
     assert restart_hook.called
     telegram.return_value.notify_system_shutdown.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_run_daily_mode_warning_logs_startup_anchor_and_last_regular_batch(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FakeEvent:
+        def __init__(self) -> None:
+            self._flag = False
+
+        def is_set(self) -> bool:
+            return self._flag
+
+        def set(self) -> None:
+            self._flag = True
+
+        def clear(self) -> None:
+            self._flag = False
+
+        async def wait(self) -> None:
+            return None
+
+    real_datetime = datetime
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz: Any | None = None) -> datetime:
+            current = real_datetime(2026, 3, 23, 0, 31, tzinfo=UTC)
+            if tz is None:
+                return current
+            return current.astimezone(tz)
+
+    settings = _make_settings(
+        TRADE_MODE="daily",
+        ENABLED_MARKETS="KR",
+        SESSION_INTERVAL_HOURS=6,
+        DAILY_SESSIONS=4,
+    )
+    shutdown_event = _FakeEvent()
+    pause_event = _FakeEvent()
+    pause_event.set()
+
+    broker = MagicMock()
+    broker.close = AsyncMock()
+    overseas_broker = MagicMock()
+    overseas_broker.close = AsyncMock()
+
+    async def _run_daily_once(*args: Any, **kwargs: Any) -> float:
+        shutdown_event.set()
+        return 0.0
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("src.main.asyncio.Event", side_effect=[shutdown_event, pause_event])
+        )
+        stack.enter_context(
+            patch(
+                "src.main.asyncio.get_running_loop",
+                return_value=MagicMock(add_signal_handler=MagicMock()),
+            )
+        )
+        stack.enter_context(patch("src.main.datetime", _FrozenDateTime))
+        stack.enter_context(patch("src.main.KISBroker", return_value=broker))
+        stack.enter_context(patch("src.main.OverseasBroker", return_value=overseas_broker))
+        stack.enter_context(patch("src.main.DecisionEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.RiskManager", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.init_db", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DecisionLogger", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextAggregator", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextScheduler", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.EvolutionOptimizer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextSelector", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ScenarioEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PlaybookStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DailyReviewer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PreMarketPlanner", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.NotificationFilter", return_value=MagicMock()))
+        telegram = stack.enter_context(
+            patch(
+                "src.main.TelegramClient",
+                return_value=MagicMock(
+                    notify_system_start=AsyncMock(),
+                    notify_system_shutdown=AsyncMock(),
+                    close=AsyncMock(),
+                ),
+            )
+        )
+        command_handler = MagicMock(
+            register_command=MagicMock(),
+            register_command_with_args=MagicMock(),
+            start_polling=AsyncMock(),
+            stop_polling=AsyncMock(),
+        )
+        stack.enter_context(patch("src.main.TelegramCommandHandler", return_value=command_handler))
+        stack.enter_context(patch("src.main.SmartVolatilityScanner", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.CriticalityAssessor", return_value=MagicMock()))
+        stack.enter_context(
+            patch(
+                "src.main.PriorityTaskQueue",
+                return_value=MagicMock(
+                    get_metrics=AsyncMock(return_value=MagicMock(total_enqueued=0))
+                ),
+            )
+        )
+        stack.enter_context(patch("src.main._start_dashboard_server"))
+        stack.enter_context(patch("src.main.sync_positions_from_broker", new=AsyncMock()))
+        stack.enter_context(
+            patch("src.main.process_blackout_recovery_orders", new=AsyncMock())
+        )
+        stack.enter_context(
+            patch("src.main.handle_overseas_pending_orders", new=AsyncMock())
+        )
+        stack.enter_context(
+            patch("src.main.build_overseas_symbol_universe", new=AsyncMock(return_value=[]))
+        )
+        stack.enter_context(
+            patch("src.main.get_open_markets", return_value=[MARKETS["KR"]])
+        )
+        is_market_open_mock = stack.enter_context(
+            patch("src.main.is_market_open", return_value=False)
+        )
+        stack.enter_context(
+            patch("src.main._acquire_live_runtime_lock", return_value=None)
+        )
+        run_daily_session = stack.enter_context(
+            patch("src.main.run_daily_session", new=AsyncMock(side_effect=_run_daily_once))
+        )
+
+        with caplog.at_level(logging.INFO):
+            await main_module.run(settings)
+
+    run_daily_session.assert_awaited_once()
+    telegram.assert_called_once()
+    assert "Daily batch cadence anchored to process start" in caplog.text
+    assert "first_batch_utc=2026-03-23T00:31:00+00:00" in caplog.text
+    assert "subsequent_batches_wait_hours=6" in caplog.text
+    assert "market=KR" in caplog.text
+    assert "markets_open_at_batch_start=true" in caplog.text
+    assert "current_batch=2026-03-23T09:31:00+09:00" in caplog.text
+    assert "next_scheduled_batch=2026-03-23T15:31:00+09:00" in caplog.text
+    # The next scheduled batch is already after KR regular-session close, so the
+    # helper exits on the close-boundary check before consulting is_market_open().
+    is_market_open_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
