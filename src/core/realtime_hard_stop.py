@@ -22,6 +22,7 @@ class TrackedHardStop:
     hard_stop_price: float
     decision_id: str
     position_timestamp: str
+    stock_name: str = ""
     in_flight: bool = False
 
 
@@ -34,6 +35,7 @@ class HardStopTrigger:
     quantity: int
     decision_id: str
     position_timestamp: str
+    stock_name: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +55,7 @@ class RealtimeHardStopMonitor:
         *,
         market_code: str,
         stock_code: str,
+        stock_name: str = "",
         entry_price: float,
         quantity: int,
         hard_stop_pct: float,
@@ -61,6 +64,9 @@ class RealtimeHardStopMonitor:
     ) -> TrackedHardStop:
         existing = self._tracked.get((market_code, stock_code))
         hard_stop_price = round(entry_price * (1.0 + (hard_stop_pct / 100.0)), 4)
+        normalized_name = stock_name.strip()
+        if not normalized_name and existing is not None:
+            normalized_name = existing.stock_name
         tracked = TrackedHardStop(
             market_code=market_code,
             stock_code=stock_code,
@@ -70,6 +76,7 @@ class RealtimeHardStopMonitor:
             hard_stop_price=hard_stop_price,
             decision_id=decision_id,
             position_timestamp=position_timestamp,
+            stock_name=normalized_name,
             in_flight=existing.in_flight if existing is not None else False,
         )
         self._tracked[(market_code, stock_code)] = tracked
@@ -210,6 +217,7 @@ class RealtimeHardStopMonitor:
             quantity=tracked.quantity,
             decision_id=tracked.decision_id,
             position_timestamp=tracked.position_timestamp,
+            stock_name=tracked.stock_name,
         )
         if is_us_market:
             logger.info(

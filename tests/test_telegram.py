@@ -111,6 +111,7 @@ class TestNotificationSending:
         with patch("aiohttp.ClientSession.post") as mock_post:
             await client.notify_trade_execution(
                 stock_code="AAPL",
+                stock_name="Apple",
                 market="United States",
                 action="BUY",
                 quantity=10,
@@ -132,6 +133,7 @@ class TestNotificationSending:
         with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
             await client.notify_trade_execution(
                 stock_code="TSLA",
+                stock_name="Tesla",
                 market="United States",
                 action="SELL",
                 quantity=5,
@@ -146,7 +148,7 @@ class TestNotificationSending:
             # Check payload structure
             payload = call_args.kwargs["json"]
             assert payload["chat_id"] == "456"
-            assert "TSLA" in payload["text"]
+            assert "Tesla(TSLA)" in payload["text"]
             assert "SELL" in payload["text"]
             assert "5" in payload["text"]
             assert "250.50" in payload["text"]
@@ -543,6 +545,7 @@ class TestNotificationFilter:
         with patch("aiohttp.ClientSession.post") as mock_post:
             await client.notify_trade_execution(
                 stock_code="005930",
+                stock_name="Samsung",
                 market="KR",
                 action="BUY",
                 quantity=10,

@@ -234,6 +234,14 @@ class TelegramClient:
         formatted_message = f"{msg.priority.emoji} {msg.message}"
         await self.send_message(formatted_message)
 
+    @staticmethod
+    def _format_trade_symbol(stock_code: str, stock_name: str | None = None) -> str:
+        """Return the user-facing trade symbol label."""
+        normalized_name = (stock_name or "").strip()
+        if not normalized_name:
+            return stock_code
+        return f"{normalized_name}({stock_code})"
+
     async def notify_trade_execution(
         self,
         stock_code: str,
@@ -242,12 +250,14 @@ class TelegramClient:
         quantity: int,
         price: float,
         confidence: float,
+        stock_name: str | None = None,
     ) -> None:
         """
         Notify trade execution.
 
         Args:
             stock_code: Stock ticker symbol
+            stock_name: Human-readable stock name
             market: Market name (e.g., "Korea", "United States")
             action: "BUY" or "SELL"
             quantity: Number of shares
@@ -257,9 +267,10 @@ class TelegramClient:
         if not self._filter.trades:
             return
         emoji = "🟢" if action == "BUY" else "🔴"
+        symbol_label = self._format_trade_symbol(stock_code, stock_name)
         message = (
             f"<b>{emoji} {action}</b>\n"
-            f"Symbol: <code>{stock_code}</code> ({market})\n"
+            f"Symbol: <code>{symbol_label}</code> ({market})\n"
             f"Quantity: {quantity:,} shares\n"
             f"Price: {price:,.2f}\n"
             f"Confidence: {confidence:.0f}%"

@@ -569,3 +569,11 @@
 - next_ticket: #836
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: PR #850 리뷰 지적 반영 및 GitHub thread reply 필요
+
+### 2026-03-22 | session=codex-oor-837-start
+- branch: feature/issue-837-telegram-notify-symbol-display
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-837 Todo->In Progress, 첨부 PR 없음, workpad 없음
+- next_ticket: OOR-837
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 텔레그램 거래 알림의 종목 표기를 `{name}({code})`로 고정하고, 현재 문자열 조립 경로를 먼저 재현한 뒤 테스트로 계약을 잠근다.
