@@ -51,11 +51,21 @@ _RAW_PNL_UNIT_BY_MARKET: dict[str, str] = {
     "KR": "KRW",
     "US": "USD",
 }
+_UNSUPPORTED_RAW_PNL_UNIT_FALLBACK = "UNKNOWN_CURRENCY"
 
 
 def _raw_pnl_unit_for_market(market: str) -> str:
-    """Return the display unit for raw realized PnL values in scorecards."""
-    return _RAW_PNL_UNIT_BY_MARKET.get(market, market)
+    """Return the prompt display unit for raw realized PnL values in scorecards."""
+    unit = _RAW_PNL_UNIT_BY_MARKET.get(market)
+    if unit is not None:
+        return unit
+
+    logger.warning(
+        "Unsupported market %s for raw PnL unit mapping; using %s fallback",
+        market,
+        _UNSUPPORTED_RAW_PNL_UNIT_FALLBACK,
+    )
+    return _UNSUPPORTED_RAW_PNL_UNIT_FALLBACK
 
 
 @dataclass(frozen=True)

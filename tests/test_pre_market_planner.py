@@ -19,7 +19,7 @@ from src.strategy.models import (
     MarketOutlook,
     ScenarioAction,
 )
-from src.strategy.pre_market_planner import PreMarketPlanner
+from src.strategy.pre_market_planner import PreMarketPlanner, _raw_pnl_unit_for_market
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -706,6 +706,22 @@ class TestParseResponse:
 
 
 # ---------------------------------------------------------------------------
+# _raw_pnl_unit_for_market
+# ---------------------------------------------------------------------------
+
+
+class TestRawPnlUnitForMarket:
+    def test_unsupported_market_returns_explicit_fallback_and_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("WARNING"):
+            unit = _raw_pnl_unit_for_market("JP")
+
+        assert unit == "UNKNOWN_CURRENCY"
+        assert "Unsupported market JP for raw PnL unit mapping" in caplog.text
+
+
+# ---------------------------------------------------------------------------
 # build_cross_market_context
 # ---------------------------------------------------------------------------
 
@@ -860,6 +876,21 @@ class TestBuildPrompt:
         assert "Realized PnL (KRW, raw): -0.80" in prompt
         assert "-0.80%" not in prompt
         assert "Avoid midday entries" in prompt
+
+    def test_prompt_uses_explicit_fallback_for_unsupported_market(self) -> None:
+        planner = _make_planner()
+        self_scorecard = {
+            "date": "2026-02-07",
+            "total_pnl": -1250.0,
+            "win_rate": 45.0,
+            "lessons": ["Expand unit mapping before launch"],
+        }
+
+        prompt = planner._build_prompt("JP", [_candidate()], {}, self_scorecard, None)
+
+        assert "My Market Previous Day (JP)" in prompt
+        assert "Realized PnL (UNKNOWN_CURRENCY, raw): -1250.00" in prompt
+        assert "Realized PnL (JP, raw): -1250.00" not in prompt
 
 
 # ---------------------------------------------------------------------------

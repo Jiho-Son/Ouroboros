@@ -553,3 +553,11 @@
 - next_ticket: OOR-835
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: `generate_playbook()` 에서 guard 구성 실패가 fallback playbook 생성 자체를 막지 않도록 범위를 조정하고, inactive guard 및 fallback+guard 경로를 테스트로 먼저 고정한 뒤 GitHub thread/PR comment에 반영 내역을 남긴다.
+
+### 2026-03-22 | session=codex-oor-836-start
+- branch: feature/issue-836-raw-pnl-unit-fallback
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-836
+- next_ticket: OOR-836
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: unsupported market raw PnL unit fallback을 market 코드 재사용 대신 명시적 fallback으로 고치고, prompt 계약/테스트/문서를 함께 동기화한다.
