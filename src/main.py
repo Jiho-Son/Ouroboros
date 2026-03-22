@@ -160,18 +160,24 @@ def _log_realtime_hard_stop_monitor_start(settings: Settings) -> None:
 def _daily_mode_has_additional_regular_session_batch(
     *,
     market: MarketInfo,
+    current_batch_started_at: datetime,
     next_scheduled_batch_at: datetime,
     session_interval: timedelta,
 ) -> bool:
     """Return whether any later scheduled batch still lands in regular session."""
+    if session_interval <= timedelta(0):
+        return False
+
     market_close_local = datetime.combine(
-        next_scheduled_batch_at.astimezone(market.timezone).date(),
+        current_batch_started_at.astimezone(market.timezone).date(),
         market.close_time,
         tzinfo=market.timezone,
     )
     market_close_utc = market_close_local.astimezone(UTC)
     next_scheduled_batch = next_scheduled_batch_at
 
+    # Batches scheduled exactly at market close are not additional regular-session
+    # opportunities because is_market_open() already treats the close boundary as closed.
     while next_scheduled_batch < market_close_utc:
         if is_market_open(market, next_scheduled_batch):
             return True
@@ -204,13 +210,14 @@ def _log_daily_mode_last_regular_batch_warning(
     for market in open_markets:
         if _daily_mode_has_additional_regular_session_batch(
             market=market,
+            current_batch_started_at=current_batch_started_at,
             next_scheduled_batch_at=next_scheduled_batch_at,
             session_interval=session_interval,
         ):
             continue
         logger.warning(
             "Daily mode has no additional regular-session batch before close "
-            "market=%s current_batch=%s next_scheduled_batch=%s",
+            "market=%s markets_open_at_batch_start=true current_batch=%s next_scheduled_batch=%s",
             market.code,
             current_batch_started_at.astimezone(market.timezone).isoformat(),
             next_scheduled_batch_at.astimezone(market.timezone).isoformat(),
@@ -4186,6 +4193,8 @@ async def run(settings: Settings) -> None:
                         smart_scanner=smart_scanner,
                         daily_start_eval=_cb_daily_start_eval,
                     )
+                    # The next wait starts after the current batch completes, so long
+                    # batches intentionally shift the next scheduled timestamp later.
                     next_scheduled_batch_at = datetime.now(UTC) + session_interval
                     _log_daily_mode_last_regular_batch_warning(
                         open_markets=current_open_markets,
@@ -4194,6 +4203,8 @@ async def run(settings: Settings) -> None:
                         session_interval=session_interval,
                     )
                 except CircuitBreakerTripped:
+                    # Warning logs are success-path only because a tripped circuit breaker
+                    # terminates daily mode immediately instead of scheduling another batch.
                     logger.critical("Circuit breaker tripped — shutting down")
                     await telegram.notify_circuit_breaker(
                         pnl_pct=settings.CIRCUIT_BREAKER_PCT,
@@ -4202,6 +4213,8 @@ async def run(settings: Settings) -> None:
                     shutdown.set()
                     break
                 except Exception as exc:
+                    # Keep the warning on the success path: failed batches do not have a
+                    # trustworthy next scheduled batch to report.
                     logger.exception("Daily session error: %s", exc)
 
                 # Wait for next session or shutdown

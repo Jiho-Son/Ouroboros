@@ -156,6 +156,7 @@ def test_daily_mode_batch_cadence_detects_no_additional_kr_regular_session() -> 
     assert (
         main_module._daily_mode_has_additional_regular_session_batch(
             market=MARKETS["KR"],
+            current_batch_started_at=next_scheduled_batch_at,
             next_scheduled_batch_at=next_scheduled_batch_at,
             session_interval=timedelta(hours=6),
         )
@@ -177,11 +178,90 @@ def test_daily_mode_batch_cadence_skips_false_warning_for_lunch_break_market() -
     assert (
         main_module._daily_mode_has_additional_regular_session_batch(
             market=MARKETS["JP"],
+            current_batch_started_at=next_scheduled_batch_at,
             next_scheduled_batch_at=next_scheduled_batch_at,
             session_interval=timedelta(hours=2),
         )
         is True
     )
+
+
+def test_daily_mode_batch_cadence_returns_false_for_nonpositive_interval() -> None:
+    next_scheduled_batch_at = datetime(
+        2026,
+        3,
+        23,
+        15,
+        31,
+        tzinfo=ZoneInfo("Asia/Seoul"),
+    ).astimezone(UTC)
+
+    with patch("src.main.is_market_open") as is_market_open_mock:
+        assert (
+            main_module._daily_mode_has_additional_regular_session_batch(
+                market=MARKETS["KR"],
+                current_batch_started_at=next_scheduled_batch_at,
+                next_scheduled_batch_at=next_scheduled_batch_at,
+                session_interval=timedelta(0),
+            )
+            is False
+        )
+
+    is_market_open_mock.assert_not_called()
+
+
+def test_daily_mode_batch_cadence_anchors_market_close_to_current_batch_date() -> None:
+    current_batch_started_at = datetime(
+        2026,
+        3,
+        23,
+        15,
+        20,
+        tzinfo=ZoneInfo("Asia/Seoul"),
+    ).astimezone(UTC)
+    next_scheduled_batch_at = current_batch_started_at + timedelta(hours=10)
+
+    assert (
+        main_module._daily_mode_has_additional_regular_session_batch(
+            market=MARKETS["KR"],
+            current_batch_started_at=current_batch_started_at,
+            next_scheduled_batch_at=next_scheduled_batch_at,
+            session_interval=timedelta(hours=10),
+        )
+        is False
+    )
+
+
+def test_daily_mode_batch_cadence_uses_is_market_open_for_future_batches() -> None:
+    current_batch_started_at = datetime(
+        2026,
+        3,
+        23,
+        9,
+        0,
+        tzinfo=ZoneInfo("Asia/Seoul"),
+    ).astimezone(UTC)
+    next_scheduled_batch_at = datetime(
+        2026,
+        3,
+        23,
+        15,
+        0,
+        tzinfo=ZoneInfo("Asia/Seoul"),
+    ).astimezone(UTC)
+
+    with patch("src.main.is_market_open", side_effect=[False, True]) as is_market_open_mock:
+        assert (
+            main_module._daily_mode_has_additional_regular_session_batch(
+                market=MARKETS["KR"],
+                current_batch_started_at=current_batch_started_at,
+                next_scheduled_batch_at=next_scheduled_batch_at,
+                session_interval=timedelta(minutes=15),
+            )
+            is True
+        )
+
+    assert is_market_open_mock.call_count == 2
 
 
 def test_resolve_terminal_sell_order_price_uses_limit_in_low_liquidity_session() -> None:
@@ -12284,6 +12364,7 @@ async def test_run_daily_mode_warning_logs_startup_anchor_and_last_regular_batch
         stack.enter_context(
             patch("src.main.get_open_markets", return_value=[MARKETS["KR"]])
         )
+        stack.enter_context(patch("src.main.is_market_open", return_value=False))
         stack.enter_context(
             patch("src.main._acquire_live_runtime_lock", return_value=None)
         )
@@ -12300,6 +12381,7 @@ async def test_run_daily_mode_warning_logs_startup_anchor_and_last_regular_batch
     assert "first_batch_utc=2026-03-23T00:31:00+00:00" in caplog.text
     assert "subsequent_batches_wait_hours=6" in caplog.text
     assert "market=KR" in caplog.text
+    assert "markets_open_at_batch_start=true" in caplog.text
     assert "current_batch=2026-03-23T09:31:00+09:00" in caplog.text
     assert "next_scheduled_batch=2026-03-23T15:31:00+09:00" in caplog.text
 
