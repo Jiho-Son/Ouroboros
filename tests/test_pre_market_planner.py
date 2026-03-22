@@ -470,6 +470,100 @@ class TestGeneratePlaybook:
         assert "Guard Status: ACTIVE" in captured_prompts[0]
         assert "do not emit new BUY scenarios" in captured_prompts[0]
 
+    @pytest.mark.asyncio
+    async def test_generate_playbook_preserves_buy_when_recent_scorecard_guard_is_inactive(
+        self,
+    ) -> None:
+        scorecard_map = {
+            (ContextLayer.L6_DAILY.value, "2026-02-07", "scorecard_KR"): {
+                "total_pnl": 500.0,
+                "win_rate": 75.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-06", "scorecard_KR"): {
+                "total_pnl": 200.0,
+                "win_rate": 60.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-05", "scorecard_KR"): {
+                "total_pnl": -50.0,
+                "win_rate": 50.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-07", "scorecard_US"): {
+                "total_pnl": 100.0,
+                "win_rate": 55.0,
+                "index_change_pct": 0.5,
+            },
+        }
+        planner = _make_planner(
+            scorecard_map=scorecard_map,
+            settings_overrides={
+                "SCORECARD_BUY_GUARD_LOOKBACK_DAYS": 3,
+                "SCORECARD_BUY_GUARD_MAX_CUMULATIVE_PNL": -1000.0,
+                "SCORECARD_BUY_GUARD_MIN_WIN_RATE": 30.0,
+                "SCORECARD_BUY_GUARD_MAX_CONSECUTIVE_LOSS_DAYS": 2,
+                "SCORECARD_BUY_GUARD_ACTION": "block_buy",
+            },
+        )
+
+        pb = await planner.generate_playbook("KR", [_candidate()], today=date(2026, 2, 8))
+
+        scenarios = pb.stock_playbooks[0].scenarios
+        assert [scenario.action for scenario in scenarios] == [ScenarioAction.BUY]
+
+    @pytest.mark.asyncio
+    async def test_generate_playbook_applies_recent_scorecard_guard_to_fallback_playbook(
+        self,
+    ) -> None:
+        scorecard_map = {
+            (ContextLayer.L6_DAILY.value, "2026-02-07", "scorecard_KR"): {
+                "total_pnl": -1500.0,
+                "win_rate": 20.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-06", "scorecard_KR"): {
+                "total_pnl": -900.0,
+                "win_rate": 25.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-05", "scorecard_KR"): {
+                "total_pnl": -700.0,
+                "win_rate": 0.0,
+            },
+        }
+        planner = _make_planner(
+            scorecard_map=scorecard_map,
+            settings_overrides={
+                "SCORECARD_BUY_GUARD_LOOKBACK_DAYS": 3,
+                "SCORECARD_BUY_GUARD_MAX_CUMULATIVE_PNL": -1000.0,
+                "SCORECARD_BUY_GUARD_MIN_WIN_RATE": 30.0,
+                "SCORECARD_BUY_GUARD_MAX_CONSECUTIVE_LOSS_DAYS": 2,
+                "SCORECARD_BUY_GUARD_ACTION": "block_buy",
+            },
+        )
+        planner._decision_engine.decide = AsyncMock(side_effect=RuntimeError("API timeout"))
+
+        pb = await planner.generate_playbook("KR", [_candidate()], today=date(2026, 2, 8))
+
+        scenarios = pb.stock_playbooks[0].scenarios
+        assert [scenario.action for scenario in scenarios] == [ScenarioAction.SELL]
+
+    @pytest.mark.asyncio
+    async def test_generate_playbook_gracefully_skips_guard_when_scorecard_load_fails(
+        self,
+    ) -> None:
+        planner = _make_planner(
+            settings_overrides={
+                "SCORECARD_BUY_GUARD_LOOKBACK_DAYS": 3,
+                "SCORECARD_BUY_GUARD_MAX_CUMULATIVE_PNL": -1000.0,
+            }
+        )
+
+        planner._build_recent_self_market_guard = MagicMock(
+            side_effect=RuntimeError("context store unavailable")
+        )
+
+        pb = await planner.generate_playbook("KR", [_candidate()], today=date(2026, 2, 8))
+
+        scenarios = pb.stock_playbooks[0].scenarios
+        assert [scenario.action for scenario in scenarios] == [ScenarioAction.BUY]
+
 
 # ---------------------------------------------------------------------------
 # _parse_response

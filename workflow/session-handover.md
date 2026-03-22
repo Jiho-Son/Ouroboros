@@ -545,3 +545,11 @@
 - next_ticket: OOR-835
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
 - risks_or_notes: 누적 손실/연속 저성과 scorecard가 현재 BUY 실행 게이트에 연결되지 않는 지점을 먼저 재현하고, SELL/HOLD 및 기존 circuit breaker 불변식을 약화하지 않는 최소 삽입 지점을 선택한다.
+
+### 2026-03-22 | session=codex-oor-835-pr849-review-followup
+- branch: feature/issue-835-cumulative-loss-buy-guard
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: PR #849 issue comment 2건 재확인, inline review comment 없음, 머지 블로커는 guard build 예외 전파와 보강 테스트 2건
+- next_ticket: OOR-835
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: `generate_playbook()` 에서 guard 구성 실패가 fallback playbook 생성 자체를 막지 않도록 범위를 조정하고, inactive guard 및 fallback+guard 경로를 테스트로 먼저 고정한 뒤 GitHub thread/PR comment에 반영 내역을 남긴다.

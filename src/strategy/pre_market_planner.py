@@ -127,9 +127,19 @@ class PreMarketPlanner:
             logger.info("No candidates for %s — returning empty playbook", market)
             return self._empty_playbook(today, market)
 
-        recent_self_market_guard = self._build_recent_self_market_guard(market, today)
+        recent_self_market_guard: RecentSelfMarketGuard | None = None
 
         try:
+            try:
+                recent_self_market_guard = self._build_recent_self_market_guard(market, today)
+            except Exception:
+                logger.warning(
+                    "Recent self-market guard unavailable for %s; proceeding without it",
+                    market,
+                    exc_info=True,
+                )
+                recent_self_market_guard = None
+
             # 1. Gather context
             context_data = self._gather_context()
             self_market_scorecard = self.build_self_market_scorecard(market, today)
@@ -289,7 +299,7 @@ class PreMarketPlanner:
             return []
 
         scorecard_key = f"scorecard_{market}"
-        max_calendar_days = max(lookback_days * 4, lookback_days)
+        max_calendar_days = lookback_days * 4
         recent_scorecards: list[dict[str, Any]] = []
 
         for days_back in range(1, max_calendar_days + 1):
