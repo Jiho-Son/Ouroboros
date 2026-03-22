@@ -601,3 +601,11 @@
 - next_ticket: OOR-838
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #852 리뷰 코멘트를 코드 기준으로 재검증하고, PR에 올릴 수정과 후속 이슈 분리를 결정한 뒤 각 inline thread에 조치 결과를 남긴다.
+
+### 2026-03-22 | session=codex-oor-838-merge
+- branch: feature/issue-838-before-remove-nested-dir-github-fallback
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-838, PR #852, Linear workpad comment
+- next_ticket: OOR-838
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `Merging` 상태에서 PR #852 의 mergeability/check/review 상태와 workpad를 최신 `HEAD` 기준으로 맞춘 뒤 squash merge 및 Linear `Done` 전이를 마무리한다.
