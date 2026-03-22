@@ -585,3 +585,27 @@
 - next_ticket: OOR-837
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: 외부 리뷰 지적은 코드 기준으로 먼저 검증하고, 미국 일반 trading cycle에서 `notify_trade_execution(stock_name=...)` 전파 여부를 failing test로 확인한 뒤 필요한 최소 수정만 반영한다.
+
+### 2026-03-22 | session=codex-oor-838-start
+- branch: feature/issue-838-before-remove-nested-dir-github-fallback
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-838 Todo->In Progress, 첨부 PR 없음, workpad 생성
+- next_ticket: OOR-838
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `before_remove` nested dir 경로에서 `merged_by_git=False` / `github_merged=True` 조합을 먼저 재현하고, OOR-828에서 분리된 GitHub fallback 회귀 범위를 테스트 이름/주석/fixture 입력으로 명시적으로 고정한다.
+
+### 2026-03-22 | session=codex-pr852-review-followup
+- branch: feature/issue-838-before-remove-nested-dir-github-fallback
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-838, PR #852
+- next_ticket: OOR-838
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #852 리뷰 코멘트를 코드 기준으로 재검증하고, PR에 올릴 수정과 후속 이슈 분리를 결정한 뒤 각 inline thread에 조치 결과를 남긴다.
+
+### 2026-03-22 | session=codex-oor-838-merge
+- branch: feature/issue-838-before-remove-nested-dir-github-fallback
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-838, PR #852, Linear workpad comment
+- next_ticket: OOR-838
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `Merging` 상태에서 PR #852 의 mergeability/check/review 상태와 workpad를 최신 `HEAD` 기준으로 맞춘 뒤 squash merge 및 Linear `Done` 전이를 마무리한다.

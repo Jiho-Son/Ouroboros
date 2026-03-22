@@ -437,6 +437,36 @@ def test_workflow_before_remove_hook_uses_git_ancestry_signal_from_nested_dir(
     assert marker_path.read_text(encoding="utf-8").strip() == "main-sha-workflow-hook"
 
 
+def test_workflow_before_remove_hook_uses_github_fallback_signal_from_nested_dir(
+    tmp_path: Path,
+) -> None:
+    completed, _canonical_root, hooks_log, marker_path, _git_log, restart_log = (
+        _run_symphony_before_remove_hook(
+            tmp_path=tmp_path,
+            # `_git_log` stays intentionally unused here: this regression is scoped to
+            # the restart decision and hook side effects, not the ancestry probe output.
+            # Keep git ancestry disabled so this proves the GitHub fallback path only.
+            merged_by_git=False,
+            github_merged=True,
+            target_sha="main-sha-workflow-github-fallback",
+            invocation_mode="workflow",
+            cwd_relative="nested/context",
+        )
+    )
+
+    assert completed.returncode == 0, f"{completed.stdout}\n{completed.stderr}"
+    output = f"{completed.stdout}\n{completed.stderr}"
+    # Covers the immediate CLI/workflow output surfaced to the caller.
+    assert "github merge fallback matched" in output
+    assert hooks_log.read_text(encoding="utf-8").splitlines() == ["stop", "start"]
+    assert (
+        marker_path.read_text(encoding="utf-8").strip()
+        == "main-sha-workflow-github-fallback"
+    )
+    # Covers the persisted restart log written by the restart helper.
+    assert "github merge fallback matched" in restart_log.read_text(encoding="utf-8")
+
+
 def test_workflow_before_remove_command_raises_when_hook_is_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
