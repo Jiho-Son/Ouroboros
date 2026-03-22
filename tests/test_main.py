@@ -143,6 +143,14 @@ def test_log_realtime_hard_stop_monitor_start_includes_enabled_market_coverage(
 
 
 def test_daily_mode_batch_cadence_detects_no_additional_kr_regular_session() -> None:
+    current_batch_started_at = datetime(
+        2026,
+        3,
+        23,
+        9,
+        31,
+        tzinfo=ZoneInfo("Asia/Seoul"),
+    ).astimezone(UTC)
     next_scheduled_batch_at = datetime(
         2026,
         3,
@@ -156,7 +164,7 @@ def test_daily_mode_batch_cadence_detects_no_additional_kr_regular_session() -> 
     assert (
         main_module._daily_mode_has_additional_regular_session_batch(
             market=MARKETS["KR"],
-            current_batch_started_at=next_scheduled_batch_at,
+            current_batch_started_at=current_batch_started_at,
             next_scheduled_batch_at=next_scheduled_batch_at,
             session_interval=timedelta(hours=6),
         )
@@ -12364,7 +12372,9 @@ async def test_run_daily_mode_warning_logs_startup_anchor_and_last_regular_batch
         stack.enter_context(
             patch("src.main.get_open_markets", return_value=[MARKETS["KR"]])
         )
-        stack.enter_context(patch("src.main.is_market_open", return_value=False))
+        is_market_open_mock = stack.enter_context(
+            patch("src.main.is_market_open", return_value=False)
+        )
         stack.enter_context(
             patch("src.main._acquire_live_runtime_lock", return_value=None)
         )
@@ -12384,6 +12394,9 @@ async def test_run_daily_mode_warning_logs_startup_anchor_and_last_regular_batch
     assert "markets_open_at_batch_start=true" in caplog.text
     assert "current_batch=2026-03-23T09:31:00+09:00" in caplog.text
     assert "next_scheduled_batch=2026-03-23T15:31:00+09:00" in caplog.text
+    # The next scheduled batch is already after KR regular-session close, so the
+    # helper exits on the close-boundary check before consulting is_market_open().
+    is_market_open_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
