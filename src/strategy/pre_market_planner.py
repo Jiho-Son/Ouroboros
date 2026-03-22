@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
@@ -55,6 +56,23 @@ _RAW_PNL_UNIT_BY_MARKET: dict[str, str] = {
 def _raw_pnl_unit_for_market(market: str) -> str:
     """Return the display unit for raw realized PnL values in scorecards."""
     return _RAW_PNL_UNIT_BY_MARKET.get(market, market)
+
+
+@dataclass(frozen=True)
+class RecentSelfMarketGuard:
+    """Deterministic BUY guard derived from recent self-market scorecards."""
+
+    lookback_days: int
+    scorecards: list[dict[str, Any]]
+    cumulative_pnl: float
+    average_win_rate: float
+    consecutive_loss_days: int
+    action: str
+    reasons: tuple[str, ...]
+
+    @property
+    def active(self) -> bool:
+        return bool(self.reasons)
 
 
 class PreMarketPlanner:
@@ -109,7 +127,19 @@ class PreMarketPlanner:
             logger.info("No candidates for %s — returning empty playbook", market)
             return self._empty_playbook(today, market)
 
+        recent_self_market_guard: RecentSelfMarketGuard | None = None
+
         try:
+            try:
+                recent_self_market_guard = self._build_recent_self_market_guard(market, today)
+            except Exception:
+                logger.warning(
+                    "Recent self-market guard unavailable for %s; proceeding without it",
+                    market,
+                    exc_info=True,
+                )
+                recent_self_market_guard = None
+
             # 1. Gather context
             context_data = self._gather_context()
             self_market_scorecard = self.build_self_market_scorecard(market, today)
@@ -122,6 +152,7 @@ class PreMarketPlanner:
                 context_data,
                 self_market_scorecard,
                 cross_market,
+                recent_self_market_guard=recent_self_market_guard,
                 current_holdings=current_holdings,
             )
 
@@ -142,6 +173,7 @@ class PreMarketPlanner:
                 cross_market,
                 current_holdings=current_holdings,
             )
+            playbook = self._apply_recent_self_market_guard(playbook, recent_self_market_guard)
             playbook_with_tokens = playbook.model_copy(update={"token_count": decision.token_count})
             logger.info(
                 "Generated playbook for %s: %d stocks, %d scenarios, %d tokens",
@@ -155,7 +187,16 @@ class PreMarketPlanner:
         except Exception:
             logger.exception("Playbook generation failed for %s", market)
             if self._settings.DEFENSIVE_PLAYBOOK_ON_FAILURE:
-                return self._smart_fallback_playbook(today, market, candidates, self._settings)
+                fallback_playbook = self._smart_fallback_playbook(
+                    today,
+                    market,
+                    candidates,
+                    self._settings,
+                )
+                return self._apply_recent_self_market_guard(
+                    fallback_playbook,
+                    recent_self_market_guard,
+                )
             return self._empty_playbook(today, market)
 
     def build_cross_market_context(
@@ -219,7 +260,15 @@ class PreMarketPlanner:
         scorecard_data = self._context_store.get_context(
             ContextLayer.L6_DAILY, timeframe, scorecard_key
         )
+        return self._normalize_scorecard(scorecard_data, timeframe=timeframe)
 
+    def _normalize_scorecard(
+        self,
+        scorecard_data: Any,
+        *,
+        timeframe: str,
+    ) -> dict[str, Any] | None:
+        """Parse scorecard payload from context storage into a normalized dict."""
         if scorecard_data is None:
             return None
 
@@ -239,6 +288,88 @@ class PreMarketPlanner:
             "lessons": scorecard_data.get("lessons", []),
         }
 
+    def _load_recent_self_market_scorecards(
+        self,
+        market: str,
+        today: date,
+    ) -> list[dict[str, Any]]:
+        """Load up to N recent same-market scorecards, skipping non-trading days."""
+        lookback_days = self._settings.SCORECARD_BUY_GUARD_LOOKBACK_DAYS
+        if lookback_days <= 0:
+            return []
+
+        scorecard_key = f"scorecard_{market}"
+        max_calendar_days = lookback_days * 4
+        recent_scorecards: list[dict[str, Any]] = []
+
+        for days_back in range(1, max_calendar_days + 1):
+            if len(recent_scorecards) >= lookback_days:
+                break
+            timeframe = (today - timedelta(days=days_back)).isoformat()
+            scorecard_data = self._context_store.get_context(
+                ContextLayer.L6_DAILY,
+                timeframe,
+                scorecard_key,
+            )
+            normalized = self._normalize_scorecard(scorecard_data, timeframe=timeframe)
+            if normalized is not None:
+                recent_scorecards.append(normalized)
+
+        return recent_scorecards
+
+    def _build_recent_self_market_guard(
+        self,
+        market: str,
+        today: date,
+    ) -> RecentSelfMarketGuard | None:
+        """Build the deterministic recent-loss BUY guard for the current market."""
+        lookback_days = self._settings.SCORECARD_BUY_GUARD_LOOKBACK_DAYS
+        if lookback_days <= 0:
+            return None
+
+        scorecards = self._load_recent_self_market_scorecards(market, today)
+        if not scorecards:
+            return None
+
+        cumulative_pnl = sum(float(scorecard["total_pnl"]) for scorecard in scorecards)
+        average_win_rate = sum(float(scorecard["win_rate"]) for scorecard in scorecards) / len(
+            scorecards
+        )
+        consecutive_loss_days = 0
+        for scorecard in scorecards:
+            if float(scorecard["total_pnl"]) < 0:
+                consecutive_loss_days += 1
+                continue
+            break
+
+        reasons: list[str] = []
+        max_cumulative_pnl = self._settings.SCORECARD_BUY_GUARD_MAX_CUMULATIVE_PNL
+        if max_cumulative_pnl is not None and cumulative_pnl <= max_cumulative_pnl:
+            reasons.append(
+                f"cumulative_pnl {cumulative_pnl:+.2f} <= {max_cumulative_pnl:+.2f}"
+            )
+        min_win_rate = self._settings.SCORECARD_BUY_GUARD_MIN_WIN_RATE
+        if min_win_rate is not None and average_win_rate < min_win_rate:
+            reasons.append(f"avg_win_rate {average_win_rate:.1f}% < {min_win_rate:.1f}%")
+        max_consecutive_losses = self._settings.SCORECARD_BUY_GUARD_MAX_CONSECUTIVE_LOSS_DAYS
+        if (
+            max_consecutive_losses is not None
+            and consecutive_loss_days >= max_consecutive_losses
+        ):
+            reasons.append(
+                f"consecutive_loss_days {consecutive_loss_days} >= {max_consecutive_losses}"
+            )
+
+        return RecentSelfMarketGuard(
+            lookback_days=lookback_days,
+            scorecards=scorecards,
+            cumulative_pnl=cumulative_pnl,
+            average_win_rate=average_win_rate,
+            consecutive_loss_days=consecutive_loss_days,
+            action=self._settings.SCORECARD_BUY_GUARD_ACTION,
+            reasons=tuple(reasons),
+        )
+
     def _gather_context(self) -> dict[str, Any]:
         """Gather strategic context using ContextSelector."""
         layers = self._context_selector.select_layers(
@@ -254,6 +385,7 @@ class PreMarketPlanner:
         context_data: dict[str, Any],
         self_market_scorecard: dict[str, Any] | None,
         cross_market: CrossMarketContext | None,
+        recent_self_market_guard: RecentSelfMarketGuard | None = None,
         current_holdings: list[dict] | None = None,
     ) -> str:
         """Build a structured prompt for Gemini to generate scenario JSON."""
@@ -312,6 +444,34 @@ class PreMarketPlanner:
             if lessons:
                 self_market_text += f"- Lessons: {'; '.join(lessons[:3])}\n"
 
+        recent_guard_text = ""
+        guard_instruction = ""
+        if recent_self_market_guard:
+            recent_guard_pnl_unit = _raw_pnl_unit_for_market(market)
+            dates = ", ".join(
+                scorecard["date"] for scorecard in recent_self_market_guard.scorecards
+            )
+            recent_guard_text = (
+                f"\n## Recent Self-Market Guard\n"
+                f"- Window: last {recent_self_market_guard.lookback_days} scorecards "
+                f"({len(recent_self_market_guard.scorecards)} loaded)\n"
+                f"- Dates: {dates}\n"
+                f"- Cumulative Realized PnL ({recent_guard_pnl_unit}, raw): "
+                f"{recent_self_market_guard.cumulative_pnl:+.2f}\n"
+                f"- Average Win Rate: {recent_self_market_guard.average_win_rate:.0f}%\n"
+                f"- Consecutive Loss Days: {recent_self_market_guard.consecutive_loss_days}\n"
+                f"- Guard Status: {'ACTIVE' if recent_self_market_guard.active else 'INACTIVE'}\n"
+            )
+            if recent_self_market_guard.reasons:
+                recent_guard_text += (
+                    f"- Guard Reasons: {'; '.join(recent_self_market_guard.reasons)}\n"
+                )
+                guard_instruction = (
+                    "- Recent self-market performance guard is ACTIVE: "
+                    "do not emit new BUY scenarios; produce only SELL/HOLD or "
+                    "defensive risk reduction.\n"
+                )
+
         context_text = ""
         if context_data:
             context_text = "\n## Strategic Context\n"
@@ -337,6 +497,7 @@ class PreMarketPlanner:
             f"{holdings_text}"
             f"{self_market_text}"
             f"{cross_market_text}"
+            f"{recent_guard_text}"
             f"{context_text}\n"
             f"## Instructions\n"
             f"Return a JSON object with this exact structure:\n"
@@ -369,10 +530,62 @@ class PreMarketPlanner:
             f"- Max {max_scenarios} scenarios per stock\n"
             f"- Candidates list is the primary source for BUY candidates\n"
             f"{holdings_instruction}"
+            f"{guard_instruction}"
             f"- Confidence 0-100 (80+ for actionable trades)\n"
             f"- stop_loss_pct must be <= 0, take_profit_pct must be >= 0\n"
             f"- Return ONLY the JSON, no markdown fences or explanation\n"
         )
+
+    def _apply_recent_self_market_guard(
+        self,
+        playbook: DayPlaybook,
+        guard: RecentSelfMarketGuard | None,
+    ) -> DayPlaybook:
+        """Deterministically remove new BUY scenarios when recent loss guard is active."""
+        if guard is None or not guard.active:
+            return playbook
+
+        logger.warning(
+            "Recent self-market BUY guard active for %s: %s",
+            playbook.market,
+            "; ".join(guard.reasons),
+        )
+
+        guarded_stock_playbooks: list[StockPlaybook] = []
+        for stock_playbook in playbook.stock_playbooks:
+            scenarios = [
+                scenario
+                for scenario in stock_playbook.scenarios
+                if scenario.action != ScenarioAction.BUY
+            ]
+            if scenarios:
+                guarded_stock_playbooks.append(
+                    stock_playbook.model_copy(update={"scenarios": scenarios})
+                )
+
+        updates: dict[str, Any] = {"stock_playbooks": guarded_stock_playbooks}
+
+        if guard.action == "defensive":
+            if playbook.market_outlook not in (
+                MarketOutlook.NEUTRAL_TO_BEARISH,
+                MarketOutlook.BEARISH,
+            ):
+                updates["market_outlook"] = MarketOutlook.NEUTRAL_TO_BEARISH
+
+            global_rules = list(playbook.global_rules)
+            if not any(rule.action == ScenarioAction.REDUCE_ALL for rule in global_rules):
+                global_rules.append(
+                    GlobalRule(
+                        condition="portfolio_pnl_pct < -1.5",
+                        action=ScenarioAction.REDUCE_ALL,
+                        rationale=(
+                            "Defensive: recent self-market performance guard active"
+                        ),
+                    )
+                )
+            updates["global_rules"] = global_rules
+
+        return playbook.model_copy(update=updates)
 
     def _parse_response(
         self,

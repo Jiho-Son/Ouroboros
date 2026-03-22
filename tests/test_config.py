@@ -153,3 +153,30 @@ def test_executable_quote_gap_caps_validation_populates_private_cache_once_per_i
     assert first == {"KR": 0.5}
     assert second is first
     assert calls == 1
+
+
+def test_scorecard_buy_guard_defaults_disabled():
+    """최근 scorecard BUY guard는 기본적으로 비활성 상태여야 한다."""
+    s = Settings(
+        KIS_APP_KEY="test",
+        KIS_APP_SECRET="test",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="test",
+    )
+    assert s.SCORECARD_BUY_GUARD_LOOKBACK_DAYS == 0
+    assert s.SCORECARD_BUY_GUARD_MAX_CUMULATIVE_PNL is None
+    assert s.SCORECARD_BUY_GUARD_MIN_WIN_RATE is None
+    assert s.SCORECARD_BUY_GUARD_MAX_CONSECUTIVE_LOSS_DAYS is None
+    assert s.SCORECARD_BUY_GUARD_ACTION == "block_buy"
+
+
+def test_scorecard_buy_guard_action_requires_supported_mode():
+    """guard action은 허용된 mode만 받아야 한다."""
+    with pytest.raises(ValidationError):
+        Settings(
+            KIS_APP_KEY="test",
+            KIS_APP_SECRET="test",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="test",
+            SCORECARD_BUY_GUARD_ACTION="panic",
+        )
