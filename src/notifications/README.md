@@ -48,7 +48,7 @@ You should receive a startup notification.
 ### Trade Execution
 ```
 🟢 BUY
-Symbol: AAPL (United States)
+Symbol: Apple(AAPL) (United States)
 Quantity: 10 shares
 Price: 150.25
 Confidence: 85%
@@ -337,7 +337,7 @@ TELEGRAM_COMMANDS_ENABLED=false
 See `telegram_client.py` for full API documentation.
 
 ### Notification Methods
-- `notify_trade_execution()` - Trade alerts
+- `notify_trade_execution()` - Trade alerts with `{name}({code})` symbol display
 - `notify_circuit_breaker()` - Emergency stops
 - `notify_fat_finger()` - Order rejections
 - `notify_market_open/close()` - Session tracking

@@ -181,6 +181,17 @@ def _resolve_terminal_sell_order_price(
     )
 
 
+def _resolve_notification_stock_name(*candidates: Any) -> str | None:
+    """Return the first non-empty stock name candidate."""
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        normalized = str(candidate).strip()
+        if normalized:
+            return normalized
+    return None
+
+
 def _ensure_runtime_mode_allowed(mode: str) -> None:
     """Reject runtime execution modes that are banned by policy."""
     if mode == "paper":
@@ -337,9 +348,15 @@ async def _sync_realtime_hard_stop_monitor(
         stop_loss_pct,
         quantity,
     )
+    stock_name = _resolve_notification_stock_name(
+        market_data.get("stock_name"),
+        open_position.get("stock_name") if open_position else None,
+        open_position.get("name") if open_position else None,
+    )
     monitor.register(
         market_code=market.code,
         stock_code=stock_code,
+        stock_name=stock_name or "",
         entry_price=entry_price,
         quantity=quantity,
         hard_stop_pct=stop_loss_pct,
@@ -546,6 +563,7 @@ async def _handle_realtime_hard_stop_trigger(
         try:
             await telegram.notify_trade_execution(
                 stock_code=trigger.stock_code,
+                stock_name=trigger.stock_name or None,
                 market=market.name,
                 action="SELL",
                 quantity=quantity,
@@ -1128,6 +1146,7 @@ async def _collect_trading_cycle_market_snapshot(
     market_candidates = scan_candidates.get(market.code, {})
     candidate = market_candidates.get(stock_code)
     if candidate:
+        market_data["stock_name"] = candidate.name
         market_data["rsi"] = candidate.rsi
         market_data["volume_ratio"] = candidate.volume_ratio
     else:
@@ -1361,6 +1380,12 @@ async def _evaluate_trading_cycle_decision(
         rationale=match.rationale,
     )
     stock_playbook = playbook.get_stock_playbook(stock_code)
+    stock_name = _resolve_notification_stock_name(
+        stock_playbook.stock_name if stock_playbook is not None else None,
+        market_data.get("stock_name"),
+    )
+    if stock_name is not None:
+        market_data["stock_name"] = stock_name
 
     if decision.action == "BUY":
         base_threshold = int(
@@ -1649,8 +1674,13 @@ async def _execute_trading_cycle_action(
     current_price = snapshot["current_price"]
     total_cash = snapshot["total_cash"]
     pnl_pct = snapshot["pnl_pct"]
+    market_data = snapshot.get("market_data", {})
     candidate = snapshot["candidate"]
     balance_data = snapshot["balance_data"]
+    stock_name = _resolve_notification_stock_name(
+        market_data.get("stock_name"),
+        candidate.name if candidate is not None else None,
+    )
 
     execution_result: dict[str, Any] = {
         "should_return": False,
@@ -1962,6 +1992,7 @@ async def _execute_trading_cycle_action(
         try:
             await telegram.notify_trade_execution(
                 stock_code=stock_code,
+                stock_name=stock_name,
                 market=market.name,
                 action=decision.action,
                 quantity=quantity,
@@ -2402,6 +2433,7 @@ async def _collect_daily_session_market_data(
                 stock_data["session_high_price"] = session_high_price
             cand = candidate_map.get(stock_code)
             if cand:
+                stock_data["stock_name"] = cand.name
                 stock_data["rsi"] = cand.rsi
                 stock_data["volume_ratio"] = cand.volume_ratio
             stocks_data.append(stock_data)
@@ -2494,6 +2526,14 @@ async def _process_daily_session_stock(
     """Evaluate, log, and optionally execute one daily-session stock decision."""
     stock_code = stock_data["stock_code"]
     stock_playbook = playbook.get_stock_playbook(stock_code)
+    candidate = candidate_map.get(stock_code)
+    stock_name = _resolve_notification_stock_name(
+        stock_playbook.stock_name if stock_playbook is not None else None,
+        stock_data.get("stock_name"),
+        candidate.name if candidate is not None else None,
+    )
+    if stock_name is not None:
+        stock_data["stock_name"] = stock_name
     match = scenario_engine.evaluate(
         playbook,
         stock_code,
@@ -2936,6 +2976,7 @@ async def _process_daily_session_stock(
                 try:
                     await telegram.notify_trade_execution(
                         stock_code=stock_code,
+                        stock_name=stock_name,
                         market=market.name,
                         action=decision.action,
                         quantity=quantity,

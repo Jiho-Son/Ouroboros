@@ -226,7 +226,10 @@ def test_resolve_terminal_sell_order_price_overseas_low_liquidity_penny_stock() 
 async def test_sync_realtime_hard_stop_monitor_registers_hold_position() -> None:
     monitor = RealtimeHardStopMonitor()
     market = MARKETS["KR"]
-    market_data = {"_staged_exit_evidence": {"stop_loss_threshold": -3.5}}
+    market_data = {
+        "stock_name": "Samsung",
+        "_staged_exit_evidence": {"stop_loss_threshold": -3.5},
+    }
     websocket_client = MagicMock()
     websocket_client.subscribe = AsyncMock()
     websocket_client.unsubscribe = AsyncMock()
@@ -250,6 +253,7 @@ async def test_sync_realtime_hard_stop_monitor_registers_hold_position() -> None
     assert tracked is not None
     assert tracked.hard_stop_price == pytest.approx(96.5)
     assert tracked.quantity == 7
+    assert tracked.stock_name == "Samsung"
     websocket_client.subscribe.assert_awaited_once_with("KR", "005930")
 
 
@@ -257,7 +261,10 @@ async def test_sync_realtime_hard_stop_monitor_registers_hold_position() -> None
 async def test_sync_realtime_hard_stop_monitor_registers_us_hold_position() -> None:
     monitor = RealtimeHardStopMonitor()
     market = MARKETS["US_NASDAQ"]
-    market_data = {"_staged_exit_evidence": {"stop_loss_threshold": -3.5}}
+    market_data = {
+        "stock_name": "Apple",
+        "_staged_exit_evidence": {"stop_loss_threshold": -3.5},
+    }
     websocket_client = MagicMock()
     websocket_client.subscribe = AsyncMock()
     websocket_client.unsubscribe = AsyncMock()
@@ -281,6 +288,7 @@ async def test_sync_realtime_hard_stop_monitor_registers_us_hold_position() -> N
     assert tracked is not None
     assert tracked.hard_stop_price == pytest.approx(96.5)
     assert tracked.quantity == 7
+    assert tracked.stock_name == "Apple"
     websocket_client.subscribe.assert_awaited_once_with("US_NASDAQ", "AAPL")
 
 
@@ -395,6 +403,7 @@ async def test_sync_realtime_hard_stop_monitor_clears_tracking_while_sell_is_pen
     monitor.register(
         market_code="KR",
         stock_code="005930",
+        stock_name="Samsung",
         entry_price=100.0,
         quantity=7,
         hard_stop_pct=-3.5,
@@ -628,6 +637,7 @@ async def test_handle_realtime_hard_stop_trigger_submits_sell_and_logs_trade() -
         trigger=HardStopTrigger(
             market_code="KR",
             stock_code="005930",
+            stock_name="Samsung",
             last_price=96.0,
             hard_stop_price=96.5,
             quantity=7,
@@ -639,6 +649,8 @@ async def test_handle_realtime_hard_stop_trigger_submits_sell_and_logs_trade() -
     assert ok is True
     broker.send_order.assert_called_once()
     telegram.notify_trade_execution.assert_awaited_once()
+    notify_kwargs = telegram.notify_trade_execution.await_args.kwargs
+    assert notify_kwargs["stock_name"] == "Samsung"
     websocket_client.unsubscribe.assert_awaited_once_with("KR", "005930")
     decision_logger.log_decision.assert_called_once()
     decision_logger.update_outcome.assert_called_once_with(
@@ -697,6 +709,7 @@ async def test_handle_realtime_hard_stop_trigger_uses_current_balance_qty() -> N
     monitor.register(
         market_code="KR",
         stock_code="005930",
+        stock_name="Samsung",
         entry_price=100.0,
         quantity=10,
         hard_stop_pct=-3.5,
@@ -716,6 +729,7 @@ async def test_handle_realtime_hard_stop_trigger_uses_current_balance_qty() -> N
         trigger=HardStopTrigger(
             market_code="KR",
             stock_code="005930",
+            stock_name="Samsung",
             last_price=96.0,
             hard_stop_price=96.5,
             quantity=10,
@@ -871,6 +885,7 @@ async def test_handle_realtime_hard_stop_trigger_submits_overseas_sell_and_logs_
     monitor.register(
         market_code="US_NASDAQ",
         stock_code="AAPL",
+        stock_name="Apple",
         entry_price=100.0,
         quantity=7,
         hard_stop_pct=-3.5,
@@ -890,6 +905,7 @@ async def test_handle_realtime_hard_stop_trigger_submits_overseas_sell_and_logs_
         trigger=HardStopTrigger(
             market_code="US_NASDAQ",
             stock_code="AAPL",
+            stock_name="Apple",
             last_price=96.12,
             hard_stop_price=96.5,
             quantity=7,
@@ -903,6 +919,8 @@ async def test_handle_realtime_hard_stop_trigger_submits_overseas_sell_and_logs_
     overseas_broker.send_overseas_order.assert_awaited_once()
     assert overseas_broker.send_overseas_order.await_args.kwargs["price"] == pytest.approx(95.93)
     telegram.notify_trade_execution.assert_awaited_once()
+    notify_kwargs = telegram.notify_trade_execution.await_args.kwargs
+    assert notify_kwargs["stock_name"] == "Apple"
     websocket_client.unsubscribe.assert_awaited_once_with("US_NASDAQ", "AAPL")
     decision_logger.update_outcome.assert_called_once_with(
         decision_id="buy-dec",
@@ -2557,7 +2575,19 @@ class TestTradingCycleTelegramIntegration:
     @pytest.fixture
     def mock_playbook(self) -> DayPlaybook:
         """Create a minimal day playbook."""
-        return _make_playbook()
+        scenario = StockScenario(
+            condition=StockCondition(rsi_below=30),
+            action=ScenarioAction.BUY,
+            confidence=85,
+            rationale="fixture",
+        )
+        return DayPlaybook(
+            date=date(2026, 2, 8),
+            market="KR",
+            stock_playbooks=[
+                {"stock_code": "005930", "stock_name": "Samsung", "scenarios": [scenario]}
+            ],
+        )
 
     @pytest.fixture
     def mock_risk(self) -> MagicMock:
@@ -2613,6 +2643,16 @@ class TestTradingCycleTelegramIntegration:
         market.is_domestic = True
         return market
 
+    @pytest.fixture
+    def mock_overseas_market(self) -> MagicMock:
+        """Create mock overseas market info."""
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+        return market
+
     @pytest.mark.asyncio
     async def test_trade_execution_notification_sent(
         self,
@@ -2650,7 +2690,81 @@ class TestTradingCycleTelegramIntegration:
         mock_telegram.notify_trade_execution.assert_called_once()
         call_kwargs = mock_telegram.notify_trade_execution.call_args.kwargs
         assert call_kwargs["stock_code"] == "005930"
+        assert call_kwargs["stock_name"] == "Samsung"
         assert call_kwargs["market"] == "Korea"
+        assert call_kwargs["action"] == "BUY"
+        assert call_kwargs["confidence"] == 85
+
+    @pytest.mark.asyncio
+    async def test_trade_execution_notification_sent_us_market(
+        self,
+        mock_broker: MagicMock,
+        mock_overseas_broker: MagicMock,
+        mock_scenario_engine: MagicMock,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """US trading_cycle path should forward stock_name to trade notifications."""
+        scenario = StockScenario(
+            condition=StockCondition(rsi_below=30),
+            action=ScenarioAction.BUY,
+            confidence=85,
+            rationale="fixture",
+        )
+        mock_playbook = DayPlaybook(
+            date=date(2026, 2, 8),
+            market="US",
+            stock_playbooks=[
+                {"stock_code": "AAPL", "stock_name": "Apple", "scenarios": [scenario]}
+            ],
+        )
+        mock_overseas_broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "182.50", "rate": "1.25"}}
+        )
+        mock_overseas_broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output2": [
+                    {
+                        "frcr_evlu_tota": "100000.00",
+                        "frcr_buy_amt_smtl": "50000.00",
+                    }
+                ]
+            }
+        )
+        mock_overseas_broker.get_overseas_buying_power = AsyncMock(
+            return_value={"output": {"ovrs_ord_psbl_amt": "50000.00"}}
+        )
+        mock_overseas_broker.send_overseas_order = AsyncMock(
+            return_value={"rt_cd": "0", "msg1": "OK"}
+        )
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=mock_overseas_broker,
+                scenario_engine=mock_scenario_engine,
+                playbook=mock_playbook,
+                risk=mock_risk,
+                db_conn=mock_db,
+                decision_logger=mock_decision_logger,
+                context_store=mock_context_store,
+                criticality_assessor=mock_criticality_assessor,
+                telegram=mock_telegram,
+                market=mock_overseas_market,
+                stock_code="AAPL",
+                scan_candidates={},
+            )
+
+        mock_telegram.notify_trade_execution.assert_called_once()
+        call_kwargs = mock_telegram.notify_trade_execution.call_args.kwargs
+        assert call_kwargs["stock_code"] == "AAPL"
+        assert call_kwargs["stock_name"] == "Apple"
+        assert call_kwargs["market"] == "NASDAQ"
         assert call_kwargs["action"] == "BUY"
         assert call_kwargs["confidence"] == 85
 
