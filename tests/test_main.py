@@ -2643,6 +2643,16 @@ class TestTradingCycleTelegramIntegration:
         market.is_domestic = True
         return market
 
+    @pytest.fixture
+    def mock_overseas_market(self) -> MagicMock:
+        """Create mock overseas market info."""
+        market = MagicMock()
+        market.name = "NASDAQ"
+        market.code = "US_NASDAQ"
+        market.exchange_code = "NASD"
+        market.is_domestic = False
+        return market
+
     @pytest.mark.asyncio
     async def test_trade_execution_notification_sent(
         self,
@@ -2682,6 +2692,79 @@ class TestTradingCycleTelegramIntegration:
         assert call_kwargs["stock_code"] == "005930"
         assert call_kwargs["stock_name"] == "Samsung"
         assert call_kwargs["market"] == "Korea"
+        assert call_kwargs["action"] == "BUY"
+        assert call_kwargs["confidence"] == 85
+
+    @pytest.mark.asyncio
+    async def test_trade_execution_notification_sent_us_market(
+        self,
+        mock_broker: MagicMock,
+        mock_overseas_broker: MagicMock,
+        mock_scenario_engine: MagicMock,
+        mock_risk: MagicMock,
+        mock_db: MagicMock,
+        mock_decision_logger: MagicMock,
+        mock_context_store: MagicMock,
+        mock_criticality_assessor: MagicMock,
+        mock_telegram: MagicMock,
+        mock_overseas_market: MagicMock,
+    ) -> None:
+        """US trading_cycle path should forward stock_name to trade notifications."""
+        scenario = StockScenario(
+            condition=StockCondition(rsi_below=30),
+            action=ScenarioAction.BUY,
+            confidence=85,
+            rationale="fixture",
+        )
+        mock_playbook = DayPlaybook(
+            date=date(2026, 2, 8),
+            market="US",
+            stock_playbooks=[
+                {"stock_code": "AAPL", "stock_name": "Apple", "scenarios": [scenario]}
+            ],
+        )
+        mock_overseas_broker.get_overseas_price = AsyncMock(
+            return_value={"output": {"last": "182.50", "rate": "1.25"}}
+        )
+        mock_overseas_broker.get_overseas_balance = AsyncMock(
+            return_value={
+                "output2": [
+                    {
+                        "frcr_evlu_tota": "100000.00",
+                        "frcr_buy_amt_smtl": "50000.00",
+                    }
+                ]
+            }
+        )
+        mock_overseas_broker.get_overseas_buying_power = AsyncMock(
+            return_value={"output": {"ovrs_ord_psbl_amt": "50000.00"}}
+        )
+        mock_overseas_broker.send_overseas_order = AsyncMock(
+            return_value={"rt_cd": "0", "msg1": "OK"}
+        )
+
+        with patch("src.main.log_trade"):
+            await trading_cycle(
+                broker=mock_broker,
+                overseas_broker=mock_overseas_broker,
+                scenario_engine=mock_scenario_engine,
+                playbook=mock_playbook,
+                risk=mock_risk,
+                db_conn=mock_db,
+                decision_logger=mock_decision_logger,
+                context_store=mock_context_store,
+                criticality_assessor=mock_criticality_assessor,
+                telegram=mock_telegram,
+                market=mock_overseas_market,
+                stock_code="AAPL",
+                scan_candidates={},
+            )
+
+        mock_telegram.notify_trade_execution.assert_called_once()
+        call_kwargs = mock_telegram.notify_trade_execution.call_args.kwargs
+        assert call_kwargs["stock_code"] == "AAPL"
+        assert call_kwargs["stock_name"] == "Apple"
+        assert call_kwargs["market"] == "NASDAQ"
         assert call_kwargs["action"] == "BUY"
         assert call_kwargs["confidence"] == 85
 
