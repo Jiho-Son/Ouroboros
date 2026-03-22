@@ -109,8 +109,8 @@ def test_executable_quote_gap_caps_by_market_requires_numeric_values():
         )
 
 
-def test_executable_quote_gap_caps_by_market_is_cached_per_instance():
-    """Property access should not reparse market gap JSON repeatedly."""
+def test_executable_quote_gap_caps_by_market_reuses_private_cache_per_instance():
+    """`@property` should keep returning the validator-populated per-instance cache."""
     s = Settings(
         KIS_APP_KEY="test",
         KIS_APP_SECRET="test",
@@ -121,13 +121,14 @@ def test_executable_quote_gap_caps_by_market_is_cached_per_instance():
     first = s.executable_quote_gap_caps_by_market
     second = s.executable_quote_gap_caps_by_market
     assert first == {"KR": 0.5}
+    # The `@property` returns the same dict stored in the per-instance `PrivateAttr` cache.
     assert second is first
 
 
-def test_executable_quote_gap_caps_validation_does_not_reparse_cached_property(
+def test_executable_quote_gap_caps_validation_populates_private_cache_once_per_instance(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Settings construction + property access should not parse the same gap-cap JSON twice."""
+    """Validation should parse once, then property access should reuse the per-instance cache."""
     original = Settings._parse_executable_quote_gap_caps_by_market
     calls = 0
 
