@@ -19,7 +19,11 @@ from src.strategy.models import (
     MarketOutlook,
     ScenarioAction,
 )
-from src.strategy.pre_market_planner import PreMarketPlanner, _raw_pnl_unit_for_market
+from src.strategy.pre_market_planner import (
+    _UNSUPPORTED_RAW_PNL_UNIT_FALLBACK,
+    PreMarketPlanner,
+    _raw_pnl_unit_for_market,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -711,14 +715,38 @@ class TestParseResponse:
 
 
 class TestRawPnlUnitForMarket:
+    @pytest.mark.parametrize(
+        ("market", "expected_unit"),
+        [
+            ("KR", "KRW"),
+            ("US", "USD"),
+        ],
+    )
+    def test_supported_markets_return_mapped_units(
+        self,
+        market: str,
+        expected_unit: str,
+    ) -> None:
+        assert _raw_pnl_unit_for_market(market) == expected_unit
+
     def test_unsupported_market_returns_explicit_fallback_and_warns(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         with caplog.at_level("WARNING"):
             unit = _raw_pnl_unit_for_market("JP")
 
-        assert unit == "UNKNOWN_CURRENCY"
+        assert unit == _UNSUPPORTED_RAW_PNL_UNIT_FALLBACK
         assert "Unsupported market JP for raw PnL unit mapping" in caplog.text
+
+    def test_empty_market_returns_fallback_and_logs_blank_marker(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        with caplog.at_level("WARNING"):
+            unit = _raw_pnl_unit_for_market("")
+
+        assert unit == _UNSUPPORTED_RAW_PNL_UNIT_FALLBACK
+        assert "Unsupported market <empty> for raw PnL unit mapping" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -889,7 +917,28 @@ class TestBuildPrompt:
         prompt = planner._build_prompt("JP", [_candidate()], {}, self_scorecard, None)
 
         assert "My Market Previous Day (JP)" in prompt
-        assert "Realized PnL (UNKNOWN_CURRENCY, raw): -1250.00" in prompt
+        assert (
+            f"Realized PnL ({_UNSUPPORTED_RAW_PNL_UNIT_FALLBACK}, raw): -1250.00" in prompt
+        )
+        assert "Realized PnL (JP, raw): -1250.00" not in prompt
+
+    def test_prompt_uses_explicit_fallback_for_unsupported_cross_market(self) -> None:
+        planner = _make_planner()
+        cross = CrossMarketContext(
+            market="JP",
+            date="2026-02-07",
+            total_pnl=-1250.0,
+            win_rate=45.0,
+            index_change_pct=-0.8,
+            lessons=["Expand unit mapping before launch"],
+        )
+
+        prompt = planner._build_prompt("KR", [_candidate()], {}, None, cross)
+
+        assert "Other Market (JP)" in prompt
+        assert (
+            f"Realized PnL ({_UNSUPPORTED_RAW_PNL_UNIT_FALLBACK}, raw): -1250.00" in prompt
+        )
         assert "Realized PnL (JP, raw): -1250.00" not in prompt
 
 

@@ -351,7 +351,7 @@ High-frequency trading with individual stock analysis:
 
 - Calculates daily metrics (trades, P&L, win rate, avg confidence)
 - `total_pnl` is stored as raw realized P&L, not a percentage
-- Planner prompt rendering maps market -> raw PnL unit explicitly (`KR -> KRW`, `US -> USD`) and falls back to `UNKNOWN_CURRENCY` for unsupported markets until the mapping is extended
+- Planner prompt rendering maps market -> raw PnL unit explicitly (`KR -> KRW`, `US -> USD`) for both self-market and cross-market scorecard sections, and falls back to `UNKNOWN_CURRENCY` for unsupported or blank market codes until the mapping is extended
 - Enables trend tracking across days
 
 **Stop-Loss Monitoring** — Real-time position protection

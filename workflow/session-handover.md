@@ -561,3 +561,11 @@
 - next_ticket: OOR-836
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: unsupported market raw PnL unit fallback을 market 코드 재사용 대신 명시적 fallback으로 고치고, prompt 계약/테스트/문서를 함께 동기화한다.
+
+### 2026-03-22 | session=codex-pr850-review-followup
+- branch: feature/issue-836-raw-pnl-unit-fallback
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #836, PR #850
+- next_ticket: #836
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: PR #850 리뷰 지적 반영 및 GitHub thread reply 필요
