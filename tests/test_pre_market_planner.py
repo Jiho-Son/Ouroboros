@@ -87,6 +87,7 @@ def _make_planner(
     context_data: dict | None = None,
     scorecard_data: dict | None = None,
     scorecard_map: dict[tuple[str, str, str], dict | None] | None = None,
+    settings_overrides: dict | None = None,
 ) -> PreMarketPlanner:
     """Create a PreMarketPlanner with mocked dependencies."""
     if not gemini_response:
@@ -121,11 +122,17 @@ def _make_planner(
     )
     selector.get_context_data = MagicMock(return_value=context_data or {})
 
+    settings_kwargs = {
+        "KIS_APP_KEY": "test",
+        "KIS_APP_SECRET": "test",
+        "KIS_ACCOUNT_NO": "12345678-01",
+        "GEMINI_API_KEY": "test",
+    }
+    if settings_overrides:
+        settings_kwargs.update(settings_overrides)
+
     settings = Settings(
-        KIS_APP_KEY="test",
-        KIS_APP_SECRET="test",
-        KIS_ACCOUNT_NO="12345678-01",
-        GEMINI_API_KEY="test",
+        **settings_kwargs,
     )
 
     return PreMarketPlanner(gemini, store, selector, settings)
@@ -316,6 +323,152 @@ class TestGeneratePlaybook:
         prompt = call_market_data["prompt_override"]
         assert "My Market Previous Day (KR)" in prompt
         assert "Other Market (US)" in prompt
+
+    @pytest.mark.asyncio
+    async def test_generate_playbook_blocks_buy_when_recent_scorecard_guard_is_active(self) -> None:
+        stocks = [
+            {
+                "stock_code": "005930",
+                "scenarios": [
+                    {
+                        "condition": {"rsi_below": 30},
+                        "action": "BUY",
+                        "confidence": 85,
+                        "rationale": "oversold entry",
+                    },
+                    {
+                        "condition": {"price_change_pct_below": -3.0},
+                        "action": "SELL",
+                        "confidence": 90,
+                        "rationale": "stop-loss",
+                    },
+                ],
+            }
+        ]
+        scorecard_map = {
+            (ContextLayer.L6_DAILY.value, "2026-02-07", "scorecard_KR"): {
+                "total_pnl": -1500.0,
+                "win_rate": 20.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-06", "scorecard_KR"): {
+                "total_pnl": -900.0,
+                "win_rate": 25.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-05", "scorecard_KR"): {
+                "total_pnl": -700.0,
+                "win_rate": 0.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-07", "scorecard_US"): {
+                "total_pnl": 100.0,
+                "win_rate": 55.0,
+                "index_change_pct": 0.5,
+            },
+        }
+        planner = _make_planner(
+            gemini_response=_gemini_response_json(stocks=stocks),
+            scorecard_map=scorecard_map,
+            settings_overrides={
+                "SCORECARD_BUY_GUARD_LOOKBACK_DAYS": 3,
+                "SCORECARD_BUY_GUARD_MAX_CUMULATIVE_PNL": -1000.0,
+                "SCORECARD_BUY_GUARD_MIN_WIN_RATE": 30.0,
+                "SCORECARD_BUY_GUARD_MAX_CONSECUTIVE_LOSS_DAYS": 2,
+                "SCORECARD_BUY_GUARD_ACTION": "block_buy",
+            },
+        )
+
+        pb = await planner.generate_playbook("KR", [_candidate()], today=date(2026, 2, 8))
+
+        assert pb.stock_count == 1
+        scenarios = pb.stock_playbooks[0].scenarios
+        assert [scenario.action for scenario in scenarios] == [ScenarioAction.SELL]
+
+    @pytest.mark.asyncio
+    async def test_generate_playbook_downgrades_to_defensive_mode_when_guard_requests_it(
+        self,
+    ) -> None:
+        scorecard_map = {
+            (ContextLayer.L6_DAILY.value, "2026-02-07", "scorecard_KR"): {
+                "total_pnl": -1500.0,
+                "win_rate": 20.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-06", "scorecard_KR"): {
+                "total_pnl": -900.0,
+                "win_rate": 25.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-05", "scorecard_KR"): {
+                "total_pnl": -700.0,
+                "win_rate": 0.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-07", "scorecard_US"): {
+                "total_pnl": 100.0,
+                "win_rate": 55.0,
+                "index_change_pct": 0.5,
+            },
+        }
+        planner = _make_planner(
+            scorecard_map=scorecard_map,
+            settings_overrides={
+                "SCORECARD_BUY_GUARD_LOOKBACK_DAYS": 3,
+                "SCORECARD_BUY_GUARD_MAX_CUMULATIVE_PNL": -1000.0,
+                "SCORECARD_BUY_GUARD_MIN_WIN_RATE": 30.0,
+                "SCORECARD_BUY_GUARD_MAX_CONSECUTIVE_LOSS_DAYS": 2,
+                "SCORECARD_BUY_GUARD_ACTION": "defensive",
+            },
+        )
+
+        pb = await planner.generate_playbook("KR", [_candidate()], today=date(2026, 2, 8))
+
+        assert pb.market_outlook == MarketOutlook.NEUTRAL_TO_BEARISH
+        assert any(rule.action == ScenarioAction.REDUCE_ALL for rule in pb.global_rules)
+        assert pb.stock_count == 0
+
+    @pytest.mark.asyncio
+    async def test_generate_playbook_injects_recent_scorecard_guard_prompt(self) -> None:
+        scorecard_map = {
+            (ContextLayer.L6_DAILY.value, "2026-02-07", "scorecard_KR"): {
+                "total_pnl": -1500.0,
+                "win_rate": 20.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-06", "scorecard_KR"): {
+                "total_pnl": -900.0,
+                "win_rate": 25.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-05", "scorecard_KR"): {
+                "total_pnl": -700.0,
+                "win_rate": 0.0,
+            },
+            (ContextLayer.L6_DAILY.value, "2026-02-07", "scorecard_US"): {
+                "total_pnl": 100.0,
+                "win_rate": 55.0,
+                "index_change_pct": 0.5,
+            },
+        }
+        planner = _make_planner(
+            scorecard_map=scorecard_map,
+            settings_overrides={
+                "SCORECARD_BUY_GUARD_LOOKBACK_DAYS": 3,
+                "SCORECARD_BUY_GUARD_MAX_CUMULATIVE_PNL": -1000.0,
+                "SCORECARD_BUY_GUARD_MIN_WIN_RATE": 30.0,
+                "SCORECARD_BUY_GUARD_MAX_CONSECUTIVE_LOSS_DAYS": 2,
+                "SCORECARD_BUY_GUARD_ACTION": "block_buy",
+            },
+        )
+
+        captured_prompts: list[str] = []
+        original_decide = planner._gemini.decide
+
+        async def capture_and_call(data: dict) -> TradeDecision:
+            captured_prompts.append(data.get("prompt_override", ""))
+            return await original_decide(data)
+
+        planner._gemini.decide = capture_and_call  # type: ignore[method-assign]
+
+        await planner.generate_playbook("KR", [_candidate()], today=date(2026, 2, 8))
+
+        assert len(captured_prompts) == 1
+        assert "Recent Self-Market Guard" in captured_prompts[0]
+        assert "Guard Status: ACTIVE" in captured_prompts[0]
+        assert "do not emit new BUY scenarios" in captured_prompts[0]
 
 
 # ---------------------------------------------------------------------------

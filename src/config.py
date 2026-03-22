@@ -108,6 +108,18 @@ class Settings(BaseSettings):
     MAX_SCENARIOS_PER_STOCK: int = Field(default=5, ge=1, le=10)
     PLANNER_TIMEOUT_SECONDS: int = Field(default=60, ge=10, le=300)
     DEFENSIVE_PLAYBOOK_ON_FAILURE: bool = True
+    SCORECARD_BUY_GUARD_LOOKBACK_DAYS: int = Field(default=0, ge=0, le=30)
+    SCORECARD_BUY_GUARD_MAX_CUMULATIVE_PNL: float | None = Field(default=None, le=0.0)
+    SCORECARD_BUY_GUARD_MIN_WIN_RATE: float | None = Field(default=None, ge=0.0, le=100.0)
+    SCORECARD_BUY_GUARD_MAX_CONSECUTIVE_LOSS_DAYS: int | None = Field(
+        default=None,
+        ge=1,
+        le=30,
+    )
+    SCORECARD_BUY_GUARD_ACTION: str = Field(
+        default="block_buy",
+        pattern="^(block_buy|defensive)$",
+    )
     RESCAN_INTERVAL_SECONDS: int = Field(default=300, ge=60, le=900)
 
     # Market selection (comma-separated market codes)

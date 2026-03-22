@@ -537,3 +537,11 @@
 - next_ticket: OOR-834
 - process_gate_checked: process_ticket=OOR-834 merged_to_feature_branch=n/a
 - risks_or_notes: PR #839 후속으로 테스트/주석 의도 정합화만 수행하며 런타임 동작 변경은 금지한다.
+
+### 2026-03-22 | session=codex-oor-835-start
+- branch: feature/issue-835-cumulative-loss-buy-guard
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-835 Todo->In Progress, 첨부 PR 없음, workpad 생성, 과거 코멘트 2건 확인
+- next_ticket: OOR-835
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: 누적 손실/연속 저성과 scorecard가 현재 BUY 실행 게이트에 연결되지 않는 지점을 먼저 재현하고, SELL/HOLD 및 기존 circuit breaker 불변식을 약화하지 않는 최소 삽입 지점을 선택한다.
