@@ -535,5 +535,5 @@
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
 - open_issues_reviewed: OOR-834, PR #839
 - next_ticket: OOR-834
-- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- process_gate_checked: process_ticket=OOR-834 merged_to_feature_branch=n/a
 - risks_or_notes: PR #839 후속으로 테스트/주석 의도 정합화만 수행하며 런타임 동작 변경은 금지한다.
