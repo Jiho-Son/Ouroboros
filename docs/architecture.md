@@ -16,6 +16,8 @@ Optimized for cost-sensitive/provider-limited deployments:
 
 - **Batch decisions**: 1 API call per market per session
 - **Fixed schedule**: 4 sessions per day at 6-hour intervals (configurable)
+- **Startup anchor**: the first daily batch runs immediately when the process starts
+- **Batch spacing**: later batches wait `SESSION_INTERVAL_HOURS` after the prior batch completes
 - **API efficiency**: Processes all stocks in a market simultaneously
 - **Use case**: Cost-conscious deployments or providers with tighter rate/cost budgets
 - **Configuration**:
@@ -26,6 +28,10 @@ Optimized for cost-sensitive/provider-limited deployments:
   ```
 
 **Example**: With 2 markets (US, KR) and 4 sessions/day = 8 API calls/day (within 20 call limit)
+
+**Runtime observability**: daily mode startup logs the first batch anchor, and the
+runtime warns when an enabled market has no additional regular-session batch
+before close under the current cadence.
 
 ### Realtime Mode
 

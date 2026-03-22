@@ -16,7 +16,7 @@ import signal
 import sys
 import threading
 from collections.abc import Awaitable, Callable
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -105,7 +105,13 @@ from src.decision_logging.decision_logger import DecisionLogger
 from src.evolution.daily_review import DailyReviewer
 from src.evolution.optimizer import EvolutionOptimizer
 from src.logging_config import setup_logging
-from src.markets.schedule import MARKETS, MarketInfo, get_next_market_open, get_open_markets
+from src.markets.schedule import (
+    MARKETS,
+    MarketInfo,
+    get_next_market_open,
+    get_open_markets,
+    is_market_open,
+)
 from src.notifications.telegram_client import (
     NotificationFilter,
     TelegramClient,
@@ -149,6 +155,66 @@ def _log_realtime_hard_stop_monitor_start(settings: Settings) -> None:
         _format_realtime_hard_stop_enabled_markets(settings),
         f"{settings.kis_ws_url.rstrip('/')}{settings.KIS_WS_PATH}",
     )
+
+
+def _daily_mode_has_additional_regular_session_batch(
+    *,
+    market: MarketInfo,
+    next_scheduled_batch_at: datetime,
+    session_interval: timedelta,
+) -> bool:
+    """Return whether any later scheduled batch still lands in regular session."""
+    market_close_local = datetime.combine(
+        next_scheduled_batch_at.astimezone(market.timezone).date(),
+        market.close_time,
+        tzinfo=market.timezone,
+    )
+    market_close_utc = market_close_local.astimezone(UTC)
+    next_scheduled_batch = next_scheduled_batch_at
+
+    while next_scheduled_batch < market_close_utc:
+        if is_market_open(market, next_scheduled_batch):
+            return True
+        next_scheduled_batch = next_scheduled_batch + session_interval
+
+    return False
+
+
+def _log_daily_mode_startup_anchor(
+    *,
+    settings: Settings,
+    first_batch_started_at: datetime,
+) -> None:
+    logger.info(
+        "Daily batch cadence anchored to process start: first_batch_utc=%s "
+        "subsequent_batches_wait_hours=%d enabled_markets=%s",
+        first_batch_started_at.isoformat(),
+        settings.SESSION_INTERVAL_HOURS,
+        ",".join(settings.enabled_market_list),
+    )
+
+
+def _log_daily_mode_last_regular_batch_warning(
+    *,
+    open_markets: list[MarketInfo],
+    current_batch_started_at: datetime,
+    next_scheduled_batch_at: datetime,
+    session_interval: timedelta,
+) -> None:
+    for market in open_markets:
+        if _daily_mode_has_additional_regular_session_batch(
+            market=market,
+            next_scheduled_batch_at=next_scheduled_batch_at,
+            session_interval=session_interval,
+        ):
+            continue
+        logger.warning(
+            "Daily mode has no additional regular-session batch before close "
+            "market=%s current_batch=%s next_scheduled_batch=%s",
+            market.code,
+            current_batch_started_at.astimezone(market.timezone).isoformat(),
+            next_scheduled_batch_at.astimezone(market.timezone).isoformat(),
+        )
 
 
 def _pending_sell_resubmit_key(*, market: MarketInfo, stock_code: str) -> str:
@@ -4065,13 +4131,15 @@ async def run(settings: Settings) -> None:
                 settings.SESSION_INTERVAL_HOURS,
             )
 
-            session_interval = settings.SESSION_INTERVAL_HOURS * 3600  # Convert to seconds
+            session_interval = timedelta(hours=settings.SESSION_INTERVAL_HOURS)
+            session_interval_seconds = session_interval.total_seconds()
 
             # daily_start_eval: portfolio eval captured at the first session of each
             # trading day.  Reset on calendar-date change so the CB measures only
             # today's drawdown, not cumulative account history.
             _cb_daily_start_eval: float = 0.0
             _cb_last_date: str = ""
+            _first_daily_batch_logged = False
 
             while not shutdown.is_set():
                 # Wait for trading to be unpaused
@@ -4088,6 +4156,18 @@ async def run(settings: Settings) -> None:
                     _cb_last_date = today_str
                     _cb_daily_start_eval = 0.0
                     logger.info("New trading day %s — daily CB baseline reset", today_str)
+
+                current_batch_started_at = datetime.now(UTC)
+                if not _first_daily_batch_logged:
+                    _log_daily_mode_startup_anchor(
+                        settings=settings,
+                        first_batch_started_at=current_batch_started_at,
+                    )
+                    _first_daily_batch_logged = True
+                current_open_markets = get_open_markets(
+                    settings.enabled_market_list,
+                    now=current_batch_started_at,
+                )
 
                 try:
                     _cb_daily_start_eval = await run_daily_session(
@@ -4106,6 +4186,13 @@ async def run(settings: Settings) -> None:
                         smart_scanner=smart_scanner,
                         daily_start_eval=_cb_daily_start_eval,
                     )
+                    next_scheduled_batch_at = datetime.now(UTC) + session_interval
+                    _log_daily_mode_last_regular_batch_warning(
+                        open_markets=current_open_markets,
+                        current_batch_started_at=current_batch_started_at,
+                        next_scheduled_batch_at=next_scheduled_batch_at,
+                        session_interval=session_interval,
+                    )
                 except CircuitBreakerTripped:
                     logger.critical("Circuit breaker tripped — shutting down")
                     await telegram.notify_circuit_breaker(
@@ -4118,9 +4205,9 @@ async def run(settings: Settings) -> None:
                     logger.exception("Daily session error: %s", exc)
 
                 # Wait for next session or shutdown
-                logger.info("Next session in %.1f hours", session_interval / 3600)
+                logger.info("Next session in %.1f hours", session_interval_seconds / 3600)
                 try:
-                    await asyncio.wait_for(shutdown.wait(), timeout=session_interval)
+                    await asyncio.wait_for(shutdown.wait(), timeout=session_interval_seconds)
                 except TimeoutError:
                     pass  # Normal — time for next session
 
