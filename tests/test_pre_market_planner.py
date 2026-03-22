@@ -537,7 +537,7 @@ class TestGeneratePlaybook:
                 "SCORECARD_BUY_GUARD_ACTION": "block_buy",
             },
         )
-        planner._decision_engine.decide = AsyncMock(side_effect=RuntimeError("API timeout"))
+        planner._gemini.decide = AsyncMock(side_effect=RuntimeError("API timeout"))
 
         pb = await planner.generate_playbook("KR", [_candidate()], today=date(2026, 2, 8))
 
