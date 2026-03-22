@@ -422,6 +422,58 @@ def test_get_latest_buy_trade_returns_latest_row_when_exchange_code_is_none() ->
     assert matched["price"] == 121.0
 
 
+def test_get_latest_buy_trade_skips_latest_row_without_decision_id() -> None:
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="BUY",
+        confidence=80,
+        rationale="older linked buy",
+        quantity=10,
+        price=120.0,
+        market="US_NASDAQ",
+        exchange_code="NASD",
+        selection_context={"source": "linked"},
+        decision_id="linked-buy",
+    )
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="BUY",
+        confidence=85,
+        rationale="latest unlinked buy",
+        quantity=5,
+        price=121.0,
+        market="US_NASDAQ",
+        exchange_code="NYSE",
+        selection_context={"source": "unlinked"},
+        decision_id=None,
+    )
+    conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE rationale = ?",
+        ("2026-03-20T00:00:00+00:00", "older linked buy"),
+    )
+    conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE rationale = ?",
+        ("2026-03-20T00:01:00+00:00", "latest unlinked buy"),
+    )
+    conn.commit()
+
+    matched = get_latest_buy_trade(
+        conn,
+        stock_code="AAPL",
+        market="US_NASDAQ",
+        exchange_code=None,
+    )
+
+    assert matched is not None
+    assert set(matched) == {"decision_id", "price", "quantity", "selection_context"}
+    assert matched["decision_id"] == "linked-buy"
+    assert matched["price"] == 120.0
+    assert matched["selection_context"] == '{"source": "linked"}'
+
+
 def test_get_latest_sell_trade_prefers_exchange_code_match() -> None:
     conn = init_db(":memory:")
     log_trade(
@@ -511,6 +563,56 @@ def test_get_latest_sell_trade_returns_latest_row_when_exchange_code_is_none() -
 
     assert matched is not None
     assert matched["decision_id"] == "latest-sell"
+    assert matched["price"] == 121.0
+    assert matched["timestamp"] == "2026-03-20T00:01:00+00:00"
+
+
+def test_get_latest_sell_trade_keeps_latest_row_without_decision_id() -> None:
+    conn = init_db(":memory:")
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="SELL",
+        confidence=80,
+        rationale="older linked sell",
+        quantity=10,
+        price=120.0,
+        market="US_NASDAQ",
+        exchange_code="NASD",
+        decision_id="linked-sell",
+    )
+    log_trade(
+        conn=conn,
+        stock_code="AAPL",
+        action="SELL",
+        confidence=85,
+        rationale="latest unlinked sell",
+        quantity=5,
+        price=121.0,
+        market="US_NASDAQ",
+        exchange_code="NYSE",
+        decision_id=None,
+    )
+    conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE rationale = ?",
+        ("2026-03-20T00:00:00+00:00", "older linked sell"),
+    )
+    conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE rationale = ?",
+        ("2026-03-20T00:01:00+00:00", "latest unlinked sell"),
+    )
+    conn.commit()
+
+    matched = get_latest_sell_trade(
+        conn,
+        stock_code="AAPL",
+        market="US_NASDAQ",
+        exchange_code=None,
+    )
+
+    assert matched is not None
+    assert set(matched) == {"decision_id", "price", "quantity", "timestamp"}
+    assert matched["decision_id"] is None
     assert matched["price"] == 121.0
     assert matched["timestamp"] == "2026-03-20T00:01:00+00:00"
 

@@ -380,7 +380,13 @@ def get_latest_buy_trade(
     market: str,
     exchange_code: str | None = None,
 ) -> dict[str, Any] | None:
-    """Fetch the most recent BUY trade for a stock and market."""
+    """Fetch the most recent decision-linked BUY trade for a stock and market.
+
+    Returns a mapping with ``decision_id``, ``price``, ``quantity``, and
+    ``selection_context``. BUY callers use this helper for restore/audit flows
+    that need the original decision linkage, so rows without ``decision_id``
+    are intentionally excluded.
+    """
     if exchange_code:
         cursor = conn.execute(
             """
@@ -433,7 +439,15 @@ def get_latest_sell_trade(
     market: str,
     exchange_code: str | None = None,
 ) -> dict[str, Any] | None:
-    """Fetch the most recent eligible SELL trade for a stock and market."""
+    """Fetch the most recent eligible SELL trade for a stock and market.
+
+    Returns a mapping with ``decision_id``, ``price``, ``quantity``, and
+    ``timestamp``. Unlike ``get_latest_buy_trade()``, this helper intentionally
+    keeps decision-less SELL rows eligible because recent-sell guard consumers
+    only need the freshest SELL price/timestamp evidence.
+    """
+    # Recent-sell guard is timestamp-driven, so recovery/synthetic SELL rows
+    # without a linked decision must remain visible to this helper.
     if exchange_code:
         cursor = conn.execute(
             """
