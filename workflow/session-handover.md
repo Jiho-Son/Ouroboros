@@ -258,6 +258,7 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: PR 리뷰 후 pending-order resubmit network ambiguity는 롤백 금지로 보수화하고, 브로커 제출 상태 재조정은 별도 이슈로 추적한다.
 
+
 ### 2026-03-09 | session=codex-issue469-start
 - branch: feature/issue-469-ambiguous-pending-reconcile
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -528,3 +529,11 @@
 - next_ticket: OOR-833
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: `get_latest_sell_trade()` 의 `exchange_code=None` 분기 회귀 테스트를 추가하고 `get_latest_buy_trade()` 와 helper 분기 대칭성을 검증한다.
+
+### 2026-03-22 | session=codex-oor-834-start
+- branch: feature/issue-834-executable-quote-intent-alignment
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-834, PR #839
+- next_ticket: OOR-834
+- process_gate_checked: process_ticket=OOR-834 merged_to_feature_branch=n/a
+- risks_or_notes: PR #839 후속으로 테스트/주석 의도 정합화만 수행하며 런타임 동작 변경은 금지한다.

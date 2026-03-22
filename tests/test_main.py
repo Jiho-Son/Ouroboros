@@ -8640,8 +8640,12 @@ class TestHandleOverseasPendingOrders:
 
     @pytest.mark.asyncio
     async def test_sell_pending_is_cancelled_then_resubmitted(self) -> None:
-        """First unfilled SELL should use executable bid even when gap-cap would reject BUY."""
-        settings = self._make_settings("US_NASDAQ")
+        """First unfilled SELL should use executable bid even when BUY gap-cap would reject."""
+        settings = self._make_settings(
+            "US_NASDAQ",
+            EXECUTABLE_QUOTE_MAX_GAP_PCT=5.0,
+            EXECUTABLE_QUOTE_MAX_GAP_PCT_BY_MARKET_JSON='{"US_NASDAQ": 1.0}',
+        )
         telegram = self._make_telegram()
 
         pending_order = {
