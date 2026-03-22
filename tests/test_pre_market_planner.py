@@ -732,7 +732,7 @@ class TestRawPnlUnitForMarket:
     def test_unsupported_market_returns_explicit_fallback_and_warns(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("WARNING", logger="src.strategy.pre_market_planner"):
             unit = _raw_pnl_unit_for_market("JP")
 
         assert unit == _UNSUPPORTED_RAW_PNL_UNIT_FALLBACK
@@ -742,7 +742,7 @@ class TestRawPnlUnitForMarket:
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("WARNING", logger="src.strategy.pre_market_planner"):
             unit = _raw_pnl_unit_for_market("")
 
         assert unit == _UNSUPPORTED_RAW_PNL_UNIT_FALLBACK
