@@ -1,7 +1,7 @@
 """Tests for the Evolution Engine components.
 
 Tests cover:
-- EvolutionOptimizer: failure analysis and strategy generation
+- EvolutionOptimizer: failure analysis and recommendation generation
 - ABTester: A/B testing and statistical comparison
 - PerformanceTracker: metrics tracking and dashboard
 """
@@ -18,6 +18,8 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from src.config import Settings
+from src.context.layer import ContextLayer
+from src.context.store import ContextStore
 from src.db import init_db, log_trade
 from src.decision_logging.decision_logger import DecisionLogger
 from src.evolution.ab_test import ABTester
@@ -221,34 +223,38 @@ class _StubEvolutionLLMClient:
 
 
 @pytest.mark.asyncio
-async def test_generate_strategy_uses_injected_llm_provider(
+async def test_generate_recommendation_uses_injected_llm_provider(
     settings: Settings,
-    tmp_path: Path,
 ) -> None:
     """EvolutionOptimizer should use the shared provider client for raw generation."""
     llm_client = _StubEvolutionLLMClient(
-        'price = market_data.get("current_price", 0)\n'
-        'return {"action": "HOLD", "confidence": 50, "rationale": "stub"}\n'
+        json.dumps(
+            {
+                "summary": "Reduce high-confidence US entries after losses.",
+                "adjustments": ["Tighten entry filters for microcaps."],
+                "risk_notes": ["Do not auto-apply without review."],
+            }
+        )
     )
     optimizer = EvolutionOptimizer(settings, llm_client=llm_client)
 
     failures = [{"decision_id": "1", "timestamp": "2024-01-15T09:30:00+00:00"}]
 
-    with patch("src.evolution.optimizer.STRATEGIES_DIR", tmp_path):
-        strategy_path = await optimizer.generate_strategy(failures)
+    recommendation = await optimizer.generate_recommendation(failures)
 
-    assert strategy_path is not None
-    assert strategy_path.exists()
+    assert recommendation is not None
+    assert recommendation["summary"].startswith("Reduce high-confidence")
     assert llm_client.calls
     assert llm_client.calls[0]["model"] == settings.GEMINI_MODEL
     assert "Failure Patterns" in llm_client.calls[0]["contents"]
+    assert "respond with ONLY a JSON object".lower() in llm_client.calls[0]["contents"].lower()
 
 
 @pytest.mark.asyncio
-async def test_generate_strategy_creates_file(
-    optimizer: EvolutionOptimizer, tmp_path: Path
+async def test_generate_recommendation_returns_structured_data(
+    optimizer: EvolutionOptimizer,
 ) -> None:
-    """Test that generate_strategy creates a strategy file."""
+    """Recommendation generation should return structured data, not a file path."""
     failures = [
         {
             "decision_id": "1",
@@ -263,85 +269,72 @@ async def test_generate_strategy_creates_file(
         }
     ]
 
-    # Mock Gemini response
     mock_response = Mock()
-    mock_response.text = """
-    # Simple strategy
-    price = market_data.get("current_price", 0)
-    if price > 50000:
-        return {"action": "BUY", "confidence": 70, "rationale": "Price above threshold"}
-    return {"action": "HOLD", "confidence": 50, "rationale": "Waiting"}
-    """
-
-    with patch.object(
-        optimizer._client.aio.models, "generate_content", new=AsyncMock(return_value=mock_response)
-    ):
-        with patch("src.evolution.optimizer.STRATEGIES_DIR", tmp_path):
-            strategy_path = await optimizer.generate_strategy(failures)
-
-    assert strategy_path is not None
-    assert strategy_path.exists()
-    assert strategy_path.suffix == ".py"
-    assert "class Strategy_" in strategy_path.read_text()
-    assert "def evaluate" in strategy_path.read_text()
-
-
-@pytest.mark.asyncio
-async def test_generate_strategy_saves_valid_python_code(
-    optimizer: EvolutionOptimizer,
-    tmp_path: Path,
-) -> None:
-    """Test that syntactically valid generated code is saved."""
-    failures = [{"decision_id": "1", "timestamp": "2024-01-15T09:30:00+00:00"}]
-
-    mock_response = Mock()
-    mock_response.text = (
-        'price = market_data.get("current_price", 0)\n'
-        "if price > 0:\n"
-        '    return {"action": "BUY", "confidence": 80, "rationale": "Positive price"}\n'
-        'return {"action": "HOLD", "confidence": 50, "rationale": "No signal"}\n'
+    mock_response.text = json.dumps(
+        {
+            "summary": "Stop chasing opening spikes in KR names.",
+            "adjustments": [
+                "Require pullback confirmation before BUY.",
+                "Lower confidence after repeated morning losses.",
+            ],
+            "risk_notes": ["Keep SELL safeguards unchanged."],
+        }
     )
 
     with patch.object(
         optimizer._client.aio.models, "generate_content", new=AsyncMock(return_value=mock_response)
     ):
-        with patch("src.evolution.optimizer.STRATEGIES_DIR", tmp_path):
-            strategy_path = await optimizer.generate_strategy(failures)
+        recommendation = await optimizer.generate_recommendation(failures)
 
-    assert strategy_path is not None
-    assert strategy_path.exists()
+    assert recommendation == {
+        "summary": "Stop chasing opening spikes in KR names.",
+        "adjustments": [
+            "Require pullback confirmation before BUY.",
+            "Lower confidence after repeated morning losses.",
+        ],
+        "risk_notes": ["Keep SELL safeguards unchanged."],
+    }
 
 
 @pytest.mark.asyncio
-async def test_generate_strategy_blocks_invalid_python_code(
+async def test_generate_recommendation_rejects_invalid_payload(
     optimizer: EvolutionOptimizer,
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Test that syntactically invalid generated code is not saved."""
+    """Malformed recommendation payloads should be rejected."""
     failures = [{"decision_id": "1", "timestamp": "2024-01-15T09:30:00+00:00"}]
 
     mock_response = Mock()
-    mock_response.text = (
-        'if market_data.get("current_price", 0) > 0\n'
-        '    return {"action": "BUY", "confidence": 80, "rationale": "broken"}\n'
-    )
+    mock_response.text = '{"summary":"Missing list fields"}'
 
     with patch.object(
         optimizer._client.aio.models, "generate_content", new=AsyncMock(return_value=mock_response)
     ):
-        with patch("src.evolution.optimizer.STRATEGIES_DIR", tmp_path):
-            with caplog.at_level("WARNING"):
-                strategy_path = await optimizer.generate_strategy(failures)
+        recommendation = await optimizer.generate_recommendation(failures)
 
-    assert strategy_path is None
-    assert list(tmp_path.glob("*.py")) == []
-    assert "failed syntax validation" in caplog.text
+    assert recommendation is None
+
+
+def test_validate_recommendation_requires_summary_adjustments_and_risk_notes(
+    optimizer: EvolutionOptimizer,
+) -> None:
+    valid = {
+        "summary": "Short summary",
+        "adjustments": ["One adjustment"],
+        "risk_notes": ["One risk note"],
+    }
+    invalid = {
+        "summary": "Short summary",
+        "adjustments": "not-a-list",
+        "risk_notes": [],
+    }
+
+    assert optimizer.validate_recommendation(valid) is True
+    assert optimizer.validate_recommendation(invalid) is False
 
 
 @pytest.mark.asyncio
-async def test_generate_strategy_handles_api_error(optimizer: EvolutionOptimizer) -> None:
-    """Test that generate_strategy handles Gemini API errors gracefully."""
+async def test_generate_recommendation_handles_api_error(optimizer: EvolutionOptimizer) -> None:
+    """Test that generate_recommendation handles provider errors gracefully."""
     failures = [{"decision_id": "1", "timestamp": "2024-01-15T09:30:00+00:00"}]
 
     with patch.object(
@@ -349,9 +342,9 @@ async def test_generate_strategy_handles_api_error(optimizer: EvolutionOptimizer
         "generate_content",
         side_effect=Exception("API Error"),
     ):
-        strategy_path = await optimizer.generate_strategy(failures)
+        recommendation = await optimizer.generate_recommendation(failures)
 
-    assert strategy_path is None
+    assert recommendation is None
 
 
 def test_get_performance_summary() -> None:
@@ -389,33 +382,6 @@ def test_get_performance_summary() -> None:
 
     # Clean up
     Path(tmp_path).unlink()
-
-
-def test_validate_strategy_success(optimizer: EvolutionOptimizer, tmp_path: Path) -> None:
-    """Test strategy validation when tests pass."""
-    strategy_file = tmp_path / "test_strategy.py"
-    strategy_file.write_text("# Valid strategy file")
-
-    with patch("subprocess.run") as mock_run:
-        mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
-        result = optimizer.validate_strategy(strategy_file)
-
-    assert result is True
-    assert strategy_file.exists()
-
-
-def test_validate_strategy_failure(optimizer: EvolutionOptimizer, tmp_path: Path) -> None:
-    """Test strategy validation when tests fail."""
-    strategy_file = tmp_path / "test_strategy.py"
-    strategy_file.write_text("# Invalid strategy file")
-
-    with patch("subprocess.run") as mock_run:
-        mock_run.return_value = Mock(returncode=1, stdout="FAILED", stderr="")
-        result = optimizer.validate_strategy(strategy_file)
-
-    assert result is False
-    # File should be deleted on failure
-    assert not strategy_file.exists()
 
 
 # ------------------------------------------------------------------
@@ -749,8 +715,10 @@ def test_generate_dashboard() -> None:
 
 
 @pytest.mark.asyncio
-async def test_full_evolution_pipeline(optimizer: EvolutionOptimizer, tmp_path: Path) -> None:
-    """Test the complete evolution pipeline."""
+async def test_full_evolution_pipeline_records_context_report(
+    optimizer: EvolutionOptimizer,
+) -> None:
+    """Full evolution pipeline should return and persist a daily report."""
     # Add losing decisions
     logger = optimizer._decision_logger
     id1 = logger.log_decision(
@@ -767,18 +735,28 @@ async def test_full_evolution_pipeline(optimizer: EvolutionOptimizer, tmp_path: 
 
     # Mock Gemini and subprocess
     mock_response = Mock()
-    mock_response.text = 'return {"action": "HOLD", "confidence": 50, "rationale": "Test"}'
+    mock_response.text = json.dumps(
+        {
+            "summary": "Avoid repeating high-confidence losing entries.",
+            "adjustments": ["Reduce confidence for repeated losers."],
+            "risk_notes": ["Manual review required before rollout."],
+        }
+    )
 
     with patch.object(
         optimizer._client.aio.models, "generate_content", new=AsyncMock(return_value=mock_response)
     ):
-        with patch("src.evolution.optimizer.STRATEGIES_DIR", tmp_path):
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = Mock(returncode=0, stdout="", stderr="")
-
-                result = await optimizer.evolve()
+        result = await optimizer.evolve(market_code="US_NASDAQ", market_date="2026-02-14")
 
     assert result is not None
     assert "title" in result
-    assert "branch" in result
+    assert result["status"] == "recorded"
+    assert result["context_key"] == "evolution_US_NASDAQ"
     assert "status" in result
+    stored = ContextStore(optimizer._conn).get_context(
+        ContextLayer.L6_DAILY,
+        "2026-02-14",
+        "evolution_US_NASDAQ",
+    )
+    assert stored is not None
+    assert stored["summary"] == "Avoid repeating high-confidence losing entries."

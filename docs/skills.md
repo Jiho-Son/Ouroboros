@@ -66,9 +66,9 @@ python -m src.evolution.optimizer --evolve
 ```
 Triggers the evolution engine to:
 1. Analyze `trades.db` for failing patterns
-2. Ask Gemini to generate a new strategy
-3. Run tests on the new strategy
-4. Create a PR if tests pass
+2. Ask Gemini to generate a structured recommendation report
+3. Store the report in daily context (`L6_DAILY`)
+4. Return metadata for notification/review flow
 
 ### Validate Strategy
 ```bash

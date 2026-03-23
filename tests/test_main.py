@@ -5560,13 +5560,13 @@ async def test_run_evolution_loop_skips_non_us_market() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_evolution_loop_notifies_when_pr_generated() -> None:
+async def test_run_evolution_loop_notifies_when_report_is_recorded() -> None:
     optimizer = MagicMock()
     optimizer.evolve = AsyncMock(
         return_value={
-            "title": "[Evolution] New strategy: v20260214_050000",
-            "branch": "evolution/v20260214_050000",
-            "status": "ready_for_review",
+            "title": "[Evolution] Daily recommendation: US_NASDAQ 2026-02-14",
+            "context_key": "evolution_US_NASDAQ",
+            "status": "recorded",
         }
     )
     telegram = MagicMock()
@@ -5579,8 +5579,14 @@ async def test_run_evolution_loop_notifies_when_pr_generated() -> None:
         market_date="2026-02-14",
     )
 
-    optimizer.evolve.assert_called_once()
+    optimizer.evolve.assert_called_once_with(
+        market_code="US_NASDAQ",
+        market_date="2026-02-14",
+    )
     telegram.send_message.assert_called_once()
+    message = telegram.send_message.await_args.args[0]
+    assert "Context Key: evolution_US_NASDAQ" in message
+    assert "Status: recorded" in message
 
 
 @pytest.mark.asyncio
@@ -5588,9 +5594,9 @@ async def test_run_evolution_loop_notification_error_is_ignored() -> None:
     optimizer = MagicMock()
     optimizer.evolve = AsyncMock(
         return_value={
-            "title": "[Evolution] New strategy: v20260214_050000",
-            "branch": "evolution/v20260214_050000",
-            "status": "ready_for_review",
+            "title": "[Evolution] Daily recommendation: US_NYSE 2026-02-14",
+            "context_key": "evolution_US_NYSE",
+            "status": "recorded",
         }
     )
     telegram = MagicMock()
@@ -5603,7 +5609,10 @@ async def test_run_evolution_loop_notification_error_is_ignored() -> None:
         market_date="2026-02-14",
     )
 
-    optimizer.evolve.assert_called_once()
+    optimizer.evolve.assert_called_once_with(
+        market_code="US_NYSE",
+        market_date="2026-02-14",
+    )
     telegram.send_message.assert_called_once()
 
 

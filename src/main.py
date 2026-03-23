@@ -3552,7 +3552,10 @@ async def _run_evolution_loop(
         return
 
     try:
-        pr_info = await evolution_optimizer.evolve()
+        pr_info = await evolution_optimizer.evolve(
+            market_code=market_code,
+            market_date=market_date,
+        )
     except Exception as exc:
         logger.warning("Evolution loop failed on %s: %s", market_date, exc)
         return
@@ -3565,8 +3568,8 @@ async def _run_evolution_loop(
         await telegram.send_message(
             "<b>Evolution Update</b>\n"
             f"Date: {market_date}\n"
-            f"PR: {pr_info.get('title', 'N/A')}\n"
-            f"Branch: {pr_info.get('branch', 'N/A')}\n"
+            f"Report: {pr_info.get('title', 'N/A')}\n"
+            f"Context Key: {pr_info.get('context_key', 'N/A')}\n"
             f"Status: {pr_info.get('status', 'N/A')}"
         )
     except Exception as exc:

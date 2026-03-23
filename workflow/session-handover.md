@@ -633,3 +633,11 @@
 - next_ticket: OOR-841
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: `get_latest_buy_trade()` / `get_latest_sell_trade()` 계약 비대칭과 `decision_id` 필터 차이를 재현으로 고정한 뒤, 의도/버그 여부를 코드·테스트·문서 중 최소 변경으로 명시한다.
+
+### 2026-03-23 | session=codex-oor-842-start
+- branch: feature/issue-842-evolution-output-cleanup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-842
+- next_ticket: OOR-842
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: unattended Linear 실행으로 하루 마감 시 생성되는 불필요한 Python 파일 경로를 재현하고, 진화 결과물 기록 방식을 브랜치 오염 없이 정리한다.
