@@ -359,6 +359,21 @@ def test_parse_recommendation_strips_two_line_code_fence(
     }
 
 
+def test_parse_recommendation_strips_single_line_code_fence(
+    optimizer: EvolutionOptimizer,
+) -> None:
+    raw_text = '```json{"summary":"x","adjustments":["a"],"risk_notes":[]} ```'
+
+    assert optimizer._strip_code_fences(raw_text) == (
+        '{"summary":"x","adjustments":["a"],"risk_notes":[]}'
+    )
+    assert optimizer._parse_recommendation(raw_text) == {
+        "summary": "x",
+        "adjustments": ["a"],
+        "risk_notes": [],
+    }
+
+
 @pytest.mark.asyncio
 async def test_generate_recommendation_handles_api_error(optimizer: EvolutionOptimizer) -> None:
     """Test that generate_recommendation handles provider errors gracefully."""
@@ -773,13 +788,25 @@ async def test_full_evolution_pipeline_records_context_report(
     with patch.object(
         optimizer._client.aio.models, "generate_content", new=AsyncMock(return_value=mock_response)
     ):
+        strategies_dir = Path("src/strategies")
+        before_files = (
+            {path.resolve() for path in strategies_dir.glob("*_evolved.py")}
+            if strategies_dir.exists()
+            else set()
+        )
         result = await optimizer.evolve(market_code="US_NASDAQ", market_date="2026-02-14")
 
-    strategies_dir = Path("src/strategies")
-    evolved_files = list(strategies_dir.glob("*_evolved.py")) if strategies_dir.exists() else []
+    after_files = (
+        {path.resolve() for path in strategies_dir.glob("*_evolved.py")}
+        if strategies_dir.exists()
+        else set()
+    )
 
     assert result is not None
-    assert evolved_files == [], f"evolve() must not create .py files: {evolved_files}"
+    assert after_files == before_files, (
+        "evolve() must not create .py files: "
+        f"new={sorted(str(path) for path in after_files - before_files)}"
+    )
     assert "title" in result
     assert result["status"] == "recorded"
     assert result["context_key"] == "evolution_US_NASDAQ"

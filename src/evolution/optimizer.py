@@ -273,7 +273,8 @@ class EvolutionOptimizer:
 
         first_newline = cleaned.find("\n")
         if first_newline == -1:
-            return cleaned.removeprefix("```").removesuffix("```").strip()
+            without_open = re.sub(r"^```[\w-]*", "", cleaned, count=1)
+            return without_open.removesuffix("```").strip()
 
         return cleaned[first_newline + 1 :].removesuffix("```").strip()
 
