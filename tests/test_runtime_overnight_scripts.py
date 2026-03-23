@@ -467,6 +467,36 @@ def test_workflow_before_remove_hook_uses_github_fallback_signal_from_nested_dir
     assert "github merge fallback matched" in restart_log.read_text(encoding="utf-8")
 
 
+def test_workflow_before_remove_hook_skips_unmerged_nested_dir_without_side_effects(
+    tmp_path: Path,
+) -> None:
+    nested_cwd = tmp_path / "workspace" / "nested" / "context"
+    completed, canonical_root, hooks_log, marker_path, git_log, restart_log = (
+        _run_symphony_before_remove_hook(
+            tmp_path=tmp_path,
+            merged_by_git=False,
+            github_merged=False,
+            target_sha="main-sha-workflow-unmerged-skip",
+            invocation_mode="workflow",
+            cwd_relative="nested/context",
+        )
+    )
+
+    assert completed.returncode == 0, f"{completed.stdout}\n{completed.stderr}"
+    output = f"{completed.stdout}\n{completed.stderr}"
+    assert "not merged into origin/main" in output
+    assert str(canonical_root) in output
+    assert "github merge fallback matched" not in output
+    assert not hooks_log.exists()
+    assert not marker_path.exists()
+    assert "pull:" not in git_log.read_text(encoding="utf-8")
+    log_text = restart_log.read_text(encoding="utf-8")
+    assert "hook invoked" in log_text
+    assert f"cwd={nested_cwd}" in log_text
+    assert "not merged into origin/main" in log_text
+    assert "github merge fallback matched" not in log_text
+
+
 def test_workflow_before_remove_command_raises_when_hook_is_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
