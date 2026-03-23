@@ -21,6 +21,7 @@ from src.analysis.atr_helpers import (
 from src.broker.balance_utils import (
     _extract_avg_price_from_balance,
     _extract_buy_fx_rate,
+    _extract_fx_rate_from_sources,
     _extract_held_codes_from_balance,
     _extract_held_qty_from_balance,
 )
@@ -5311,6 +5312,8 @@ async def test_sell_order_uses_broker_balance_qty_not_db() -> None:
         }
     )
     broker.send_order = AsyncMock(return_value={"msg1": "OK"})
+    overseas_broker = MagicMock()
+    overseas_broker.get_present_balance_fx_rate = AsyncMock(return_value=10.0)
 
     scenario = StockScenario(
         condition=StockCondition(rsi_below=30),
@@ -5343,7 +5346,7 @@ async def test_sell_order_uses_broker_balance_qty_not_db() -> None:
 
     await trading_cycle(
         broker=broker,
-        overseas_broker=MagicMock(),
+        overseas_broker=overseas_broker,
         scenario_engine=engine,
         playbook=playbook,
         risk=MagicMock(),
@@ -5370,14 +5373,16 @@ async def test_sell_order_uses_broker_balance_qty_not_db() -> None:
     assert call_kwargs["quantity"] == 5
     updated_buy = decision_logger.get_decision_by_id(buy_decision_id)
     assert updated_buy is not None
-    assert updated_buy.outcome_pnl == -25.0
+    assert updated_buy.outcome_pnl == pytest.approx(-2.5)
     sell_row = db_conn.execute(
-        "SELECT pnl, strategy_pnl, fx_pnl FROM trades WHERE action='SELL' ORDER BY id DESC LIMIT 1"
+        "SELECT pnl, strategy_pnl, fx_pnl, selection_context "
+        "FROM trades WHERE action='SELL' ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert sell_row is not None
-    assert sell_row[0] == -25.0
-    assert sell_row[1] == -25.0
+    assert sell_row[0] == pytest.approx(-2.5)
+    assert sell_row[1] == pytest.approx(-2.5)
     assert sell_row[2] == 0.0
+    assert json.loads(str(sell_row[3]))["fx_rate"] == pytest.approx(10.0)
 
 
 @pytest.mark.asyncio
@@ -7647,6 +7652,19 @@ def test_split_trade_pnl_components_overseas_fx_split_preserves_total() -> None:
     assert strategy_pnl == 10.0
     assert fx_pnl == 10.0
     assert strategy_pnl + fx_pnl == pytest.approx(20.0)
+
+
+def test_extract_fx_rate_from_sources_reads_nested_present_balance_payload() -> None:
+    payload = {
+        "output1": [
+            {
+                "bass_exrt": "1325.40",
+            }
+        ],
+        "output2": [{}],
+    }
+
+    assert _extract_fx_rate_from_sources(payload) == pytest.approx(1325.40)
 
 
 # run_daily_session — daily CB baseline (daily_start_eval) tests (issue #207)

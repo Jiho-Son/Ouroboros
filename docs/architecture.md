@@ -351,13 +351,13 @@ High-frequency trading with individual stock analysis:
 
 - Generates comprehensive trade performance summary
 - Stores results in L6_DAILY context layer
-- Tracks win rate, raw realized P&L (market quote currency), confidence accuracy
+- Tracks win rate, settled realized P&L (USD basis for active KR/US markets), confidence accuracy
 
 **DailyScorecard** (`scorecard.py`) — Performance scoring
 
 - Calculates daily metrics (trades, P&L, win rate, avg confidence)
-- `total_pnl` is stored as raw realized P&L, not a percentage
-- Planner prompt rendering maps market -> raw PnL unit explicitly (`KR -> KRW`, `US -> USD`) for both self-market and cross-market scorecard sections, and falls back to `UNKNOWN_CURRENCY` for unsupported or blank market codes until the mapping is extended
+- `total_pnl` is stored as settled realized P&L (USD), not a percentage
+- Planner prompt rendering maps active market scorecards to `USD` for both self-market and cross-market sections, and falls back to `UNKNOWN_CURRENCY` for unsupported or blank market codes until explicit market coverage is extended
 - Enables trend tracking across days
 
 **Stop-Loss Monitoring** — Real-time position protection
@@ -551,14 +551,14 @@ CREATE TABLE trades (
     rationale TEXT,
     quantity INTEGER,
     price REAL,
-    pnl REAL DEFAULT 0.0,
+    pnl REAL DEFAULT 0.0,         -- settled realized P&L normalized to USD
     market TEXT DEFAULT 'KR',
     exchange_code TEXT DEFAULT 'KRX',
     session_id TEXT DEFAULT 'UNKNOWN',  -- v3: KRX_REG | NXT_AFTER | US_REG | US_PRE | ...
     selection_context TEXT,        -- JSON: {rsi, volume_ratio, signal, score}
     decision_id TEXT,             -- Links to decision_logs
-    strategy_pnl REAL,            -- v3: Core strategy P&L (separated from FX)
-    fx_pnl REAL DEFAULT 0.0,      -- v3: FX gain/loss for USD trades (schema ready, activation pending)
+    strategy_pnl REAL,            -- v3: Core strategy P&L in USD (same as pnl for KR trades)
+    fx_pnl REAL DEFAULT 0.0,      -- v3: FX gain/loss in USD when buy/sell FX snapshots are available
     mode TEXT                     -- paper | live
 );
 ```

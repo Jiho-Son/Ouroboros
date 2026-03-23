@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-03-23 | session=codex-oor-844-start
+- branch: feature/issue-844-pnl-usd-settlement
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-844
+- next_ticket: OOR-844
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: pnl 결산을 달러 기준으로 전환하려면 결산 시점 환율 소스 존재 여부가 선결 조건이며, 소스 부재 시 구현 보류 근거를 명시해야 한다.
+
 ### 2026-03-21 | session=codex-pr847-review-followup
 - branch: feature/issue-833-sell-trade-none-branch-test
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -656,3 +664,10 @@
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: 추가 리뷰에서 single-line fenced JSON 경로와 테스트 false-positive 가능성을 점검해 필요한 후속 수정만 반영한다.
 
+### 2026-03-23 | session=codex-oor-844-start
+- branch: feature/issue-844-pnl-usd-settlement
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-844
+- next_ticket: OOR-844
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: pnl 결산을 달러 기준으로 전환하려면 결산 시점 환율 소스 존재 여부가 선결 조건이며, 소스 부재 시 구현 보류 근거를 명시해야 한다.

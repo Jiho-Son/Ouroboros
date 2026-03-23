@@ -110,10 +110,10 @@ Updated: 2026-03-02
 ### GAP-6 (신규): FX PnL 분리 부분 해소 (MEDIUM)
 
 - **위치**: `src/db.py` (`fx_pnl`, `strategy_pnl` 컬럼 존재)
-- **현 상태**: 런타임 SELL 경로에서 `strategy_pnl`/`fx_pnl` 분리 계산 및 전달을 적용함 (`#370`).
-- **운영 메모**: `trading_cycle`은 scanner 기반 `selection_context`에 `fx_rate`를 추가하고, `run_daily_session`은 scanner 컨텍스트 없이 `fx_rate` 스냅샷만 기록한다.
-- **잔여**: 과거 BUY 레코드에 `fx_rate`가 없으면 해외 구간도 `fx_pnl=0` fallback으로 기록됨.
-- **영향**: USD 거래에서 환율 손익과 전략 손익이 분리되지 않아 성과 분석 부정확
+- **현 상태**: 런타임 SELL 경로에서 `pnl` 을 USD 기준으로 저장하고, US 활성 시장은 `strategy_pnl`/`fx_pnl` 분리 계산을 유지한다. KR 활성 시장은 결산 시점 환율(`inquire-present-balance` 기반)을 사용해 raw KRW 손익을 USD 로 정규화한다.
+- **운영 메모**: `trading_cycle`/`run_daily_session`/realtime hard-stop SELL 경로 모두 `selection_context` 에 결산 `fx_rate` 를 남길 수 있다.
+- **잔여**: 과거 BUY 레코드에 `fx_rate` 가 없으면 해외 구간은 `fx_pnl=0` fallback 이고, 비활성 해외 시장(`JP`, `HK`, `CN_*`, `VN_*`)의 local currency -> USD 정규화는 별도 범위다.
+- **영향**: 활성 KR/US 시장의 일별 성과 집계는 USD 단일 기준으로 정렬되지만, 과거 데이터와 비활성 시장은 추가 정리가 필요하다.
 - **요구사항**: REQ-V3-007
 
 ---

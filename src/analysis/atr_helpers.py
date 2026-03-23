@@ -113,6 +113,22 @@ def _split_trade_pnl_components(
     return trade_pnl, 0.0
 
 
+def _normalize_trade_pnl_to_usd(
+    *,
+    market: MarketInfo,
+    trade_pnl: float,
+    settlement_fx_rate: float | None = None,
+) -> float:
+    """Normalize settled trade PnL to USD for active KR/US markets."""
+    if trade_pnl == 0.0:
+        return 0.0
+    if not market.is_domestic:
+        return trade_pnl
+    if settlement_fx_rate is None or settlement_fx_rate <= 0:
+        return trade_pnl
+    return trade_pnl / settlement_fx_rate
+
+
 def _estimate_pred_down_prob_from_rsi(rsi: float | str | None) -> float:
     """Estimate downside probability from RSI using a simple linear mapping."""
     if rsi is None:
