@@ -263,11 +263,19 @@ class EvolutionOptimizer:
         )
 
     def _strip_code_fences(self, raw_text: str) -> str:
-        if raw_text.startswith("```"):
-            lines = raw_text.splitlines()
-            if len(lines) >= 3:
-                return "\n".join(lines[1:-1]).strip()
-        return raw_text.strip()
+        cleaned = raw_text.strip()
+        if not cleaned.startswith("```"):
+            return cleaned
+
+        lines = cleaned.splitlines()
+        if len(lines) >= 3:
+            return "\n".join(lines[1:-1]).strip()
+
+        first_newline = cleaned.find("\n")
+        if first_newline == -1:
+            return cleaned.removeprefix("```").removesuffix("```").strip()
+
+        return cleaned[first_newline + 1 :].removesuffix("```").strip()
 
     def _parse_recommendation(self, raw_text: str) -> dict[str, Any] | None:
         try:

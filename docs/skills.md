@@ -70,12 +70,6 @@ Triggers the evolution engine to:
 3. Store the report in daily context (`L6_DAILY`)
 4. Return metadata for notification/review flow
 
-### Validate Strategy
-```bash
-pytest tests/ -k "strategy" -v
-```
-Run only strategy-related tests to validate a new strategy file.
-
 ## Deployment Tools
 
 ### Build Docker Image

@@ -327,9 +327,36 @@ def test_validate_recommendation_requires_summary_adjustments_and_risk_notes(
         "adjustments": "not-a-list",
         "risk_notes": [],
     }
+    empty_risk_notes = {
+        "summary": "Short summary",
+        "adjustments": ["One adjustment"],
+        "risk_notes": [],
+    }
+    blank_risk_note = {
+        "summary": "Short summary",
+        "adjustments": ["One adjustment"],
+        "risk_notes": [""],
+    }
 
     assert optimizer.validate_recommendation(valid) is True
     assert optimizer.validate_recommendation(invalid) is False
+    assert optimizer.validate_recommendation(empty_risk_notes) is True
+    assert optimizer.validate_recommendation(blank_risk_note) is False
+
+
+def test_parse_recommendation_strips_two_line_code_fence(
+    optimizer: EvolutionOptimizer,
+) -> None:
+    raw_text = '```json\n{"summary":"x","adjustments":["a"],"risk_notes":[]}```'
+
+    assert optimizer._strip_code_fences(raw_text) == (
+        '{"summary":"x","adjustments":["a"],"risk_notes":[]}'
+    )
+    assert optimizer._parse_recommendation(raw_text) == {
+        "summary": "x",
+        "adjustments": ["a"],
+        "risk_notes": [],
+    }
 
 
 @pytest.mark.asyncio
@@ -748,7 +775,11 @@ async def test_full_evolution_pipeline_records_context_report(
     ):
         result = await optimizer.evolve(market_code="US_NASDAQ", market_date="2026-02-14")
 
+    strategies_dir = Path("src/strategies")
+    evolved_files = list(strategies_dir.glob("*_evolved.py")) if strategies_dir.exists() else []
+
     assert result is not None
+    assert evolved_files == [], f"evolve() must not create .py files: {evolved_files}"
     assert "title" in result
     assert result["status"] == "recorded"
     assert result["context_key"] == "evolution_US_NASDAQ"
