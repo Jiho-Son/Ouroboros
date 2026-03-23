@@ -489,7 +489,8 @@ def test_workflow_before_remove_hook_skips_unmerged_nested_dir_without_side_effe
     assert "github merge fallback matched" not in output
     assert not hooks_log.exists()
     assert not marker_path.exists()
-    assert "pull:" not in git_log.read_text(encoding="utf-8")
+    git_log_text = git_log.read_text(encoding="utf-8")
+    assert "pull:" not in git_log_text
     log_text = restart_log.read_text(encoding="utf-8")
     assert "hook invoked" in log_text
     assert f"cwd={nested_cwd}" in log_text

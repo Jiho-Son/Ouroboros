@@ -695,3 +695,11 @@
 - next_ticket: OOR-845
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: nested `before_remove` 미병합 음수 경로를 재현으로 먼저 고정하고, workflow hook이 canonical restart 및 stop/start side effect를 남기지 않는지 회귀 테스트로 최소 수정한다.
+
+### 2026-03-23 | session=codex-pr860-review-followup
+- branch: feature/issue-845-before-remove-unmerged-negative
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-845, PR #860
+- next_ticket: OOR-845
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #860 리뷰 지적을 코드 기준으로 검증한 뒤 필요한 수정만 반영하고, 테스트/검증 후 모든 리뷰 스레드에 조치 결과를 thread reply로 남긴다.
