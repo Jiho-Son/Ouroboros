@@ -1,52 +1,30 @@
-"""Evolution Engine — analyzes trade logs and generates new strategies.
+"""Evolution Engine — analyzes trade logs and records daily recommendations.
 
 This module:
 1. Uses DecisionLogger.get_losing_decisions() to identify failing patterns
 2. Analyzes failure patterns by time, market conditions, stock characteristics
-3. Asks the configured LLM provider to generate improved strategy recommendations
-4. Generates new strategy classes with enhanced decision-making logic
+3. Asks the configured LLM provider to generate structured improvement recommendations
+4. Stores the resulting recommendation report in the daily context layer
 """
 
 from __future__ import annotations
 
-import ast
 import json
 import logging
+import re
 import sqlite3
-import subprocess
-import sys
-import textwrap
 from collections import Counter
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from src.brain.llm_client import LLMProvider, build_llm_provider
 from src.config import Settings
+from src.context.layer import ContextLayer
+from src.context.store import ContextStore
 from src.db import init_db
 from src.decision_logging.decision_logger import DecisionLogger
 
 logger = logging.getLogger(__name__)
-
-STRATEGIES_DIR = Path("src/strategies")
-STRATEGY_TEMPLATE = """\
-\"\"\"Auto-generated strategy: {name}
-
-Generated at: {timestamp}
-Rationale: {rationale}
-\"\"\"
-
-from __future__ import annotations
-from typing import Any
-from src.strategies.base import BaseStrategy
-
-
-class {class_name}(BaseStrategy):
-    \"\"\"Strategy: {name}\"\"\"
-
-    def evaluate(self, market_data: dict[str, Any]) -> dict[str, Any]:
-{body}
-"""
 
 
 class EvolutionOptimizer:
@@ -58,6 +36,7 @@ class EvolutionOptimizer:
         self._client = llm_client or build_llm_provider(settings)
         self._model_name = settings.llm_model
         self._conn = init_db(self._db_path)
+        self._context_store = ContextStore(self._conn)
         self._decision_logger = DecisionLogger(self._conn)
 
     # ------------------------------------------------------------------
@@ -179,34 +158,28 @@ class EvolutionOptimizer:
             conn.close()
 
     # ------------------------------------------------------------------
-    # Strategy Generation
+    # Recommendation Generation
     # ------------------------------------------------------------------
 
-    async def generate_strategy(self, failures: list[dict[str, Any]]) -> Path | None:
-        """Ask the configured provider to generate a new strategy based on failure analysis.
-
-        Integrates failure patterns and market conditions to create improved strategies.
-        Returns the path to the generated strategy file, or None on failure.
-        """
-        # Identify failure patterns first
-        patterns = self.identify_failure_patterns(failures)
-
+    async def generate_recommendation(
+        self,
+        failures: list[dict[str, Any]],
+        patterns: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Generate a structured recommendation payload from failure analysis."""
+        resolved_patterns = patterns or self.identify_failure_patterns(failures)
         prompt = (
-            "You are a quantitative trading strategy developer.\n"
-            "Analyze these failed trades and their patterns, "
-            "then generate an improved strategy.\n\n"
-            f"Failure Patterns:\n{json.dumps(patterns, indent=2)}\n\n"
+            "You are a quantitative trading performance reviewer.\n"
+            "Analyze these failed trades and respond with ONLY a JSON object.\n"
+            "Required keys:\n"
+            '- "summary": string\n'
+            '- "adjustments": array of 1-3 short strings\n'
+            '- "risk_notes": array of short strings (may be empty)\n'
+            "Do not return Python code, markdown, or commentary outside JSON.\n\n"
+            f"Failure Patterns:\n{json.dumps(resolved_patterns, indent=2)}\n\n"
             f"Sample Failed Trades (first 5):\n"
             f"{json.dumps(failures[:5], indent=2, default=str)}\n\n"
-            "Based on these patterns, generate an improved trading strategy.\n"
-            "The strategy should:\n"
-            "1. Avoid the identified failure patterns\n"
-            "2. Consider market-specific conditions\n"
-            "3. Adjust confidence based on historical performance\n\n"
-            "Generate a Python method body that inherits from BaseStrategy.\n"
-            "The method signature is: evaluate(self, market_data: dict) -> dict\n"
-            "The method must return a dict with keys: action, confidence, rationale.\n"
-            "Respond with ONLY the method body (Python code), no class definition.\n"
+            "Focus on process or decisioning improvements that a human can review later.\n"
         )
 
         try:
@@ -214,118 +187,155 @@ class EvolutionOptimizer:
                 model=self._model_name,
                 contents=prompt,
             )
-            body = response.text.strip()
+            raw_text = response.text.strip()
         except Exception as exc:
-            logger.error("Failed to generate strategy: %s", exc)
+            logger.error("Failed to generate evolution recommendation: %s", exc)
             return None
 
-        # Clean up code fences
-        if body.startswith("```"):
-            lines = body.split("\n")
-            body = "\n".join(lines[1:-1])
-
-        # Create strategy file
-        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-        version = f"v{timestamp}"
-        class_name = f"Strategy_{version}"
-        file_name = f"{version}_evolved.py"
-
-        STRATEGIES_DIR.mkdir(parents=True, exist_ok=True)
-        file_path = STRATEGIES_DIR / file_name
-
-        # Indent the body for the class method
-        normalized_body = textwrap.dedent(body).strip()
-        indented_body = textwrap.indent(normalized_body, "            ")
-
-        # Generate rationale from patterns
-        rationale = f"Auto-evolved from {len(failures)} failures. "
-        rationale += f"Primary failure markets: {list(patterns.get('markets', {}).keys())}. "
-        rationale += f"Average loss: {patterns.get('avg_loss', 0.0)}"
-
-        content = STRATEGY_TEMPLATE.format(
-            name=version,
-            timestamp=datetime.now(UTC).isoformat(),
-            rationale=rationale,
-            class_name=class_name,
-            body=indented_body.rstrip(),
-        )
-
-        try:
-            parsed = ast.parse(content, filename=str(file_path))
-            compile(parsed, filename=str(file_path), mode="exec")
-        except SyntaxError as exc:
-            logger.warning("Generated strategy failed syntax validation: %s", exc)
+        cleaned = self._strip_code_fences(raw_text)
+        recommendation = self._parse_recommendation(cleaned)
+        if recommendation is None:
+            logger.warning("Generated evolution recommendation failed schema validation")
             return None
+        return recommendation
 
-        file_path.write_text(content)
-        logger.info("Generated strategy file: %s", file_path)
-        return file_path
-
-    # ------------------------------------------------------------------
-    # Validation
-    # ------------------------------------------------------------------
-
-    def validate_strategy(self, strategy_path: Path) -> bool:
-        """Run pytest on the generated strategy. Returns True if all tests pass."""
-        logger.info("Validating strategy: %s", strategy_path)
-        result = subprocess.run(
-            [sys.executable, "-m", "pytest", "tests/", "-v", "--tb=short"],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if result.returncode == 0:
-            logger.info("Strategy validation PASSED")
-            return True
-        else:
-            logger.warning("Strategy validation FAILED:\n%s", result.stdout + result.stderr)
-            # Clean up failing strategy
-            strategy_path.unlink(missing_ok=True)
+    def validate_recommendation(self, recommendation: dict[str, Any]) -> bool:
+        """Validate the LLM-produced recommendation schema."""
+        if not isinstance(recommendation, dict):
             return False
 
+        summary = recommendation.get("summary")
+        adjustments = recommendation.get("adjustments")
+        risk_notes = recommendation.get("risk_notes")
+        if not isinstance(summary, str) or not summary.strip():
+            return False
+        if not isinstance(adjustments, list) or not adjustments:
+            return False
+        if not isinstance(risk_notes, list):
+            return False
+
+        normalized_adjustments = [
+            item.strip() for item in adjustments if isinstance(item, str) and item.strip()
+        ]
+        normalized_risk_notes = [
+            item.strip() for item in risk_notes if isinstance(item, str) and item.strip()
+        ]
+        return (
+            len(normalized_adjustments) == len(adjustments)
+            and len(normalized_adjustments) > 0
+            and len(normalized_risk_notes) == len(risk_notes)
+        )
+
     # ------------------------------------------------------------------
-    # PR Simulation
+    # Report Persistence
     # ------------------------------------------------------------------
 
-    def create_pr_simulation(self, strategy_path: Path) -> dict[str, str]:
-        """Simulate creating a pull request for the new strategy."""
-        pr = {
-            "title": f"[Evolution] New strategy: {strategy_path.stem}",
-            "branch": f"evolution/{strategy_path.stem}",
-            "body": (
-                f"Auto-generated strategy from evolution engine.\n"
-                f"File: {strategy_path}\n"
-                f"All tests passed."
-            ),
-            "status": "ready_for_review",
+    def create_evolution_report(
+        self,
+        *,
+        market_code: str,
+        market_date: str,
+        patterns: dict[str, Any],
+        recommendation: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Build a stored report for later human review."""
+        report = {
+            "title": f"[Evolution] Daily recommendation: {market_code} {market_date}",
+            "status": "recorded",
+            "context_key": f"evolution_{market_code}",
+            "market": market_code,
+            "date": market_date,
+            "summary": recommendation["summary"],
+            "adjustments": recommendation["adjustments"],
+            "risk_notes": recommendation["risk_notes"],
+            "failure_patterns": patterns,
         }
-        logger.info("PR simulation created: %s", pr["title"])
-        return pr
+        logger.info("Evolution report created: %s", report["title"])
+        return report
+
+    def store_evolution_report(self, report: dict[str, Any]) -> None:
+        """Persist the report in L6_DAILY context for the market/date."""
+        self._context_store.set_context(
+            ContextLayer.L6_DAILY,
+            report["date"],
+            report["context_key"],
+            report,
+        )
+
+    def _strip_code_fences(self, raw_text: str) -> str:
+        cleaned = raw_text.strip()
+        if not cleaned.startswith("```"):
+            return cleaned
+
+        lines = cleaned.splitlines()
+        if len(lines) >= 3:
+            return "\n".join(lines[1:-1]).strip()
+
+        first_newline = cleaned.find("\n")
+        if first_newline == -1:
+            without_open = re.sub(r"^```[\w-]*", "", cleaned, count=1)
+            return without_open.removesuffix("```").strip()
+
+        return cleaned[first_newline + 1 :].removesuffix("```").strip()
+
+    def _parse_recommendation(self, raw_text: str) -> dict[str, Any] | None:
+        try:
+            parsed = json.loads(raw_text)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+            if match is None:
+                return None
+            try:
+                parsed = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                return None
+
+        if not self.validate_recommendation(parsed):
+            return None
+
+        return {
+            "summary": parsed["summary"].strip(),
+            "adjustments": [item.strip() for item in parsed["adjustments"]],
+            "risk_notes": [item.strip() for item in parsed["risk_notes"]],
+        }
 
     # ------------------------------------------------------------------
     # Full Pipeline
     # ------------------------------------------------------------------
 
-    async def evolve(self) -> dict[str, Any] | None:
+    async def evolve(
+        self,
+        *,
+        market_code: str | None = None,
+        market_date: str | None = None,
+    ) -> dict[str, Any] | None:
         """Run the full evolution pipeline.
 
         1. Analyze failures
-        2. Generate new strategy
-        3. Validate with tests
-        4. Create PR simulation
+        2. Generate structured recommendation
+        3. Store it in daily context
+        4. Return report metadata
 
-        Returns PR info on success, None on failure.
+        Returns report info on success, None on failure.
         """
         failures = self.analyze_failures()
         if not failures:
             logger.info("No failure patterns found — skipping evolution")
             return None
 
-        strategy_path = await self.generate_strategy(failures)
-        if strategy_path is None:
+        patterns = self.identify_failure_patterns(failures)
+        recommendation = await self.generate_recommendation(failures, patterns=patterns)
+        if recommendation is None:
             return None
 
-        if not self.validate_strategy(strategy_path):
-            return None
+        resolved_market_code = market_code or str(failures[0].get("market", "UNKNOWN"))
+        resolved_market_date = market_date or datetime.now(UTC).date().isoformat()
+        report = self.create_evolution_report(
+            market_code=resolved_market_code,
+            market_date=resolved_market_date,
+            patterns=patterns,
+            recommendation=recommendation,
+        )
+        self.store_evolution_report(report)
 
-        return self.create_pr_simulation(strategy_path)
+        return report

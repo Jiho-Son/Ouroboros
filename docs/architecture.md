@@ -342,10 +342,10 @@ High-frequency trading with individual stock analysis:
 **StrategyOptimizer** (`optimizer.py`) — Self-improvement loop
 
 - Analyzes high-confidence losing trades from SQLite
-- Asks the configured LLM provider to generate new `BaseStrategy` subclasses
-- Validates generated strategies by running full pytest suite
-- Simulates PR creation for human review
-- Only activates strategies that pass all tests
+- Asks the configured LLM provider to generate structured recommendation reports
+- Stores evolution output in `contexts` (`L6_DAILY`) by market/date instead of writing `.py` files
+- Returns report metadata (`title`, `context_key`, `status`) for notification/review flow
+- Does not auto-activate strategy code
 
 **DailyReview** (`daily_review.py`) — End-of-day review
 
