@@ -1,10 +1,8 @@
 # OOR-847 Evolution Context Reintegration Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** 진화 프롬프트에서 설계상 의도된 컨텍스트 레벨 입력 부재를 진단하고, 현재 `report` 기반 진화 구조에 맞는 재도입 경로를 문서로 고정한다.
 
-**Architecture:** `PreMarketPlanner` 는 이미 `ContextSelector` 로 선택한 `L7/L6/L5` 데이터와 `scorecard_<market>` 를 프롬프트의 `Strategic Context` 블록에 주입한다. 반면 `EvolutionOptimizer` 는 현재 `Failure Patterns` 와 샘플 실패 거래만으로 recommendation JSON 을 생성하고 결과를 `L6_DAILY` 의 `evolution_<market>` 키에 저장한다. 재도입은 이 구조를 유지한 채, `scorecard_<market>`, 최근 `evolution_<market>` report, 시장 suffix 가 붙은 `L5/L4` 집계값, 대표적인 `decision_logger.context_snapshot` 샘플을 묶은 compact `evolution context bundle` 을 만들어 `generate_recommendation()` 에 주입하는 방식이 가장 안전하다. `ContextSelector.get_context_data()` 를 그대로 재사용하면 최신 레이어 전체를 시장/일자 정렬 없이 읽기 때문에 진화 경로에는 맞지 않는다.
+**Architecture:** `PreMarketPlanner` 는 이미 `ContextSelector` 로 선택한 `L7/L6/L5` 데이터와 `scorecard_<market>` 를 프롬프트의 `Strategic Context` 블록에 주입한다. 이때 `ContextLayer` enum 자체는 `L1_LEGACY` 부터 `L7_REALTIME` 까지 장기→단기 순서로 정의돼 있지만, prompt selection 은 별도로 `L7 -> L6 -> L5` 우선순위로 조합된다. 반면 `EvolutionOptimizer` 는 현재 `Failure Patterns` 와 샘플 실패 거래만으로 recommendation JSON 을 생성하고 결과를 `L6_DAILY` 의 `evolution_<market>` 키에 저장한다. 재도입은 이 구조를 유지한 채, `scorecard_<market>`, 최근 `evolution_<market>` report, 시장 suffix 가 붙은 `L5/L4` 집계값, 대표적인 `decision_logger.context_snapshot` 샘플을 묶은 compact `evolution context bundle` 을 만들어 `generate_recommendation()` 에 주입하는 방식이 가장 안전하다. `ContextSelector.get_context_data()` 는 각 layer 에서 `get_latest_timeframe()` 로 최신 timeframe 하나를 고른 뒤 그 timeframe 의 key 전부를 읽기 때문에, 시장/일자 정렬이 필요한 진화 경로에는 그대로 재사용하기 어렵다.
 
 **Tech Stack:** Python, sqlite-backed `ContextStore`, `DecisionLogger`, pytest, docs sync validator
 

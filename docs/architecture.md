@@ -275,6 +275,7 @@ High-frequency trading with individual stock analysis:
   - L5: Weekly stock selection
   - L6: Daily trade logs / scorecards
   - L7: Real-time market data
+- `src/context/layer.py` and `LAYER_CONFIG` define those layers in long-horizon to short-horizon order (`L1 -> L7`), while prompt builders such as `ContextSelector.select_layers()` may read them in the opposite direction (`L7 -> ...`) when recent market state should take precedence.
 - Key-value storage with timeframe tagging
 - SQLite persistence in `contexts` table
 - `ContextSelector.get_context_data()` reads the latest timeframe for each selected layer. Workflows that need explicit market/date alignment should build filtered bundles from explicit timeframes and market-suffixed keys instead of relying on the layer-wide latest snapshot.
