@@ -718,7 +718,7 @@ class TestRawPnlUnitForMarket:
     @pytest.mark.parametrize(
         ("market", "expected_unit"),
         [
-            ("KR", "KRW"),
+            ("KR", "USD"),
             ("US", "USD"),
         ],
     )
@@ -901,7 +901,7 @@ class TestBuildPrompt:
 
         assert "My Market Previous Day (KR)" in prompt
         assert "2026-02-07" in prompt
-        assert "Realized PnL (KRW, raw): -0.80" in prompt
+        assert "Realized PnL (USD, raw): -0.80" in prompt
         assert "-0.80%" not in prompt
         assert "Avoid midday entries" in prompt
 

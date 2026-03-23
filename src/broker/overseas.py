@@ -7,6 +7,7 @@ from typing import Any
 
 import aiohttp
 
+from src.broker.balance_utils import _extract_fx_rate_from_sources
 from src.broker.kis_api import KISBroker
 from src.broker.orderbook_utils import extract_orderbook_top_levels
 
@@ -298,6 +299,37 @@ class OverseasBroker:
                 return await resp.json()
         except (TimeoutError, aiohttp.ClientError) as exc:
             raise ConnectionError(f"Network error fetching overseas balance: {exc}") from exc
+
+    async def get_present_balance_fx_rate(self) -> float | None:
+        """Fetch the current settlement FX rate from KIS present-balance API."""
+        await self._broker._rate_limiter.acquire()
+        session = self._broker._get_session()
+
+        # Official KIS sample: 해외주식 체결기준현재잔고 [v1_해외주식-008]
+        tr_id = "CTRP6504R" if self._broker._settings.MODE == "live" else "VTRP6504R"
+        headers = await self._broker._auth_headers(tr_id)
+        params = {
+            "CANO": self._broker._account_no,
+            "ACNT_PRDT_CD": self._broker._product_cd,
+            "WCRC_FRCR_DVSN_CD": "02",
+            "NATN_CD": "000",
+            "TR_MKET_CD": "00",
+            "INQR_DVSN_CD": "00",
+        }
+        url = f"{self._broker._base_url}/uapi/overseas-stock/v1/trading/inquire-present-balance"
+
+        try:
+            async with session.get(url, headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise ConnectionError(
+                        f"get_present_balance_fx_rate failed ({resp.status}): {text}"
+                    )
+                payload = await resp.json()
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            raise ConnectionError(f"Network error fetching present balance FX rate: {exc}") from exc
+
+        return _extract_fx_rate_from_sources(payload)
 
     async def get_overseas_buying_power(
         self,

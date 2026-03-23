@@ -48,7 +48,7 @@ _ACTION_MAP: dict[str, ScenarioAction] = {
 }
 
 _RAW_PNL_UNIT_BY_MARKET: dict[str, str] = {
-    "KR": "KRW",
+    "KR": "USD",
     "US": "USD",
 }
 _UNSUPPORTED_RAW_PNL_UNIT_FALLBACK = "UNKNOWN_CURRENCY"

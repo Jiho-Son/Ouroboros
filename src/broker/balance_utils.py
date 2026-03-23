@@ -41,13 +41,23 @@ def _extract_fx_rate_from_sources(*sources: dict[str, Any] | None) -> float | No
         "exchange_rate",
         "fx_rate",
     )
+    queue: list[dict[str, Any]] = []
     for source in sources:
-        if not isinstance(source, dict):
-            continue
+        if isinstance(source, dict):
+            queue.append(source)
+
+    while queue:
+        source = queue.pop(0)
         for key in rate_keys:
             rate = _safe_float(source.get(key), 0.0)
             if rate > 0:
                 return rate
+        for nested_key in ("output", "output1", "output2", "output3"):
+            nested = source.get(nested_key)
+            if isinstance(nested, dict):
+                queue.append(nested)
+            elif isinstance(nested, list):
+                queue.extend(item for item in nested if isinstance(item, dict))
     return None
 
 

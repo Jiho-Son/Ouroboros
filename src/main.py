@@ -25,6 +25,7 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.analysis.atr_helpers import (
+    _normalize_trade_pnl_to_usd,
     _split_trade_pnl_components,
 )
 from src.analysis.smart_scanner import ScanCandidate, SmartVolatilityScanner
@@ -132,6 +133,25 @@ from src.strategy.scenario_engine import ScenarioEngine
 logger = logging.getLogger(__name__)
 _SESSION_CLOSE_WINDOWS = {"NXT_AFTER", "US_AFTER"}
 _TERMINAL_SELL_FALLBACK_MULTIPLIER = 0.996
+
+
+async def _resolve_settlement_fx_rate(
+    market: MarketInfo,
+    overseas_broker: OverseasBroker,
+    *sources: dict[str, Any] | None,
+) -> float | None:
+    """Resolve settlement FX rate for SELL accounting."""
+    if market.is_domestic:
+        try:
+            return await overseas_broker.get_present_balance_fx_rate()
+        except Exception as exc:
+            logger.warning(
+                "Domestic settlement FX rate unavailable for %s: %s",
+                market.code,
+                exc,
+            )
+            return None
+    return _extract_fx_rate_from_sources(*sources)
 
 
 def _format_realtime_hard_stop_enabled_markets(settings: Settings | None) -> str:
@@ -657,11 +677,21 @@ async def _handle_realtime_hard_stop_trigger(
         trade_pnl = 0.0
         strategy_pnl: float | None = None
         fx_pnl: float | None = None
+        settlement_fx_rate = await _resolve_settlement_fx_rate(
+            market,
+            overseas_broker,
+            balance_data,
+        )
         if buy_trade and buy_trade.get("price") is not None:
             buy_price = float(buy_trade["price"])
             buy_qty = int(buy_trade.get("quantity") or 0)
             sell_qty = _resolve_sell_qty_for_pnl(sell_qty=quantity, buy_qty=buy_qty)
             trade_pnl = (current_price - buy_price) * sell_qty
+            trade_pnl = _normalize_trade_pnl_to_usd(
+                market=market,
+                trade_pnl=trade_pnl,
+                settlement_fx_rate=settlement_fx_rate,
+            )
             decision_logger.update_outcome(
                 decision_id=buy_trade["decision_id"],
                 pnl=trade_pnl,
@@ -688,8 +718,8 @@ async def _handle_realtime_hard_stop_trigger(
             "source": "websocket_hard_stop",
             "hard_stop_price": trigger.hard_stop_price,
         }
-        if sell_fx_rate is not None and not market.is_domestic:
-            selection_context["fx_rate"] = sell_fx_rate
+        if settlement_fx_rate is not None:
+            selection_context["fx_rate"] = settlement_fx_rate
 
         log_trade(
             conn=db_conn,
@@ -2094,6 +2124,19 @@ async def _execute_trading_cycle_action(
             buy_qty = int(buy_trade.get("quantity") or 0)
             sell_qty = _resolve_sell_qty_for_pnl(sell_qty=quantity, buy_qty=buy_qty)
             trade_pnl = (current_price - buy_price) * sell_qty
+            balance_info = snapshot.get("balance_info")
+            price_output = snapshot.get("price_output")
+            settlement_fx_rate = await _resolve_settlement_fx_rate(
+                market,
+                overseas_broker,
+                price_output,
+                balance_info,
+            )
+            trade_pnl = _normalize_trade_pnl_to_usd(
+                market=market,
+                trade_pnl=trade_pnl,
+                settlement_fx_rate=settlement_fx_rate,
+            )
             decision_logger.update_outcome(
                 decision_id=buy_trade["decision_id"],
                 pnl=trade_pnl,
@@ -2102,6 +2145,7 @@ async def _execute_trading_cycle_action(
             execution_result["buy_price"] = buy_price
             execution_result["sell_qty"] = sell_qty
             execution_result["trade_pnl"] = trade_pnl
+            execution_result["settlement_fx_rate"] = settlement_fx_rate
             if trade_pnl < 0:
                 cooldown_key = _stoploss_cooldown_key(market=market, stock_code=stock_code)
                 cooldown_minutes = _stoploss_cooldown_minutes(settings, market=market)
@@ -2144,8 +2188,10 @@ def _log_trading_cycle_trade(
             "signal": candidate.signal,
             "score": candidate.score,
         }
-    sell_fx_rate = _extract_fx_rate_from_sources(price_output, balance_info)
-    if sell_fx_rate is not None and not market.is_domestic:
+    sell_fx_rate = execution_result.get("settlement_fx_rate")
+    if sell_fx_rate is None:
+        sell_fx_rate = _extract_fx_rate_from_sources(price_output, balance_info)
+    if sell_fx_rate is not None:
         if selection_context is None:
             selection_context = {"fx_rate": sell_fx_rate}
         else:
@@ -2820,6 +2866,7 @@ async def _process_daily_session_stock(
     buy_trade: dict[str, Any] | None = None
     buy_price = 0.0
     sell_qty = 0
+    sell_fx_rate: float | None = None
     order_succeeded = True
     if decision.action in ("BUY", "SELL"):
         if KILL_SWITCH.new_orders_blocked and decision.action == "BUY":
@@ -3077,6 +3124,17 @@ async def _process_daily_session_stock(
                     buy_qty=buy_qty,
                 )
                 trade_pnl = (trade_price - buy_price) * sell_qty
+                sell_fx_rate = await _resolve_settlement_fx_rate(
+                    market,
+                    overseas_broker,
+                    balance_info,
+                    stock_data,
+                )
+                trade_pnl = _normalize_trade_pnl_to_usd(
+                    market=market,
+                    trade_pnl=trade_pnl,
+                    settlement_fx_rate=sell_fx_rate,
+                )
                 decision_logger.update_outcome(
                     decision_id=buy_trade["decision_id"],
                     pnl=trade_pnl,
@@ -3108,7 +3166,6 @@ async def _process_daily_session_stock(
     selection_context: dict[str, Any] | None = None
     if decision.action == "SELL" and order_succeeded:
         buy_fx_rate = _extract_buy_fx_rate(buy_trade)
-        sell_fx_rate = _extract_fx_rate_from_sources(balance_info, stock_data)
         strategy_pnl, fx_pnl = _split_trade_pnl_components(
             market=market,
             trade_pnl=trade_pnl,
@@ -3118,7 +3175,7 @@ async def _process_daily_session_stock(
             buy_fx_rate=buy_fx_rate,
             sell_fx_rate=sell_fx_rate,
         )
-        if sell_fx_rate is not None and not market.is_domestic:
+        if sell_fx_rate is not None:
             selection_context = {"fx_rate": sell_fx_rate}
     elif not market.is_domestic:
         snapshot_fx_rate = _extract_fx_rate_from_sources(balance_info, stock_data)
