@@ -1225,6 +1225,64 @@ async def test_execute_trading_cycle_action_clears_realtime_hard_stop_after_succ
 
 
 @pytest.mark.asyncio
+async def test_execute_trading_cycle_action_records_us_sell_settlement_fx_rate_from_snapshot(
+) -> None:
+    db_conn = init_db(":memory:")
+    log_trade(
+        conn=db_conn,
+        stock_code="AAPL",
+        action="BUY",
+        confidence=87,
+        rationale="initial entry",
+        quantity=7,
+        price=100.0,
+        pnl=0.0,
+        market="US_NASDAQ",
+        exchange_code="NASD",
+        session_id="US_REG",
+        decision_id="buy-dec",
+        mode="live",
+    )
+    overseas_broker = MagicMock()
+    overseas_broker.send_overseas_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+
+    execution_result = await _execute_trading_cycle_action(
+        broker=MagicMock(),
+        overseas_broker=overseas_broker,
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=MagicMock(),
+        telegram=MagicMock(notify_trade_execution=AsyncMock()),
+        market=MARKETS["US_NASDAQ"],
+        stock_code="AAPL",
+        runtime_session_id="US_REG",
+        snapshot={
+            "current_price": 96.0,
+            "total_cash": 10_000.0,
+            "pnl_pct": -4.0,
+            "candidate": None,
+            "market_data": {"stock_name": "Apple Inc."},
+            "balance_data": {"output1": [{"ovrs_pdno": "AAPL", "ovrs_cblc_qty": "7"}]},
+            "balance_info": {"output1": [{"bass_exrt": "1340.50"}]},
+            "price_output": {},
+        },
+        decision_data={
+            "decision": main_module.TradeDecision(
+                action="SELL",
+                confidence=90,
+                rationale="polling sell",
+            ),
+            "match": _make_sell_match(),
+            "decision_id": "sell-dec",
+        },
+        settings=_make_settings(),
+    )
+
+    assert execution_result["order_succeeded"] is True
+    assert execution_result["settlement_fx_rate"] == pytest.approx(1340.50)
+
+
+@pytest.mark.asyncio
 async def test_execute_trading_cycle_action_keeps_realtime_hard_stop_after_rejected_sell(
 ) -> None:
     db_conn = init_db(":memory:")

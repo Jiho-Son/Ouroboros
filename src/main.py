@@ -2124,9 +2124,13 @@ async def _execute_trading_cycle_action(
             buy_qty = int(buy_trade.get("quantity") or 0)
             sell_qty = _resolve_sell_qty_for_pnl(sell_qty=quantity, buy_qty=buy_qty)
             trade_pnl = (current_price - buy_price) * sell_qty
+            balance_info = snapshot.get("balance_info")
+            price_output = snapshot.get("price_output")
             settlement_fx_rate = await _resolve_settlement_fx_rate(
                 market,
                 overseas_broker,
+                price_output,
+                balance_info,
             )
             trade_pnl = _normalize_trade_pnl_to_usd(
                 market=market,
