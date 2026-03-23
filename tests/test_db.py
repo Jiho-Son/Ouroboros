@@ -446,7 +446,7 @@ def test_get_latest_buy_trade_skips_latest_row_without_decision_id() -> None:
         quantity=5,
         price=121.0,
         market="US_NASDAQ",
-        exchange_code="NYSE",
+        exchange_code="NASD",
         selection_context={"source": "unlinked"},
         decision_id=None,
     )
