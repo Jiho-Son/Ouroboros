@@ -625,3 +625,11 @@
 - next_ticket: OOR-840
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #854 외부 리뷰 코멘트를 코드/테스트 기준으로 재검증하고, 필요한 수정은 failing test로 먼저 고정한 뒤 inline thread reply와 PR comment에 조치 근거를 남긴다.
+
+### 2026-03-22 | session=codex-oor-841-start
+- branch: feature/issue-841-latest-trade-helper-contract-cleanup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-841
+- next_ticket: OOR-841
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `get_latest_buy_trade()` / `get_latest_sell_trade()` 계약 비대칭과 `decision_id` 필터 차이를 재현으로 고정한 뒤, 의도/버그 여부를 코드·테스트·문서 중 최소 변경으로 명시한다.
