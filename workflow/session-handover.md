@@ -687,3 +687,11 @@
 - next_ticket: OOR-847
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #858 리뷰 기준으로 L1-L7 레이어 순서와 `get_context_data()` 설명을 코드로 재검증하고, 계획 문서의 AI 지시 주석 제거 후 검증/푸시/PR thread reply까지 마무리한다.
+
+### 2026-03-23 | session=codex-oor-847-rework
+- branch: feature/issue-847-evolution-ticket-followup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-847, merged PR #858, OOR-843
+- next_ticket: OOR-847
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `Rework` 지적대로 기존 진단 문서에서 파생된 후속 실행 항목을 `Linear` 이슈/상위 티켓 구조에 반영하고, 필요 시 문서에도 추적 링크를 남긴 뒤 새 workpad와 PR 증적을 다시 정렬한다.

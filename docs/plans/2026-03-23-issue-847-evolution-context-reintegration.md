@@ -15,6 +15,13 @@
 - `git log -S"ContextSelector" -- src/evolution/optimizer.py` 결과가 비어 있어, 진화 경로는 최근 회귀보다 미구현 상태 지속으로 보는 편이 정확하다.
 - 따라서 이번 선조치는 “플레이북도 안 쓰고 있다”가 아니라 “플레이북은 쓰고 있고, 진화만 설계 개념이 코드화되지 않았다”를 문서로 명확히 남기는 데 있다.
 
+## Execution Tracking
+
+- Parent prompt-context umbrella: `OOR-843`
+- Diagnosis / doc-first action: `OOR-847`
+- Phase 1 implementation (`L6/L5 + sampled context_snapshot` reintegration): `OOR-848`
+- Phase 2 follow-up (`L4-L1` market-scoped aggregate expansion): `OOR-849`
+
 ## Why Phase 1 Stops At L5/L6
 
 - `L6_DAILY` 는 `scorecard_<market>` 와 `evolution_<market>` 처럼 시장별 key 가 이미 안정적으로 저장돼 있어 같은 market/date 기준으로 바로 묶을 수 있다.
