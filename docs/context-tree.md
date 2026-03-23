@@ -281,6 +281,15 @@ def build_enhanced_prompt(stock_code: str, store: ContextStore) -> str:
     """
 ```
 
+## Current Prompt Consumers
+
+- `src/strategy/pre_market_planner.py` is the only prompt path that currently uses `ContextSelector.select_layers(DecisionType.STRATEGIC)` and renders a `Strategic Context` block from selected `L7/L6/L5` layers.
+- This prompt-consumer order is separate from the canonical layer definitions in `src/context/layer.py`, which name the hierarchy from `L1_LEGACY` through `L7_REALTIME` as a long-horizon to short-horizon taxonomy.
+- That playbook prompt also adds market-scoped `scorecard_<market>` summaries and recent self-market guard data before issuing the single daily LLM call.
+- `src/evolution/optimizer.py` does not currently inject raw L1-L7 bundles into its prompt. It uses failure-pattern aggregates and sampled failed trades, then stores its recommendation back into `L6_DAILY` as `evolution_<market>`.
+- `ContextSelector.get_context_data()` currently does `get_latest_timeframe(layer)` and then `get_all_contexts(layer, latest_timeframe)` for each selected layer, so it returns the latest full key set per layer without market/date filtering.
+- When a workflow needs market/date alignment, do not blindly reuse that helper. Build the prompt bundle from explicit timeframes and market-suffixed keys such as `scorecard_<market>`, `weekly_pnl_<market>`, and `avg_confidence_<market>`.
+
 ## Database Schema
 
 ```sql

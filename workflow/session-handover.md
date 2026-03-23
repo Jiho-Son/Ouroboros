@@ -671,3 +671,19 @@
 - next_ticket: OOR-844
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #857 리뷰 기준으로 handover 중복 엔트리 제거와 trading_cycle US SELL 정산 환율 전달 누락만 최소 수정하고, 관련 회귀 테스트 및 GitHub 코멘트까지 남긴다.
+
+### 2026-03-23 | session=codex-oor-847-start
+- branch: feature/issue-847-evolution-prompt-check
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-847
+- next_ticket: OOR-847
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 진화 프롬프트의 기간별 컨텍스트 레벨/플레이북 컨텍스트 주입이 현재 구조에서 왜 비활성화됐는지 재현 기반으로 진단하고, 문서 선조치 범위를 먼저 확정한다.
+
+### 2026-03-23 | session=codex-pr858-review-followup
+- branch: feature/issue-847-evolution-prompt-check
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-847, PR #858
+- next_ticket: OOR-847
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #858 리뷰 기준으로 L1-L7 레이어 순서와 `get_context_data()` 설명을 코드로 재검증하고, 계획 문서의 AI 지시 주석 제거 후 검증/푸시/PR thread reply까지 마무리한다.
