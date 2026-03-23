@@ -237,6 +237,7 @@ High-frequency trading with individual stock analysis:
 
 - Runs before market open (configurable `PRE_MARKET_MINUTES`, default 30)
 - Generates scenario-based playbooks via single Gemini API call per market
+- Uses `ContextSelector.select_layers(decision_type=DecisionType.STRATEGIC, include_realtime=True)` to inject a `Strategic Context` block from the latest `L7/L6/L5` layers, plus self/cross-market `scorecard_<market>` summaries and the recent self-market guard.
 - Handles timeout (`PLANNER_TIMEOUT_SECONDS`, default 60) with defensive playbook fallback
 - Persists playbooks to database for audit trail
 
@@ -267,15 +268,16 @@ High-frequency trading with individual stock analysis:
 **Context Store** (`store.py`) — L1-L7 hierarchical memory
 
 - 7-layer context system (see [docs/context-tree.md](./context-tree.md)):
-  - L1: Tick-level (real-time price)
-  - L2: Intraday (session summary)
-  - L3: Daily (end-of-day)
-  - L4: Weekly (trend analysis)
-  - L5: Monthly (strategy review)
-  - L6: Daily Review (scorecard)
-  - L7: Evolution (long-term learning)
+  - L1: Legacy / generational wisdom
+  - L2: Annual performance
+  - L3: Quarterly strategy adjustments
+  - L4: Monthly rebalancing
+  - L5: Weekly stock selection
+  - L6: Daily trade logs / scorecards
+  - L7: Real-time market data
 - Key-value storage with timeframe tagging
 - SQLite persistence in `contexts` table
+- `ContextSelector.get_context_data()` reads the latest timeframe for each selected layer. Workflows that need explicit market/date alignment should build filtered bundles from explicit timeframes and market-suffixed keys instead of relying on the layer-wide latest snapshot.
 
 **Context Scheduler** (`scheduler.py`) — Periodic aggregation
 
@@ -343,6 +345,7 @@ High-frequency trading with individual stock analysis:
 
 - Analyzes high-confidence losing trades from SQLite
 - Asks the configured LLM provider to generate structured recommendation reports
+- Current prompt inputs are limited to `Failure Patterns` and sampled failed trades. Unlike the playbook path, the evolution path does not yet hydrate a `Strategic Context` or `ContextSelector`-driven layer bundle.
 - Stores evolution output in `contexts` (`L6_DAILY`) by market/date instead of writing `.py` files
 - Returns report metadata (`title`, `context_key`, `status`) for notification/review flow
 - Does not auto-activate strategy code
