@@ -277,23 +277,70 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
     @app.get("/api/decisions")
     def get_decisions(
         market: str = Query("KR"),
+        session_id: str = Query("all"),
+        action: str = Query("all"),
+        stock_code: str | None = Query(default=None),
+        min_confidence: int = Query(default=0, ge=0, le=100),
+        from_date: str | None = Query(default=None),
+        to_date: str | None = Query(default=None),
+        matched_only: bool = Query(default=False),
         limit: int = Query(default=50, ge=1, le=500),
     ) -> dict[str, Any]:
+        market = market if isinstance(market, str) else "KR"
+        session_id = session_id if isinstance(session_id, str) else "all"
+        action = action if isinstance(action, str) else "all"
+        stock_code = stock_code if isinstance(stock_code, str) else None
+        min_confidence = min_confidence if isinstance(min_confidence, int) else 0
+        from_date = from_date if isinstance(from_date, str) else None
+        to_date = to_date if isinstance(to_date, str) else None
+        matched_only = matched_only if isinstance(matched_only, bool) else False
+        limit = limit if isinstance(limit, int) else 50
         with _connect(db_path) as conn:
+            where_clauses: list[str] = []
+            params: list[Any] = []
+            if market != "all":
+                where_clauses.append("market = ?")
+                params.append(market)
+            if session_id != "all":
+                where_clauses.append("session_id = ?")
+                params.append(session_id)
+            if action != "all":
+                where_clauses.append("action = ?")
+                params.append(action)
+            if stock_code:
+                where_clauses.append("stock_code LIKE ?")
+                params.append(f"%{stock_code.upper()}%")
+            if min_confidence > 0:
+                where_clauses.append("confidence >= ?")
+                params.append(min_confidence)
+            if from_date:
+                where_clauses.append("DATE(timestamp) >= ?")
+                params.append(from_date)
+            if to_date:
+                where_clauses.append("DATE(timestamp) <= ?")
+                params.append(to_date)
+
+            where_sql = ""
+            if where_clauses:
+                where_sql = "WHERE " + " AND ".join(where_clauses)
             rows = conn.execute(
-                """
+                f"""
                 SELECT decision_id, timestamp, stock_code, market, exchange_code,
-                       action, confidence, rationale, context_snapshot, input_data,
-                       outcome_pnl, outcome_accuracy
+                       session_id, action, confidence, rationale, context_snapshot, input_data,
+                       llm_prompt, llm_response, outcome_pnl, outcome_accuracy
                 FROM decision_logs
-                WHERE market = ?
+                {where_sql}
                 ORDER BY timestamp DESC
-                LIMIT ?
                 """,
-                (market, limit),
+                params,
             ).fetchall()
             decisions = []
             for row in rows:
+                context_snapshot = json.loads(row["context_snapshot"])
+                scenario_match = context_snapshot.get("scenario_match", {})
+                has_match = isinstance(scenario_match, dict) and bool(scenario_match)
+                if matched_only and not has_match:
+                    continue
                 decisions.append(
                     {
                         "decision_id": row["decision_id"],
@@ -301,16 +348,50 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
                         "stock_code": row["stock_code"],
                         "market": row["market"],
                         "exchange_code": row["exchange_code"],
+                        "session_id": row["session_id"],
                         "action": row["action"],
                         "confidence": row["confidence"],
                         "rationale": row["rationale"],
-                        "context_snapshot": json.loads(row["context_snapshot"]),
+                        "context_snapshot": context_snapshot,
                         "input_data": json.loads(row["input_data"]),
+                        "llm_prompt": row["llm_prompt"],
+                        "llm_response": row["llm_response"],
+                        "has_scenario_match": has_match,
                         "outcome_pnl": row["outcome_pnl"],
                         "outcome_accuracy": row["outcome_accuracy"],
                     }
                 )
-            return {"market": market, "count": len(decisions), "decisions": decisions}
+            decisions = decisions[:limit]
+            markets = [
+                row["market"]
+                for row in conn.execute(
+                    "SELECT DISTINCT market FROM decision_logs ORDER BY market"
+                ).fetchall()
+            ]
+            sessions = [
+                row["session_id"]
+                for row in conn.execute(
+                    "SELECT DISTINCT session_id FROM decision_logs ORDER BY session_id"
+                ).fetchall()
+            ]
+            return {
+                "market": market,
+                "count": len(decisions),
+                "filters": {
+                    "market": market,
+                    "session_id": session_id,
+                    "action": action,
+                    "stock_code": stock_code or "",
+                    "min_confidence": min_confidence,
+                    "from_date": from_date,
+                    "to_date": to_date,
+                    "matched_only": matched_only,
+                    "limit": limit,
+                },
+                "markets": markets,
+                "sessions": sessions,
+                "decisions": decisions,
+            }
 
     @app.get("/api/pnl/history")
     def get_pnl_history(

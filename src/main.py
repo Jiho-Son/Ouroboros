@@ -643,6 +643,7 @@ async def _handle_realtime_hard_stop_trigger(
                 "quantity": quantity,
                 "source": "websocket_hard_stop",
             },
+            llm_response=rationale,
         )
         if not market.is_domestic:
             logger.info(
@@ -1746,6 +1747,8 @@ async def _evaluate_trading_cycle_decision(
         rationale=decision.rationale,
         context_snapshot=context_snapshot,
         input_data=input_data,
+        llm_prompt=decision.llm_prompt,
+        llm_response=decision.llm_response,
     )
     return {
         "decision": decision,
@@ -2858,6 +2861,8 @@ async def _process_daily_session_stock(
         rationale=decision.rationale,
         context_snapshot=context_snapshot,
         input_data=input_data,
+        llm_prompt=decision.llm_prompt,
+        llm_response=decision.llm_response,
     )
 
     quantity = 0

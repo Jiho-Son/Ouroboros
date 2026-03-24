@@ -108,6 +108,26 @@ def test_log_decision_stores_explicit_session_id(logger: DecisionLogger) -> None
     assert decision.session_id == "US_PRE"
 
 
+def test_log_decision_stores_llm_trace(logger: DecisionLogger) -> None:
+    decision_id = logger.log_decision(
+        stock_code="005930",
+        market="KR",
+        exchange_code="KRX",
+        action="BUY",
+        confidence=88,
+        rationale="trace",
+        context_snapshot={},
+        input_data={},
+        llm_prompt="prompt text",
+        llm_response='{"action":"BUY"}',
+    )
+
+    decision = logger.get_decision_by_id(decision_id)
+    assert decision is not None
+    assert decision.llm_prompt == "prompt text"
+    assert decision.llm_response == '{"action":"BUY"}'
+
+
 def test_get_unreviewed_decisions(logger: DecisionLogger) -> None:
     """Test retrieving unreviewed decisions with confidence filter."""
     # Log multiple decisions with varying confidence
@@ -312,5 +332,7 @@ def test_decision_log_dataclass() -> None:
     assert log.session_id == "KRX_REG"
     assert log.action == "BUY"
     assert log.confidence == 85
+    assert log.llm_prompt is None
+    assert log.llm_response is None
     assert log.reviewed is False
     assert log.outcome_pnl is None

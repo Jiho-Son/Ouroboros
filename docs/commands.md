@@ -304,10 +304,27 @@ Dashboard runs as a daemon thread on `DASHBOARD_HOST:DASHBOARD_PORT` (default: `
 | `GET /api/scorecard/{date}` | Daily scorecard from L6_DAILY context |
 | `GET /api/performance` | Performance metrics by market and combined |
 | `GET /api/context/{layer}` | Context data by layer L1-L7 (query: `timeframe`) |
-| `GET /api/decisions` | Decision log entries (query: `limit`, `market`) |
+| `GET /api/decisions` | Decision log entries with trace/filter support |
 | `GET /api/scenarios/active` | Today's matched scenarios |
 | `GET /api/pnl/history` | P&L history over time |
 | `GET /api/positions` | Current open positions |
+
+### Decision History Filters
+
+`GET /api/decisions` supports these query params:
+
+- `market=all|<market>`
+- `session_id=all|<session>`
+- `action=all|BUY|SELL|HOLD`
+- `stock_code=<substring>`
+- `min_confidence=<0-100>`
+- `from_date=<YYYY-MM-DD>`
+- `to_date=<YYYY-MM-DD>`
+- `matched_only=true|false`
+- `limit=<1-500>`
+
+The response also includes distinct `markets` / `sessions` metadata plus
+`llm_prompt` / `llm_response` fields for per-decision trace inspection.
 
 ## Telegram Commands
 

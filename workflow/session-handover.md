@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-03-24 | session=codex-oor-853-start
+- branch: feature/issue-853-dashboard-cleanup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #OOR-853
+- next_ticket: #OOR-853
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: 대시보드 범위가 넓어 현재 UI/데이터 소스를 재현한 뒤 이번 티켓 범위와 후속 서브 이슈 필요 여부를 먼저 확정한다.
+
 ### 2026-03-23 | session=codex-oor-844-start
 - branch: feature/issue-844-pnl-usd-settlement
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -783,3 +791,11 @@
 - next_ticket: OOR-852
 - process_gate_checked: process_ticket=OOR-849 merged_to_feature_branch=yes
 - risks_or_notes: PR #865 mergeability, review, checks, workpad 상태를 재확인하고 `land` skill로 squash merge 및 Linear `Done` 전환까지 마무리한다.
+
+### 2026-03-24 | session=codex-oor-853-start
+- branch: feature/issue-853-dashboard-cleanup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-853
+- next_ticket: OOR-853
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=yes
+- risks_or_notes: 대시보드 범위가 넓어 현재 UI/데이터 소스를 재현한 뒤 이번 티켓 범위와 후속 서브 이슈 필요 여부를 먼저 확정한다.
