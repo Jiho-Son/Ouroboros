@@ -48,6 +48,46 @@ def build_evolution_context_bundle(
         if weekly_context:
             bundle["weekly_context"] = weekly_context
 
+        monthly_context = _load_layer_context(
+            context_store,
+            ContextLayer.L4_MONTHLY,
+            _failure_months(failure_dates),
+            market,
+            key_prefixes=("monthly_pnl_",),
+        )
+        if monthly_context:
+            bundle["monthly_context"] = monthly_context
+
+        quarterly_context = _load_layer_context(
+            context_store,
+            ContextLayer.L3_QUARTERLY,
+            _failure_quarters(failure_dates),
+            market,
+            key_prefixes=("quarterly_pnl_",),
+        )
+        if quarterly_context:
+            bundle["quarterly_context"] = quarterly_context
+
+        annual_context = _load_layer_context(
+            context_store,
+            ContextLayer.L2_ANNUAL,
+            _failure_years(failure_dates),
+            market,
+            key_prefixes=("annual_pnl_",),
+        )
+        if annual_context:
+            bundle["annual_context"] = annual_context
+
+        legacy_context = _load_layer_context(
+            context_store,
+            ContextLayer.L1_LEGACY,
+            ["LEGACY"],
+            market,
+            key_prefixes=("total_pnl_",),
+        )
+        if legacy_context:
+            bundle["legacy_context"] = legacy_context
+
         snapshot_summary = summarize_context_snapshots(failures_by_market[market])
         if snapshot_summary is not None:
             bundle["context_snapshot_summary"] = snapshot_summary
@@ -143,22 +183,40 @@ def _load_weekly_context(
     market: str,
     failure_dates: list[str],
 ) -> list[dict[str, Any]]:
-    weekly_context: list[dict[str, Any]] = []
-    for timeframe in _failure_weeks(failure_dates):
-        weekly_values = context_store.get_all_contexts(ContextLayer.L5_WEEKLY, timeframe)
+    return _load_layer_context(
+        context_store,
+        ContextLayer.L5_WEEKLY,
+        _failure_weeks(failure_dates),
+        market,
+        key_prefixes=("weekly_pnl_", "avg_confidence_"),
+    )
+
+
+def _load_layer_context(
+    context_store: ContextStore,
+    layer: ContextLayer,
+    timeframes: list[str],
+    market: str,
+    *,
+    key_prefixes: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Load market-scoped metrics from a specific context layer and timeframes."""
+    layer_context: list[dict[str, Any]] = []
+    for timeframe in timeframes:
+        layer_values = context_store.get_all_contexts(layer, timeframe)
         market_scoped_metrics = {
             key: value
-            for key, value in weekly_values.items()
-            if key.endswith(f"_{market}")
+            for key, value in layer_values.items()
+            if key.endswith(f"_{market}") and key.startswith(key_prefixes)
         }
         if market_scoped_metrics:
-            weekly_context.append(
+            layer_context.append(
                 {
                     "timeframe": timeframe,
                     "metrics": market_scoped_metrics,
                 }
             )
-    return weekly_context
+    return layer_context
 
 
 def _failure_weeks(failure_dates: list[str]) -> list[str]:
@@ -167,6 +225,23 @@ def _failure_weeks(failure_dates: list[str]) -> list[str]:
         iso = date.fromisoformat(failure_date).isocalendar()
         weeks.add(f"{iso.year}-W{iso.week:02d}")
     return sorted(weeks, reverse=True)
+
+
+def _failure_months(failure_dates: list[str]) -> list[str]:
+    return sorted({failure_date[:7] for failure_date in failure_dates}, reverse=True)
+
+
+def _failure_quarters(failure_dates: list[str]) -> list[str]:
+    quarters: set[str] = set()
+    for failure_date in failure_dates:
+        year, month, _day = failure_date.split("-")
+        quarter = (int(month) - 1) // 3 + 1
+        quarters.add(f"{year}-Q{quarter}")
+    return sorted(quarters, reverse=True)
+
+
+def _failure_years(failure_dates: list[str]) -> list[str]:
+    return sorted({failure_date[:4] for failure_date in failure_dates}, reverse=True)
 
 
 def _extract_failure_date(timestamp: Any) -> str | None:

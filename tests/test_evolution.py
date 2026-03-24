@@ -289,6 +289,10 @@ async def test_generate_recommendation_injects_evolution_context_bundle(
     )
     store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "weekly_pnl_KR", -1700.0)
     store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "avg_confidence_KR", 82.5)
+    store.set_context(ContextLayer.L4_MONTHLY, "2026-02", "monthly_pnl_KR", -1700.0)
+    store.set_context(ContextLayer.L3_QUARTERLY, "2026-Q1", "quarterly_pnl_KR", -1700.0)
+    store.set_context(ContextLayer.L2_ANNUAL, "2026", "annual_pnl_KR", -1700.0)
+    store.set_context(ContextLayer.L1_LEGACY, "LEGACY", "total_pnl_KR", -4200.0)
 
     failures = [
         {
@@ -334,6 +338,10 @@ async def test_generate_recommendation_injects_evolution_context_bundle(
     assert "evolution_KR" in prompt
     assert "weekly_pnl_KR" in prompt
     assert "avg_confidence_KR" in prompt
+    assert "monthly_pnl_KR" in prompt
+    assert "quarterly_pnl_KR" in prompt
+    assert "annual_pnl_KR" in prompt
+    assert "total_pnl_KR" in prompt
     assert "돌파 직후 추격 금지" in prompt
     assert "\\u" not in prompt
     assert "scenario_match.regime=breakout (2x)" in prompt

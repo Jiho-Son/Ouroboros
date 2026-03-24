@@ -346,8 +346,9 @@ High-frequency trading with individual stock analysis:
 
 - Analyzes high-confidence losing trades from SQLite
 - Asks the configured LLM provider to generate structured recommendation reports
-- Current prompt injects a dedicated `Evolution Context` block built from market-scoped `L6_DAILY` scorecards, the latest `evolution_<market>` report, market-suffixed `L5_WEEKLY` aggregates, and compact `context_snapshot` clues from failed decisions.
+- Current prompt injects a dedicated `Evolution Context` block built from market-scoped `L6_DAILY` scorecards, the latest `evolution_<market>` report, market-suffixed `L5-L1` aggregates, and compact `context_snapshot` clues from failed decisions.
 - Unlike the playbook path, evolution still does not hydrate a raw `ContextSelector`-driven `L7/L6/L5` bundle; it reads explicit market/date-aligned keys instead.
+- Backward compatibility policy for upper-layer aggregates: legacy unsuffixed keys such as `monthly_pnl`, `quarterly_pnl`, `annual_pnl`, and `total_pnl` remain stored for existing readers, while market-aware consumers should prefer the new suffixed keys (`*_pnl_<market>`).
 - Stores evolution output in `contexts` (`L6_DAILY`) by market/date instead of writing `.py` files
 - Returns report metadata (`title`, `context_key`, `status`) for notification/review flow
 - Does not auto-activate strategy code

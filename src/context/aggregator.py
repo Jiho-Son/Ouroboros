@@ -169,38 +169,28 @@ class ContextAggregator:
         if month is None:
             month = datetime.now(UTC).strftime("%Y-%m")
 
-        # Get all weekly contexts for this month
-        cursor = self.conn.execute(
-            """
-            SELECT key, value FROM contexts
-            WHERE layer = ? AND timeframe LIKE ?
-            """,
-            (ContextLayer.L5_WEEKLY.value, f"{month[:4]}-W%"),
+        weekly_timeframes = self._list_rollup_timeframes(
+            ContextLayer.L5_WEEKLY,
+            "weekly_pnl",
+            timeframe_like=f"{month[:4]}-W%",
+        )
+        total_pnl, market_totals = self._collect_rollup_from_timeframes(
+            ContextLayer.L5_WEEKLY,
+            weekly_timeframes,
+            "weekly_pnl",
         )
 
-        # Group by key and collect all values
-        import json
-        from collections import defaultdict
-
-        weekly_data: dict[str, list[Any]] = defaultdict(list)
-        for row in cursor.fetchall():
-            weekly_data[row[0]].append(json.loads(row[1]))
-
-        if weekly_data:
-            # Sum all weekly PnL values
-            total_pnl_values: list[float] = []
-            if "weekly_pnl" in weekly_data:
-                total_pnl_values.extend(weekly_data["weekly_pnl"])
-
-            for key, values in weekly_data.items():
-                if key.startswith("weekly_pnl_"):
-                    total_pnl_values.extend(values)
-
-            if total_pnl_values:
-                total_pnl = sum(total_pnl_values)
-                self.store.set_context(
-                    ContextLayer.L4_MONTHLY, month, "monthly_pnl", round(total_pnl, 2)
-                )
+        if total_pnl is not None:
+            self.store.set_context(
+                ContextLayer.L4_MONTHLY, month, "monthly_pnl", round(total_pnl, 2)
+            )
+        for market_code, market_total in market_totals.items():
+            self.store.set_context(
+                ContextLayer.L4_MONTHLY,
+                month,
+                f"monthly_pnl_{market_code}",
+                round(market_total, 2),
+            )
 
     def aggregate_quarterly_from_monthly(self, quarter: str | None = None) -> None:
         """Aggregate L3 (quarterly) context from L4 (monthly).
@@ -220,15 +210,23 @@ class ContextAggregator:
         q_num = int(quarter.split("-Q")[1])
         months = [f"{quarter[:4]}-{m:02d}" for m in range((q_num - 1) * 3 + 1, q_num * 3 + 1)]
 
-        total_pnl = 0.0
-        for month in months:
-            monthly_pnl = self.store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl")
-            if monthly_pnl is not None:
-                total_pnl += monthly_pnl
-
-        self.store.set_context(
-            ContextLayer.L3_QUARTERLY, quarter, "quarterly_pnl", round(total_pnl, 2)
+        total_pnl, market_totals = self._collect_rollup_from_timeframes(
+            ContextLayer.L4_MONTHLY,
+            months,
+            "monthly_pnl",
         )
+
+        if total_pnl is not None:
+            self.store.set_context(
+                ContextLayer.L3_QUARTERLY, quarter, "quarterly_pnl", round(total_pnl, 2)
+            )
+        for market_code, market_total in market_totals.items():
+            self.store.set_context(
+                ContextLayer.L3_QUARTERLY,
+                quarter,
+                f"quarterly_pnl_{market_code}",
+                round(market_total, 2),
+            )
 
     def aggregate_annual_from_quarterly(self, year: str | None = None) -> None:
         """Aggregate L2 (annual) context from L3 (quarterly).
@@ -240,36 +238,39 @@ class ContextAggregator:
             year = str(datetime.now(UTC).year)
 
         # Get all quarterly contexts for this year
-        total_pnl = 0.0
-        for q in range(1, 5):
-            quarter = f"{year}-Q{q}"
-            quarterly_pnl = self.store.get_context(
-                ContextLayer.L3_QUARTERLY, quarter, "quarterly_pnl"
-            )
-            if quarterly_pnl is not None:
-                total_pnl += quarterly_pnl
+        quarters = [f"{year}-Q{q}" for q in range(1, 5)]
+        total_pnl, market_totals = self._collect_rollup_from_timeframes(
+            ContextLayer.L3_QUARTERLY,
+            quarters,
+            "quarterly_pnl",
+        )
 
-        self.store.set_context(ContextLayer.L2_ANNUAL, year, "annual_pnl", round(total_pnl, 2))
+        if total_pnl is not None:
+            self.store.set_context(ContextLayer.L2_ANNUAL, year, "annual_pnl", round(total_pnl, 2))
+        for market_code, market_total in market_totals.items():
+            self.store.set_context(
+                ContextLayer.L2_ANNUAL,
+                year,
+                f"annual_pnl_{market_code}",
+                round(market_total, 2),
+            )
 
     def aggregate_legacy_from_annual(self) -> None:
         """Aggregate L1 (legacy) context from all L2 (annual) data."""
-        # Get all annual PnL
-        cursor = self.conn.execute(
-            """
-            SELECT timeframe, value FROM contexts
-            WHERE layer = ? AND key = ?
-            ORDER BY timeframe
-            """,
-            (ContextLayer.L2_ANNUAL.value, "annual_pnl"),
+        annual_timeframes = self._list_rollup_timeframes(ContextLayer.L2_ANNUAL, "annual_pnl")
+
+        total_pnl, market_totals = self._collect_rollup_from_timeframes(
+            ContextLayer.L2_ANNUAL,
+            annual_timeframes,
+            "annual_pnl",
+        )
+        years_traded = self._count_rollup_timeframes(
+            ContextLayer.L2_ANNUAL,
+            annual_timeframes,
+            "annual_pnl",
         )
 
-        import json
-
-        annual_data = [(row[0], json.loads(row[1])) for row in cursor.fetchall()]
-
-        if annual_data:
-            total_pnl = sum(pnl for _, pnl in annual_data)
-            years_traded = len(annual_data)
+        if total_pnl is not None and years_traded > 0:
             avg_annual_pnl = total_pnl / years_traded
 
             # Store in L1 (single "LEGACY" timeframe)
@@ -283,6 +284,13 @@ class ContextAggregator:
                 "avg_annual_pnl",
                 round(avg_annual_pnl, 2),
             )
+            for market_code, market_total in market_totals.items():
+                self.store.set_context(
+                    ContextLayer.L1_LEGACY,
+                    "LEGACY",
+                    f"total_pnl_{market_code}",
+                    round(market_total, 2),
+                )
 
     def run_all_aggregations(self) -> None:
         """Run all aggregations from L7 to L1 (bottom-up).
@@ -326,3 +334,78 @@ class ContextAggregator:
 
         # L2 (annual) → L1 (legacy)
         self.aggregate_legacy_from_annual()
+
+    def _list_rollup_timeframes(
+        self,
+        layer: ContextLayer,
+        base_key: str,
+        *,
+        timeframe_like: str | None = None,
+    ) -> list[str]:
+        """List distinct timeframes containing either global or market-scoped rollup keys."""
+        query = """
+            SELECT DISTINCT timeframe FROM contexts
+            WHERE layer = ? AND (key = ? OR key LIKE ?)
+        """
+        params: list[Any] = [layer.value, base_key, f"{base_key}_%"]
+        if timeframe_like is not None:
+            query += " AND timeframe LIKE ?"
+            params.append(timeframe_like)
+        query += " ORDER BY timeframe"
+
+        cursor = self.conn.execute(query, tuple(params))
+        return [row[0] for row in cursor.fetchall()]
+
+    def _collect_rollup_from_timeframes(
+        self,
+        layer: ContextLayer,
+        timeframes: list[str],
+        base_key: str,
+    ) -> tuple[float | None, dict[str, float]]:
+        """Collect global and market-scoped rollups from a source layer."""
+        prefix = f"{base_key}_"
+        total_pnl = 0.0
+        market_totals: dict[str, float] = {}
+        saw_value = False
+
+        for timeframe in timeframes:
+            contexts = self.store.get_all_contexts(layer, timeframe)
+            market_values = {
+                key[len(prefix) :]: float(value)
+                for key, value in contexts.items()
+                if key.startswith(prefix)
+            }
+            if market_values:
+                total_pnl += sum(market_values.values())
+                for market_code, value in market_values.items():
+                    market_totals[market_code] = market_totals.get(market_code, 0.0) + value
+                saw_value = True
+                continue
+
+            base_value = contexts.get(base_key)
+            if base_value is None:
+                continue
+
+            total_pnl += float(base_value)
+            saw_value = True
+
+        if not saw_value:
+            return None, {}
+        return round(total_pnl, 2), {
+            market_code: round(value, 2) for market_code, value in market_totals.items()
+        }
+
+    def _count_rollup_timeframes(
+        self,
+        layer: ContextLayer,
+        timeframes: list[str],
+        base_key: str,
+    ) -> int:
+        """Count distinct timeframes that contain either global or market-scoped rollups."""
+        prefix = f"{base_key}_"
+        years_traded = 0
+        for timeframe in timeframes:
+            contexts = self.store.get_all_contexts(layer, timeframe)
+            if base_key in contexts or any(key.startswith(prefix) for key in contexts):
+                years_traded += 1
+        return years_traded
