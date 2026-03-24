@@ -336,6 +336,21 @@ class TestContextAggregator:
         quarterly_pnl = store.get_context(ContextLayer.L3_QUARTERLY, quarter, "quarterly_pnl")
         assert quarterly_pnl == 4500.0
 
+    def test_aggregate_quarterly_from_monthly_keeps_mixed_global_only_portion(
+        self, aggregator: ContextAggregator
+    ) -> None:
+        """Quarterly rollups should preserve the global-only share of mixed monthly contexts."""
+        aggregator.store.set_context(ContextLayer.L4_MONTHLY, "2026-02", "monthly_pnl", 350.0)
+        aggregator.store.set_context(ContextLayer.L4_MONTHLY, "2026-02", "monthly_pnl_KR", 200.0)
+        aggregator.store.set_context(ContextLayer.L4_MONTHLY, "2026-02", "monthly_pnl_US", 50.0)
+
+        aggregator.aggregate_quarterly_from_monthly("2026-Q1")
+
+        store = aggregator.store
+        assert store.get_context(ContextLayer.L3_QUARTERLY, "2026-Q1", "quarterly_pnl") == 350.0
+        assert store.get_context(ContextLayer.L3_QUARTERLY, "2026-Q1", "quarterly_pnl_KR") == 200.0
+        assert store.get_context(ContextLayer.L3_QUARTERLY, "2026-Q1", "quarterly_pnl_US") == 50.0
+
     def test_aggregate_annual_from_quarterly(self, aggregator: ContextAggregator) -> None:
         """Test aggregating annual metrics from quarterly."""
         year = "2026"
@@ -353,6 +368,23 @@ class TestContextAggregator:
         store = aggregator.store
         annual_pnl = store.get_context(ContextLayer.L2_ANNUAL, year, "annual_pnl")
         assert annual_pnl == 19500.0
+
+    def test_aggregate_annual_from_quarterly_keeps_mixed_global_only_portion(
+        self, aggregator: ContextAggregator
+    ) -> None:
+        """Annual rollups should preserve the global-only share of mixed quarterly contexts."""
+        aggregator.store.set_context(ContextLayer.L3_QUARTERLY, "2026-Q1", "quarterly_pnl", 350.0)
+        aggregator.store.set_context(
+            ContextLayer.L3_QUARTERLY, "2026-Q1", "quarterly_pnl_KR", 200.0
+        )
+        aggregator.store.set_context(ContextLayer.L3_QUARTERLY, "2026-Q1", "quarterly_pnl_US", 50.0)
+
+        aggregator.aggregate_annual_from_quarterly("2026")
+
+        store = aggregator.store
+        assert store.get_context(ContextLayer.L2_ANNUAL, "2026", "annual_pnl") == 350.0
+        assert store.get_context(ContextLayer.L2_ANNUAL, "2026", "annual_pnl_KR") == 200.0
+        assert store.get_context(ContextLayer.L2_ANNUAL, "2026", "annual_pnl_US") == 50.0
 
     def test_aggregate_legacy_from_annual(self, aggregator: ContextAggregator) -> None:
         """Test aggregating legacy metrics from all annual data."""
@@ -373,6 +405,23 @@ class TestContextAggregator:
         assert total_pnl == 45000.0
         assert years_traded == 3
         assert avg_annual_pnl == 15000.0
+
+    def test_aggregate_legacy_from_annual_keeps_mixed_global_only_portion(
+        self, aggregator: ContextAggregator
+    ) -> None:
+        """Legacy rollups should preserve the global-only share of mixed annual contexts."""
+        aggregator.store.set_context(ContextLayer.L2_ANNUAL, "2026", "annual_pnl", 350.0)
+        aggregator.store.set_context(ContextLayer.L2_ANNUAL, "2026", "annual_pnl_KR", 200.0)
+        aggregator.store.set_context(ContextLayer.L2_ANNUAL, "2026", "annual_pnl_US", 50.0)
+
+        aggregator.aggregate_legacy_from_annual()
+
+        store = aggregator.store
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "total_pnl") == 350.0
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "years_traded") == 1
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "avg_annual_pnl") == 350.0
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "total_pnl_KR") == 200.0
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "total_pnl_US") == 50.0
 
     def test_aggregate_legacy_from_annual_handles_mixed_global_and_market_scoped_years(
         self, aggregator: ContextAggregator

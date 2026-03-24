@@ -767,3 +767,19 @@
 - next_ticket: #851
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: PR #864 review 코멘트 확인 후 코드/테스트/PR 스레드 답변까지 한 세션에서 처리 예정
+
+### 2026-03-24 | session=codex-oor-852-start
+- branch: feature/issue-852-upper-layer-rollup-mixed-context
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-851, OOR-852
+- next_ticket: OOR-852
+- process_gate_checked: process_ticket=OOR-849 merged_to_feature_branch=yes
+- risks_or_notes: mixed global-only + market-scoped monthly context 에서 상위 rollup 이 global-only 분을 누락하는지 재현한 뒤, quarterly/annual/legacy rollup 수정과 회귀 테스트를 TDD로 묶어 검증한다.
+
+### 2026-03-24 | session=codex-oor-852-merge
+- branch: feature/issue-852-upper-layer-rollup-mixed-context
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-852, PR #865
+- next_ticket: OOR-852
+- process_gate_checked: process_ticket=OOR-849 merged_to_feature_branch=yes
+- risks_or_notes: PR #865 mergeability, review, checks, workpad 상태를 재확인하고 `land` skill로 squash merge 및 Linear `Done` 전환까지 마무리한다.
