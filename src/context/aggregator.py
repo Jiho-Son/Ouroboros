@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from src.context.layer import ContextLayer
@@ -169,11 +169,7 @@ class ContextAggregator:
         if month is None:
             month = datetime.now(UTC).strftime("%Y-%m")
 
-        weekly_timeframes = self._list_rollup_timeframes(
-            ContextLayer.L5_WEEKLY,
-            "weekly_pnl",
-            timeframe_like=f"{month[:4]}-W%",
-        )
+        weekly_timeframes = self._iso_weeks_for_month(month)
         total_pnl, market_totals = self._collect_rollup_from_timeframes(
             ContextLayer.L5_WEEKLY,
             weekly_timeframes,
@@ -394,6 +390,24 @@ class ContextAggregator:
         return round(total_pnl, 2), {
             market_code: round(value, 2) for market_code, value in market_totals.items()
         }
+
+    def _iso_weeks_for_month(self, month: str) -> list[str]:
+        """List ISO week identifiers that overlap the given calendar month."""
+        year, month_num = (int(part) for part in month.split("-"))
+        current_day = date(year, month_num, 1)
+        if month_num == 12:
+            month_end = date(year + 1, 1, 1)
+        else:
+            month_end = date(year, month_num + 1, 1)
+
+        iso_weeks: list[str] = []
+        while current_day < month_end:
+            iso_year, iso_week, _ = current_day.isocalendar()
+            week_key = f"{iso_year}-W{iso_week:02d}"
+            if week_key not in iso_weeks:
+                iso_weeks.append(week_key)
+            current_day += timedelta(days=1)
+        return iso_weeks
 
     def _count_rollup_timeframes(
         self,
