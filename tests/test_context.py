@@ -277,6 +277,7 @@ class TestContextAggregator:
         aggregator.aggregate_monthly_from_weekly(month)
 
         store = aggregator.store
+        # W05 global(100) + W06 KR(200) + W06 US(50) = 350; W10 is outside February.
         assert store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl") == 350.0
         assert store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl_KR") == 200.0
         assert store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl_US") == 50.0
