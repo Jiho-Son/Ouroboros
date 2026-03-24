@@ -251,6 +251,94 @@ async def test_generate_recommendation_uses_injected_llm_provider(
 
 
 @pytest.mark.asyncio
+async def test_generate_recommendation_injects_evolution_context_bundle(
+    settings: Settings,
+) -> None:
+    llm_client = _StubEvolutionLLMClient(
+        json.dumps(
+            {
+                "summary": "Use recent market context before tightening entries.",
+                "adjustments": ["Trim opening-range BUY setups after repeated failures."],
+                "risk_notes": ["Keep existing SELL protections unchanged."],
+            }
+        )
+    )
+    optimizer = EvolutionOptimizer(settings, llm_client=llm_client)
+    store = ContextStore(optimizer._conn)
+    store.set_context(
+        ContextLayer.L6_DAILY,
+        "2026-02-07",
+        "scorecard_KR",
+        {"total_pnl": -1200.0, "win_rate": 35.0, "lessons": ["Wait for pullbacks"]},
+    )
+    store.set_context(
+        ContextLayer.L6_DAILY,
+        "2026-02-06",
+        "scorecard_KR",
+        {"total_pnl": -500.0, "win_rate": 40.0, "lessons": ["Avoid weak volume"]},
+    )
+    store.set_context(
+        ContextLayer.L6_DAILY,
+        "2026-02-05",
+        "evolution_KR",
+        {
+            "summary": "Recent KR losses cluster around opening breakouts.",
+            "adjustments": ["Reduce breakout aggression."],
+            "risk_notes": ["Review only after human approval."],
+        },
+    )
+    store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "weekly_pnl_KR", -1700.0)
+    store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "avg_confidence_KR", 82.5)
+
+    failures = [
+        {
+            "decision_id": "failure-1",
+            "timestamp": "2026-02-07T09:30:00+00:00",
+            "stock_code": "005930",
+            "market": "KR",
+            "exchange_code": "KRX",
+            "action": "BUY",
+            "confidence": 91,
+            "rationale": "Opening breakout follow-through",
+            "outcome_pnl": -900.0,
+            "context_snapshot": {
+                "scenario_match": {"regime": "breakout", "bias": "gap_up"},
+                "entry_signal": {"rsi": 74, "volume_ratio": 3.2},
+            },
+            "input_data": {},
+        },
+        {
+            "decision_id": "failure-2",
+            "timestamp": "2026-02-06T09:45:00+00:00",
+            "stock_code": "000660",
+            "market": "KR",
+            "exchange_code": "KRX",
+            "action": "BUY",
+            "confidence": 88,
+            "rationale": "Momentum continuation",
+            "outcome_pnl": -800.0,
+            "context_snapshot": {
+                "scenario_match": {"regime": "breakout", "bias": "gap_up"},
+                "entry_signal": {"rsi": 71, "volume_ratio": 2.8},
+            },
+            "input_data": {},
+        },
+    ]
+
+    recommendation = await optimizer.generate_recommendation(failures)
+
+    assert recommendation is not None
+    prompt = llm_client.calls[0]["contents"]
+    assert "## Evolution Context" in prompt
+    assert "scorecard_KR" in prompt
+    assert "evolution_KR" in prompt
+    assert "weekly_pnl_KR" in prompt
+    assert "avg_confidence_KR" in prompt
+    assert "scenario_match.regime=breakout (2x)" in prompt
+    assert prompt.index("2026-02-07") < prompt.index("2026-02-06")
+
+
+@pytest.mark.asyncio
 async def test_generate_recommendation_returns_structured_data(
     optimizer: EvolutionOptimizer,
 ) -> None:
