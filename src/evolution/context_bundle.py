@@ -59,7 +59,7 @@ def build_evolution_context_bundle(
 
 def render_evolution_context_section(bundle: list[dict[str, Any]]) -> str:
     """Render the prompt section for the evolution context bundle."""
-    return f"## Evolution Context\n{json.dumps(bundle, indent=2, ensure_ascii=True)}\n\n"
+    return f"## Evolution Context\n{json.dumps(bundle, indent=2, ensure_ascii=False)}\n\n"
 
 
 def summarize_context_snapshots(failures: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -118,35 +118,24 @@ def _load_latest_evolution_report(
     market: str,
 ) -> dict[str, Any] | None:
     evolution_key = f"evolution_{market}"
-    row = context_store.conn.execute(
-        """
-        SELECT timeframe, value
-        FROM contexts
-        WHERE layer = ? AND key = ?
-        ORDER BY timeframe DESC, updated_at DESC
-        LIMIT 1
-        """,
-        (ContextLayer.L6_DAILY.value, evolution_key),
-    ).fetchone()
-    if row is None:
+    latest_entry = context_store.get_latest_context_entry(ContextLayer.L6_DAILY, evolution_key)
+    if latest_entry is None:
         return None
 
-    value = json.loads(row[1])
-    if isinstance(value, dict):
-        report: dict[str, Any] = {
-            "date": row[0],
-            "key": evolution_key,
-        }
-        for field in ("summary", "adjustments", "risk_notes"):
-            if field in value:
-                report[field] = value[field]
-        if len(report) > 2:
-            return report
-    return {
-        "date": row[0],
+    timeframe, value = latest_entry
+    if not isinstance(value, dict):
+        return None
+
+    report: dict[str, Any] = {
+        "date": timeframe,
         "key": evolution_key,
-        "value": value,
     }
+    for field in ("summary", "adjustments", "risk_notes"):
+        if field in value:
+            report[field] = value[field]
+    if len(report) == 2:
+        return None
+    return report
 
 
 def _load_weekly_context(
@@ -173,11 +162,10 @@ def _load_weekly_context(
 
 
 def _failure_weeks(failure_dates: list[str]) -> list[str]:
-    weeks = {
-        f"{iso.year}-W{iso.week:02d}"
-        for failure_date in failure_dates
-        for iso in [date.fromisoformat(failure_date).isocalendar()]
-    }
+    weeks: set[str] = set()
+    for failure_date in failure_dates:
+        iso = date.fromisoformat(failure_date).isocalendar()
+        weeks.add(f"{iso.year}-W{iso.week:02d}")
     return sorted(weeks, reverse=True)
 
 

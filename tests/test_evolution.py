@@ -269,7 +269,7 @@ async def test_generate_recommendation_injects_evolution_context_bundle(
         ContextLayer.L6_DAILY,
         "2026-02-07",
         "scorecard_KR",
-        {"total_pnl": -1200.0, "win_rate": 35.0, "lessons": ["Wait for pullbacks"]},
+        {"total_pnl": -1200.0, "win_rate": 35.0, "lessons": ["돌파 직후 추격 금지"]},
     )
     store.set_context(
         ContextLayer.L6_DAILY,
@@ -334,8 +334,63 @@ async def test_generate_recommendation_injects_evolution_context_bundle(
     assert "evolution_KR" in prompt
     assert "weekly_pnl_KR" in prompt
     assert "avg_confidence_KR" in prompt
+    assert "돌파 직후 추격 금지" in prompt
+    assert "\\u" not in prompt
     assert "scenario_match.regime=breakout (2x)" in prompt
     assert prompt.index("2026-02-07") < prompt.index("2026-02-06")
+
+
+@pytest.mark.asyncio
+async def test_generate_recommendation_excludes_unstructured_evolution_report_payload(
+    settings: Settings,
+) -> None:
+    llm_client = _StubEvolutionLLMClient(
+        json.dumps(
+            {
+                "summary": "Use recent market context before tightening entries.",
+                "adjustments": ["Trim opening-range BUY setups after repeated failures."],
+                "risk_notes": ["Keep existing SELL protections unchanged."],
+            }
+        )
+    )
+    optimizer = EvolutionOptimizer(settings, llm_client=llm_client)
+    store = ContextStore(optimizer._conn)
+    store.set_context(
+        ContextLayer.L6_DAILY,
+        "2026-02-07",
+        "scorecard_KR",
+        {"total_pnl": -1200.0},
+    )
+    store.set_context(
+        ContextLayer.L6_DAILY,
+        "2026-02-05",
+        "evolution_KR",
+        {"internal_debug": "secret", "prompt_tokens": 1234},
+    )
+
+    failures = [
+        {
+            "decision_id": "failure-1",
+            "timestamp": "2026-02-07T09:30:00+00:00",
+            "stock_code": "005930",
+            "market": "KR",
+            "exchange_code": "KRX",
+            "action": "BUY",
+            "confidence": 91,
+            "rationale": "Opening breakout follow-through",
+            "outcome_pnl": -900.0,
+            "context_snapshot": {},
+            "input_data": {},
+        }
+    ]
+
+    recommendation = await optimizer.generate_recommendation(failures)
+
+    assert recommendation is not None
+    prompt = llm_client.calls[0]["contents"]
+    assert "internal_debug" not in prompt
+    assert "prompt_tokens" not in prompt
+    assert "recent_evolution_report" not in prompt
 
 
 @pytest.mark.asyncio

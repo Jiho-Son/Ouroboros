@@ -77,6 +77,27 @@ class TestContextStore:
         # Latest by updated_at, which should be the last one set
         assert latest == "2026-02-02"
 
+    def test_get_latest_context_entry_returns_latest_timeframe_and_value(
+        self, store: ContextStore
+    ) -> None:
+        """Test retrieving the latest stored entry for a layer/key pair."""
+        store.set_context(
+            ContextLayer.L6_DAILY,
+            "2026-02-05",
+            "evolution_KR",
+            {"summary": "older"},
+        )
+        store.set_context(
+            ContextLayer.L6_DAILY,
+            "2026-02-06",
+            "evolution_KR",
+            {"summary": "newer"},
+        )
+
+        latest = store.get_latest_context_entry(ContextLayer.L6_DAILY, "evolution_KR")
+
+        assert latest == ("2026-02-06", {"summary": "newer"})
+
     def test_delete_old_contexts(self, store: ContextStore, db_conn: sqlite3.Connection) -> None:
         """Test deleting contexts older than a cutoff date."""
         # Insert contexts with specific old timestamps
