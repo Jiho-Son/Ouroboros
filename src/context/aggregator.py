@@ -366,24 +366,24 @@ class ContextAggregator:
 
         for timeframe in timeframes:
             contexts = self.store.get_all_contexts(layer, timeframe)
+            base_value = contexts.get(base_key)
             market_values = {
                 key[len(prefix) :]: float(value)
                 for key, value in contexts.items()
                 if key.startswith(prefix)
             }
-            if market_values:
-                total_pnl += sum(market_values.values())
-                for market_code, value in market_values.items():
-                    market_totals[market_code] = market_totals.get(market_code, 0.0) + value
+
+            # Mixed contexts store the full global total in `base_key` and the per-market
+            # breakdown in `base_key_<market>`, so prefer the base value when it exists.
+            if base_value is not None:
+                total_pnl += float(base_value)
                 saw_value = True
-                continue
+            elif market_values:
+                total_pnl += sum(market_values.values())
+                saw_value = True
 
-            base_value = contexts.get(base_key)
-            if base_value is None:
-                continue
-
-            total_pnl += float(base_value)
-            saw_value = True
+            for market_code, value in market_values.items():
+                market_totals[market_code] = market_totals.get(market_code, 0.0) + value
 
         if not saw_value:
             return None, {}
