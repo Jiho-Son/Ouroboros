@@ -267,6 +267,15 @@ if __name__ == "__main__":
     return fake_gh
 
 
+def _resolve_before_remove_workspace_root(*, tmp_path: Path) -> Path:
+    return tmp_path / "workspace"
+
+
+def _resolve_before_remove_invoke_cwd(*, tmp_path: Path, cwd_relative: str = "") -> Path:
+    workspace_root = _resolve_before_remove_workspace_root(tmp_path=tmp_path)
+    return workspace_root / cwd_relative if cwd_relative else workspace_root
+
+
 def _run_symphony_before_remove_hook(
     *,
     tmp_path: Path,
@@ -287,7 +296,7 @@ def _run_symphony_before_remove_hook(
     cwd_relative: str = "",
     timeout_sec: float = 10.0,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path, Path, Path]:
-    workspace_root = tmp_path / "workspace"
+    workspace_root = _resolve_before_remove_workspace_root(tmp_path=tmp_path)
     canonical_root = (
         tmp_path / "repos" / "ouroboros_hub"
         if invocation_mode == "workflow"
@@ -300,7 +309,9 @@ def _run_symphony_before_remove_hook(
     marker_path = state_root / "canonical_restart.last_sha"
     restart_log = state_root / "canonical_restart.log"
     workspace_root.mkdir(parents=True, exist_ok=True)
-    invoke_cwd = workspace_root / cwd_relative if cwd_relative else workspace_root
+    invoke_cwd = _resolve_before_remove_invoke_cwd(
+        tmp_path=tmp_path, cwd_relative=cwd_relative
+    )
     invoke_cwd.mkdir(parents=True, exist_ok=True)
     workspace_scripts = workspace_root / "scripts"
     workspace_scripts.mkdir(parents=True, exist_ok=True)
@@ -470,7 +481,9 @@ def test_workflow_before_remove_hook_uses_github_fallback_signal_from_nested_dir
 def test_workflow_before_remove_hook_skips_unmerged_nested_dir_without_side_effects(
     tmp_path: Path,
 ) -> None:
-    nested_cwd = tmp_path / "workspace" / "nested" / "context"
+    nested_cwd = _resolve_before_remove_invoke_cwd(
+        tmp_path=tmp_path, cwd_relative="nested/context"
+    )
     completed, canonical_root, hooks_log, marker_path, git_log, restart_log = (
         _run_symphony_before_remove_hook(
             tmp_path=tmp_path,

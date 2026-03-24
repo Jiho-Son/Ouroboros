@@ -743,3 +743,11 @@
 - next_ticket: OOR-849
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: 재리뷰에서 지적된 aggregator 데드 코드 `_sum_grouped_market_values` 및 `_resolve_grouped_total` 의 실제 호출 여부를 검증하고, 미사용이 맞으면 제거 후 회귀 테스트와 추가 커밋/푸시를 수행한다.
+
+### 2026-03-24 | session=codex-oor-850-start
+- branch: feature/issue-850-before-remove-cwd-helper
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-850
+- next_ticket: OOR-850
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `tests/test_runtime_overnight_scripts.py` nested `workflow_before_remove_hook` 테스트의 `cwd` 경로 중복 계산을 helper 계약으로 흡수하고, nested positive/negative regression 의미를 유지하는 최소 범위 TDD 수정만 수행한다.
