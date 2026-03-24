@@ -735,3 +735,11 @@
 - next_ticket: OOR-849
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #862 리뷰 지적 1~4를 코드/테스트 기준으로 검증하고, 실제 버그만 수정한 뒤 thread reply 및 PR 코멘트까지 남긴다.
+
+### 2026-03-24 | session=codex-pr862-rereview-followup
+- branch: feature/issue-849-market-scoped-upper-layer-aggregate
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-849, PR #862 re-review
+- next_ticket: OOR-849
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 재리뷰에서 지적된 aggregator 데드 코드 `_sum_grouped_market_values` 및 `_resolve_grouped_total` 의 실제 호출 여부를 검증하고, 미사용이 맞으면 제거 후 회귀 테스트와 추가 커밋/푸시를 수행한다.

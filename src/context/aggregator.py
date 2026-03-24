@@ -335,19 +335,6 @@ class ContextAggregator:
         # L2 (annual) → L1 (legacy)
         self.aggregate_legacy_from_annual()
 
-    def _sum_grouped_market_values(
-        self,
-        grouped_data: dict[str, list[Any]],
-        base_key: str,
-    ) -> dict[str, float]:
-        """Sum grouped market-suffixed values keyed as `<base_key>_<market>`."""
-        prefix = f"{base_key}_"
-        return {
-            key[len(prefix) :]: sum(float(value) for value in values)
-            for key, values in grouped_data.items()
-            if key.startswith(prefix)
-        }
-
     def _list_rollup_timeframes(
         self,
         layer: ContextLayer,
@@ -368,21 +355,6 @@ class ContextAggregator:
 
         cursor = self.conn.execute(query, tuple(params))
         return [row[0] for row in cursor.fetchall()]
-
-    def _resolve_grouped_total(
-        self,
-        grouped_data: dict[str, list[Any]],
-        *,
-        base_key: str,
-        market_totals: dict[str, float],
-    ) -> float | None:
-        """Resolve the backward-compatible global total for grouped layer data."""
-        if market_totals:
-            return sum(market_totals.values())
-        base_values = grouped_data.get(base_key)
-        if not base_values:
-            return None
-        return sum(float(value) for value in base_values)
 
     def _collect_rollup_from_timeframes(
         self,
