@@ -392,7 +392,11 @@ class ContextAggregator:
         }
 
     def _iso_weeks_for_month(self, month: str) -> list[str]:
-        """List ISO week identifiers that overlap the given calendar month."""
+        """List ISO week identifiers that overlap the given calendar month.
+
+        The returned sequence is calendar-derived and may include week keys that
+        have no persisted contexts yet; callers must tolerate missing store rows.
+        """
         year, month_num = (int(part) for part in month.split("-"))
         current_day = date(year, month_num, 1)
         if month_num == 12:
@@ -400,11 +404,13 @@ class ContextAggregator:
         else:
             month_end = date(year, month_num + 1, 1)
 
+        seen: set[str] = set()
         iso_weeks: list[str] = []
         while current_day < month_end:
             iso_year, iso_week, _ = current_day.isocalendar()
             week_key = f"{iso_year}-W{iso_week:02d}"
-            if week_key not in iso_weeks:
+            if week_key not in seen:
+                seen.add(week_key)
                 iso_weeks.append(week_key)
             current_day += timedelta(days=1)
         return iso_weeks

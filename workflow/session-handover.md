@@ -759,3 +759,11 @@
 - next_ticket: OOR-851
 - process_gate_checked: process_ticket=OOR-849 merged_to_feature_branch=yes
 - risks_or_notes: monthly rollup 가 target month 밖 ISO week 를 포함하는지 재현 후, global/market-scoped upper-layer rollup 회귀까지 함께 보강한다.
+
+### 2026-03-24 | session=codex-pr864-review-followup
+- branch: feature/issue-851-monthly-rollup-month-boundary
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #851, PR #864
+- next_ticket: #851
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: PR #864 review 코멘트 확인 후 코드/테스트/PR 스레드 답변까지 한 세션에서 처리 예정
