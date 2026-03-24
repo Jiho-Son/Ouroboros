@@ -244,6 +244,23 @@ class TestContextAggregator:
         monthly_pnl = store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl")
         assert monthly_pnl == 450.0
 
+    def test_aggregate_monthly_from_weekly_keeps_global_only_weeks(
+        self, aggregator: ContextAggregator
+    ) -> None:
+        """Monthly rollups should include global-only weeks alongside market-scoped weeks."""
+        month = "2026-02"
+
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W05", "weekly_pnl", 100.0)
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "weekly_pnl_KR", 200.0)
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "weekly_pnl_US", 50.0)
+
+        aggregator.aggregate_monthly_from_weekly(month)
+
+        store = aggregator.store
+        assert store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl") == 350.0
+        assert store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl_KR") == 200.0
+        assert store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl_US") == 50.0
+
     def test_aggregate_upper_layers_store_market_scoped_pnl_keys(
         self, aggregator: ContextAggregator
     ) -> None:
@@ -333,6 +350,23 @@ class TestContextAggregator:
         assert total_pnl == 45000.0
         assert years_traded == 3
         assert avg_annual_pnl == 15000.0
+
+    def test_aggregate_legacy_from_annual_handles_mixed_global_and_market_scoped_years(
+        self, aggregator: ContextAggregator
+    ) -> None:
+        """Legacy rollups should include years that only have market-scoped annual keys."""
+        aggregator.store.set_context(ContextLayer.L2_ANNUAL, "2024", "annual_pnl", 10000.0)
+        aggregator.store.set_context(ContextLayer.L2_ANNUAL, "2025", "annual_pnl_KR", 15000.0)
+        aggregator.store.set_context(ContextLayer.L2_ANNUAL, "2025", "annual_pnl_US", 5000.0)
+
+        aggregator.aggregate_legacy_from_annual()
+
+        store = aggregator.store
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "total_pnl") == 30000.0
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "years_traded") == 2
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "avg_annual_pnl") == 15000.0
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "total_pnl_KR") == 15000.0
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "total_pnl_US") == 5000.0
 
     def test_run_all_aggregations(
         self, aggregator: ContextAggregator, db_conn: sqlite3.Connection

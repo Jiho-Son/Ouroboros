@@ -169,42 +169,28 @@ class ContextAggregator:
         if month is None:
             month = datetime.now(UTC).strftime("%Y-%m")
 
-        # Get all weekly contexts for this month
-        cursor = self.conn.execute(
-            """
-            SELECT key, value FROM contexts
-            WHERE layer = ? AND timeframe LIKE ?
-            """,
-            (ContextLayer.L5_WEEKLY.value, f"{month[:4]}-W%"),
+        weekly_timeframes = self._list_rollup_timeframes(
+            ContextLayer.L5_WEEKLY,
+            "weekly_pnl",
+            timeframe_like=f"{month[:4]}-W%",
+        )
+        total_pnl, market_totals = self._collect_rollup_from_timeframes(
+            ContextLayer.L5_WEEKLY,
+            weekly_timeframes,
+            "weekly_pnl",
         )
 
-        # Group by key and collect all values
-        import json
-        from collections import defaultdict
-
-        weekly_data: dict[str, list[Any]] = defaultdict(list)
-        for row in cursor.fetchall():
-            weekly_data[row[0]].append(json.loads(row[1]))
-
-        if weekly_data:
-            market_totals = self._sum_grouped_market_values(weekly_data, "weekly_pnl")
-            total_pnl = self._resolve_grouped_total(
-                weekly_data,
-                base_key="weekly_pnl",
-                market_totals=market_totals,
+        if total_pnl is not None:
+            self.store.set_context(
+                ContextLayer.L4_MONTHLY, month, "monthly_pnl", round(total_pnl, 2)
             )
-
-            if total_pnl is not None:
-                self.store.set_context(
-                    ContextLayer.L4_MONTHLY, month, "monthly_pnl", round(total_pnl, 2)
-                )
-            for market_code, market_total in market_totals.items():
-                self.store.set_context(
-                    ContextLayer.L4_MONTHLY,
-                    month,
-                    f"monthly_pnl_{market_code}",
-                    round(market_total, 2),
-                )
+        for market_code, market_total in market_totals.items():
+            self.store.set_context(
+                ContextLayer.L4_MONTHLY,
+                month,
+                f"monthly_pnl_{market_code}",
+                round(market_total, 2),
+            )
 
     def aggregate_quarterly_from_monthly(self, quarter: str | None = None) -> None:
         """Aggregate L3 (quarterly) context from L4 (monthly).
@@ -271,26 +257,7 @@ class ContextAggregator:
 
     def aggregate_legacy_from_annual(self) -> None:
         """Aggregate L1 (legacy) context from all L2 (annual) data."""
-        cursor = self.conn.execute(
-            """
-            SELECT DISTINCT timeframe FROM contexts
-            WHERE layer = ? AND key = ?
-            ORDER BY timeframe
-            """,
-            (ContextLayer.L2_ANNUAL.value, "annual_pnl"),
-        )
-
-        annual_timeframes = [row[0] for row in cursor.fetchall()]
-        if not annual_timeframes:
-            cursor = self.conn.execute(
-                """
-                SELECT DISTINCT timeframe FROM contexts
-                WHERE layer = ? AND key LIKE ?
-                ORDER BY timeframe
-                """,
-                (ContextLayer.L2_ANNUAL.value, "annual_pnl_%"),
-            )
-            annual_timeframes = [row[0] for row in cursor.fetchall()]
+        annual_timeframes = self._list_rollup_timeframes(ContextLayer.L2_ANNUAL, "annual_pnl")
 
         total_pnl, market_totals = self._collect_rollup_from_timeframes(
             ContextLayer.L2_ANNUAL,
@@ -380,6 +347,27 @@ class ContextAggregator:
             for key, values in grouped_data.items()
             if key.startswith(prefix)
         }
+
+    def _list_rollup_timeframes(
+        self,
+        layer: ContextLayer,
+        base_key: str,
+        *,
+        timeframe_like: str | None = None,
+    ) -> list[str]:
+        """List distinct timeframes containing either global or market-scoped rollup keys."""
+        query = """
+            SELECT DISTINCT timeframe FROM contexts
+            WHERE layer = ? AND (key = ? OR key LIKE ?)
+        """
+        params: list[Any] = [layer.value, base_key, f"{base_key}_%"]
+        if timeframe_like is not None:
+            query += " AND timeframe LIKE ?"
+            params.append(timeframe_like)
+        query += " ORDER BY timeframe"
+
+        cursor = self.conn.execute(query, tuple(params))
+        return [row[0] for row in cursor.fetchall()]
 
     def _resolve_grouped_total(
         self,

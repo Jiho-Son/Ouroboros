@@ -727,3 +727,11 @@
 - next_ticket: OOR-849
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: `src/context/aggregator.py` 상위 레이어 `L4-L1` 에 market-scoped aggregate key 를 추가하고, 기존 global aggregate key backward compatibility 와 evolution prompt 선행 계약을 테스트/문서로 함께 고정한다.
+
+### 2026-03-24 | session=codex-pr862-review-followup
+- branch: feature/issue-849-market-scoped-upper-layer-aggregate
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-849, PR #862
+- next_ticket: OOR-849
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #862 리뷰 지적 1~4를 코드/테스트 기준으로 검증하고, 실제 버그만 수정한 뒤 thread reply 및 PR 코멘트까지 남긴다.
