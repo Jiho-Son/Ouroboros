@@ -719,3 +719,11 @@
 - next_ticket: OOR-848
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #861 리뷰 스레드를 코드베이스와 대조해 타당한 지적만 반영하고, 검증 후 thread reply 및 PR 코멘트까지 마무리한다.
+
+### 2026-03-24 | session=codex-oor-849-start
+- branch: feature/issue-849-market-scoped-upper-layer-aggregate
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-849, OOR-847, OOR-848
+- next_ticket: OOR-849
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `src/context/aggregator.py` 상위 레이어 `L4-L1` 에 market-scoped aggregate key 를 추가하고, 기존 global aggregate key backward compatibility 와 evolution prompt 선행 계약을 테스트/문서로 함께 고정한다.

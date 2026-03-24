@@ -85,6 +85,7 @@ Data flows **bottom-up**: real-time trades aggregate into daily summaries, which
 
 **Example keys**:
 - `monthly_pnl`: Month's total P&L
+- `monthly_pnl_<market>`: Month's total P&L for a specific market (for example `monthly_pnl_KR`)
 - `sharpe_ratio`: Risk-adjusted return
 - `max_drawdown`: Largest peak-to-trough decline
 - `rebalancing_notes`: Manual insights
@@ -101,6 +102,7 @@ Data flows **bottom-up**: real-time trades aggregate into daily summaries, which
 
 **Example keys**:
 - `quarterly_pnl`: Quarter's total P&L
+- `quarterly_pnl_<market>`: Quarter's total P&L for a specific market
 - `market_phase`: Bull/Bear/Sideways
 - `strategy_adjustments`: Major changes made
 - `lessons_learned`: Key insights
@@ -117,6 +119,7 @@ Data flows **bottom-up**: real-time trades aggregate into daily summaries, which
 
 **Example keys**:
 - `annual_pnl`: Year's total P&L
+- `annual_pnl_<market>`: Year's total P&L for a specific market
 - `sharpe_ratio`: Annual risk-adjusted return
 - `win_rate`: Yearly win percentage
 - `best_strategy`: Most successful strategy
@@ -134,11 +137,18 @@ Data flows **bottom-up**: real-time trades aggregate into daily summaries, which
 
 **Example keys**:
 - `total_pnl`: All-time profit/loss
+- `total_pnl_<market>`: All-time profit/loss for a specific market
 - `years_traded`: Trading longevity
 - `avg_annual_pnl`: Long-term average return
 - `core_principles`: Immutable trading rules
 - `greatest_trades`: Hall of fame
 - `never_again`: Permanent warnings
+
+## Upper-Layer Aggregate Compatibility
+
+- `L4_MONTHLY` through `L1_LEGACY` now store both backward-compatible global P&L keys (`monthly_pnl`, `quarterly_pnl`, `annual_pnl`, `total_pnl`) and market-scoped companions (`*_pnl_<market>`).
+- Backward compatibility policy: keep the existing unsuffixed keys for legacy readers, but derive them from market-scoped inputs whenever those inputs exist so the global totals remain a stable rollup instead of a second source of truth.
+- Market-aware consumers such as evolution prompts should read the suffixed keys (`monthly_pnl_KR`, `quarterly_pnl_US_NASDAQ`, etc.) and treat the unsuffixed keys as compatibility-only aggregates.
 
 ## Usage
 
@@ -286,10 +296,10 @@ def build_enhanced_prompt(stock_code: str, store: ContextStore) -> str:
 - `src/strategy/pre_market_planner.py` is the only prompt path that currently uses `ContextSelector.select_layers(DecisionType.STRATEGIC)` and renders a `Strategic Context` block from selected `L7/L6/L5` layers.
 - This prompt-consumer order is separate from the canonical layer definitions in `src/context/layer.py`, which name the hierarchy from `L1_LEGACY` through `L7_REALTIME` as a long-horizon to short-horizon taxonomy.
 - That playbook prompt also adds market-scoped `scorecard_<market>` summaries and recent self-market guard data before issuing the single daily LLM call.
-- `src/evolution/optimizer.py` now injects an `Evolution Context` bundle into its prompt, using explicit market/date-aligned reads for `scorecard_<market>`, the latest `evolution_<market>` report, market-scoped `L5` aggregates such as `weekly_pnl_<market>` / `avg_confidence_<market>`, and sampled `context_snapshot` summaries.
+- `src/evolution/optimizer.py` now injects an `Evolution Context` bundle into its prompt, using explicit market/date-aligned reads for `scorecard_<market>`, the latest `evolution_<market>` report, market-scoped `L5-L1` aggregates such as `weekly_pnl_<market>`, `monthly_pnl_<market>`, `quarterly_pnl_<market>`, `annual_pnl_<market>`, `total_pnl_<market>`, and sampled `context_snapshot` summaries.
 - The evolution path still does not inject raw L1-L7 bundles wholesale. It stores its recommendation back into `L6_DAILY` as `evolution_<market>`.
 - `ContextSelector.get_context_data()` currently does `get_latest_timeframe(layer)` and then `get_all_contexts(layer, latest_timeframe)` for each selected layer, so it returns the latest full key set per layer without market/date filtering.
-- When a workflow needs market/date alignment, do not blindly reuse that helper. Build the prompt bundle from explicit timeframes and market-suffixed keys such as `scorecard_<market>`, `weekly_pnl_<market>`, and `avg_confidence_<market>`.
+- When a workflow needs market/date alignment, do not blindly reuse that helper. Build the prompt bundle from explicit timeframes and market-suffixed keys such as `scorecard_<market>`, `weekly_pnl_<market>`, `monthly_pnl_<market>`, `quarterly_pnl_<market>`, `annual_pnl_<market>`, and `total_pnl_<market>`.
 
 ## Database Schema
 
@@ -331,7 +341,7 @@ CREATE INDEX idx_contexts_updated ON contexts(updated_at);
 
 ## Testing
 
-See `tests/test_context.py` for comprehensive test coverage (18 tests, 100% coverage on context modules).
+See `tests/test_context.py` for focused context-layer regression coverage.
 
 ```bash
 pytest tests/test_context.py -v

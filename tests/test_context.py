@@ -244,6 +244,41 @@ class TestContextAggregator:
         monthly_pnl = store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl")
         assert monthly_pnl == 450.0
 
+    def test_aggregate_upper_layers_store_market_scoped_pnl_keys(
+        self, aggregator: ContextAggregator
+    ) -> None:
+        """Upper-layer rollups should preserve market-scoped PnL keys alongside legacy globals."""
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W05", "weekly_pnl_KR", 100.0)
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W05", "weekly_pnl_US", 200.0)
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "weekly_pnl_KR", 300.0)
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "weekly_pnl_US", 400.0)
+
+        aggregator.aggregate_monthly_from_weekly("2026-02")
+        aggregator.aggregate_quarterly_from_monthly("2026-Q1")
+        aggregator.aggregate_annual_from_quarterly("2026")
+        aggregator.aggregate_legacy_from_annual()
+
+        store = aggregator.store
+        assert store.get_context(ContextLayer.L4_MONTHLY, "2026-02", "monthly_pnl") == 1000.0
+        assert store.get_context(ContextLayer.L4_MONTHLY, "2026-02", "monthly_pnl_KR") == 400.0
+        assert store.get_context(ContextLayer.L4_MONTHLY, "2026-02", "monthly_pnl_US") == 600.0
+
+        assert store.get_context(ContextLayer.L3_QUARTERLY, "2026-Q1", "quarterly_pnl") == 1000.0
+        assert (
+            store.get_context(ContextLayer.L3_QUARTERLY, "2026-Q1", "quarterly_pnl_KR") == 400.0
+        )
+        assert (
+            store.get_context(ContextLayer.L3_QUARTERLY, "2026-Q1", "quarterly_pnl_US") == 600.0
+        )
+
+        assert store.get_context(ContextLayer.L2_ANNUAL, "2026", "annual_pnl") == 1000.0
+        assert store.get_context(ContextLayer.L2_ANNUAL, "2026", "annual_pnl_KR") == 400.0
+        assert store.get_context(ContextLayer.L2_ANNUAL, "2026", "annual_pnl_US") == 600.0
+
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "total_pnl") == 1000.0
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "total_pnl_KR") == 400.0
+        assert store.get_context(ContextLayer.L1_LEGACY, "LEGACY", "total_pnl_US") == 600.0
+
     def test_aggregate_quarterly_from_monthly(self, aggregator: ContextAggregator) -> None:
         """Test aggregating quarterly metrics from monthly."""
         quarter = "2026-Q1"
