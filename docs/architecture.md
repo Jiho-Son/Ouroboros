@@ -346,7 +346,8 @@ High-frequency trading with individual stock analysis:
 
 - Analyzes high-confidence losing trades from SQLite
 - Asks the configured LLM provider to generate structured recommendation reports
-- Current prompt inputs are limited to `Failure Patterns` and sampled failed trades. Unlike the playbook path, the evolution path does not yet hydrate a `Strategic Context` or `ContextSelector`-driven layer bundle.
+- Current prompt injects a dedicated `Evolution Context` block built from market-scoped `L6_DAILY` scorecards, the latest `evolution_<market>` report, market-suffixed `L5_WEEKLY` aggregates, and compact `context_snapshot` clues from failed decisions.
+- Unlike the playbook path, evolution still does not hydrate a raw `ContextSelector`-driven `L7/L6/L5` bundle; it reads explicit market/date-aligned keys instead.
 - Stores evolution output in `contexts` (`L6_DAILY`) by market/date instead of writing `.py` files
 - Returns report metadata (`title`, `context_key`, `status`) for notification/review flow
 - Does not auto-activate strategy code

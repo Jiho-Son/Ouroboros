@@ -129,6 +129,26 @@ class ContextStore:
 
         return {row[0]: json.loads(row[1]) for row in cursor.fetchall()}
 
+    def get_latest_context_entry(
+        self,
+        layer: ContextLayer,
+        key: str,
+    ) -> tuple[str, Any] | None:
+        """Get the latest timeframe and value stored for a layer/key pair."""
+        cursor = self.conn.execute(
+            """
+            SELECT timeframe, value FROM contexts
+            WHERE layer = ? AND key = ?
+            ORDER BY timeframe DESC, updated_at DESC
+            LIMIT 1
+            """,
+            (layer.value, key),
+        )
+        row = cursor.fetchone()
+        if row:
+            return row[0], json.loads(row[1])
+        return None
+
     def get_latest_timeframe(self, layer: ContextLayer) -> str | None:
         """Get the most recent timeframe for a given layer.
 

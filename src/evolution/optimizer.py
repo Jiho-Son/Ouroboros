@@ -23,6 +23,10 @@ from src.context.layer import ContextLayer
 from src.context.store import ContextStore
 from src.db import init_db
 from src.decision_logging.decision_logger import DecisionLogger
+from src.evolution.context_bundle import (
+    build_evolution_context_bundle,
+    render_evolution_context_section,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +172,9 @@ class EvolutionOptimizer:
     ) -> dict[str, Any] | None:
         """Generate a structured recommendation payload from failure analysis."""
         resolved_patterns = patterns or self.identify_failure_patterns(failures)
+        evolution_context = render_evolution_context_section(
+            build_evolution_context_bundle(self._context_store, failures)
+        )
         prompt = (
             "You are a quantitative trading performance reviewer.\n"
             "Analyze these failed trades and respond with ONLY a JSON object.\n"
@@ -176,6 +183,7 @@ class EvolutionOptimizer:
             '- "adjustments": array of 1-3 short strings\n'
             '- "risk_notes": array of short strings (may be empty)\n'
             "Do not return Python code, markdown, or commentary outside JSON.\n\n"
+            f"{evolution_context}"
             f"Failure Patterns:\n{json.dumps(resolved_patterns, indent=2)}\n\n"
             f"Sample Failed Trades (first 5):\n"
             f"{json.dumps(failures[:5], indent=2, default=str)}\n\n"

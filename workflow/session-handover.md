@@ -703,3 +703,19 @@
 - next_ticket: OOR-845
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #860 리뷰 지적을 코드 기준으로 검증한 뒤 필요한 수정만 반영하고, 테스트/검증 후 모든 리뷰 스레드에 조치 결과를 thread reply로 남긴다.
+
+### 2026-03-24 | session=codex-oor-848-start
+- branch: feature/issue-848-evolution-context-bundle-reinjection
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-848, OOR-847
+- next_ticket: OOR-848
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `EvolutionOptimizer.generate_recommendation()` 에 `L6/L5 + sampled context_snapshot` 재주입이 목표이며, recommendation JSON schema 와 planner 컨텍스트 계약은 유지해야 한다.
+
+### 2026-03-24 | session=codex-pr861-review-followup
+- branch: feature/issue-848-evolution-context-bundle-reinjection
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-848, PR #861
+- next_ticket: OOR-848
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #861 리뷰 스레드를 코드베이스와 대조해 타당한 지적만 반영하고, 검증 후 thread reply 및 PR 코멘트까지 마무리한다.
