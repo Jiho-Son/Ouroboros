@@ -257,6 +257,27 @@ class TestContextAggregator:
         aggregator.aggregate_monthly_from_weekly(month)
 
         store = aggregator.store
+        # W05 global(100) + W06 KR(200) + W06 US(50) = 350; W10 is outside February.
+        assert store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl") == 350.0
+        assert store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl_KR") == 200.0
+        assert store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl_US") == 50.0
+
+    def test_aggregate_monthly_from_weekly_excludes_weeks_outside_target_month(
+        self, aggregator: ContextAggregator
+    ) -> None:
+        """Monthly rollups should only include ISO weeks that overlap the target month."""
+        month = "2026-02"
+
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W05", "weekly_pnl", 100.0)
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "weekly_pnl_KR", 200.0)
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "weekly_pnl_US", 50.0)
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W10", "weekly_pnl_KR", 999.0)
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W10", "weekly_pnl_US", 1.0)
+
+        aggregator.aggregate_monthly_from_weekly(month)
+
+        store = aggregator.store
+        # W05 global(100) + W06 KR(200) + W06 US(50) = 350; W10 is outside February.
         assert store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl") == 350.0
         assert store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl_KR") == 200.0
         assert store.get_context(ContextLayer.L4_MONTHLY, month, "monthly_pnl_US") == 50.0
@@ -269,6 +290,8 @@ class TestContextAggregator:
         aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W05", "weekly_pnl_US", 200.0)
         aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "weekly_pnl_KR", 300.0)
         aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W06", "weekly_pnl_US", 400.0)
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W10", "weekly_pnl_KR", 700.0)
+        aggregator.store.set_context(ContextLayer.L5_WEEKLY, "2026-W10", "weekly_pnl_US", 800.0)
 
         aggregator.aggregate_monthly_from_weekly("2026-02")
         aggregator.aggregate_quarterly_from_monthly("2026-Q1")
