@@ -2613,7 +2613,6 @@ def _build_daily_exit_only_playbook(
                         action=ScenarioAction.HOLD,
                         confidence=60,
                         allocation_pct=0.0,
-                        stop_loss_pct=-3.0,
                         take_profit_pct=0.0,
                         rationale=(
                             "Held-position fallback playbook keeps exit evaluation active "
