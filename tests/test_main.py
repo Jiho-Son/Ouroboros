@@ -143,6 +143,41 @@ def test_log_realtime_hard_stop_monitor_start_includes_enabled_market_coverage(
     assert "source=websocket_hard_stop" in caplog.text
 
 
+def test_realtime_hard_stop_startup_predicate_includes_live_daily_mode() -> None:
+    settings = _make_settings(
+        MODE="live",
+        TRADE_MODE="daily",
+        REALTIME_HARD_STOP_ENABLED=True,
+        ENABLED_MARKETS="US",
+    )
+
+    assert main_module._should_start_realtime_hard_stop_monitor(settings) is True
+
+
+@pytest.mark.parametrize(
+    ("mode", "trade_mode", "hard_stop_enabled", "enabled_markets"),
+    [
+        ("paper", "daily", True, "US"),
+        ("live", "daily", False, "US"),
+        ("live", "daily", True, ""),
+    ],
+)
+def test_realtime_hard_stop_startup_predicate_skips_unsupported_runtime_cases(
+    mode: str,
+    trade_mode: str,
+    hard_stop_enabled: bool,
+    enabled_markets: str,
+) -> None:
+    settings = _make_settings(
+        MODE=mode,
+        TRADE_MODE=trade_mode,
+        REALTIME_HARD_STOP_ENABLED=hard_stop_enabled,
+        ENABLED_MARKETS=enabled_markets,
+    )
+
+    assert main_module._should_start_realtime_hard_stop_monitor(settings) is False
+
+
 def test_daily_mode_batch_cadence_detects_no_additional_kr_regular_session() -> None:
     current_batch_started_at = datetime(
         2026,
@@ -8255,6 +8290,154 @@ async def test_run_daily_session_evaluates_held_symbol_outside_scanner_top_n() -
     assert evaluated_codes.index("PLU") > evaluated_codes.index("CRCD")
 
 
+@pytest.mark.asyncio
+async def test_run_daily_session_syncs_realtime_hard_stop_for_live_daily_held_position() -> None:
+    from src.analysis.smart_scanner import ScanCandidate
+
+    db_conn = init_db(":memory:")
+    log_trade(
+        conn=db_conn,
+        stock_code="PLU",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        quantity=13,
+        price=42.01,
+        market="US_AMEX",
+        exchange_code="AMS",
+        decision_id="buy-plu-1",
+    )
+
+    settings = _make_settings(
+        MODE="live",
+        TRADE_MODE="daily",
+        REALTIME_HARD_STOP_ENABLED=True,
+        ENABLED_MARKETS="US",
+    )
+
+    market = MARKETS["US_AMEX"]
+
+    smart_scanner = MagicMock()
+    smart_scanner.scan = AsyncMock(
+        return_value=[
+            ScanCandidate(
+                stock_code="CRCD",
+                name="Cardio",
+                price=12.0,
+                volume=1_000_000.0,
+                volume_ratio=2.0,
+                rsi=60.0,
+                signal="momentum",
+                score=90.0,
+            )
+        ]
+    )
+
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_balance = AsyncMock(
+        return_value={
+            "output1": [
+                {
+                    "ovrs_pdno": "PLU",
+                    "ovrs_item_name": "Pluri",
+                    "ord_psbl_qty": "13",
+                    "ovrs_cblc_qty": "13",
+                    "pchs_avg_pric": "42.01",
+                    "ovrs_excg_cd": "AMS",
+                }
+            ],
+            "output2": {
+                "frcr_evlu_tota": "100000",
+                "frcr_buy_amt_smtl": "54613",
+            },
+        }
+    )
+    overseas_broker.get_overseas_price = AsyncMock(
+        return_value={"output": {"last": "32.96", "rate": "-21.54"}}
+    )
+    overseas_broker.get_overseas_buying_power = AsyncMock(
+        return_value={"output": {"ovrs_ord_psbl_amt": "10000"}}
+    )
+
+    playbook_store = MagicMock()
+    playbook_store.load = MagicMock(return_value=_make_playbook("US_AMEX"))
+
+    scenario_engine = MagicMock(spec=ScenarioEngine)
+    scenario_engine.evaluate = MagicMock(return_value=_make_hold_match("PLU"))
+
+    decision_logger = MagicMock()
+    decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+    risk = MagicMock()
+    risk.check_circuit_breaker = MagicMock()
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    monitor = RealtimeHardStopMonitor()
+    websocket_client = MagicMock()
+    websocket_client.subscribe = AsyncMock()
+    websocket_client.unsubscribe = AsyncMock()
+
+    async def _passthrough(fn, *a, label: str = "", **kw):  # type: ignore[override]
+        return await fn(*a, **kw)
+
+    async def _inject_with_hard_stop(**kwargs: Any) -> None:
+        kwargs["market_data"]["_staged_exit_evidence"] = {"stop_loss_threshold": -3.5}
+
+    sync_mock = AsyncMock()
+
+    with (
+        patch("src.main.get_open_markets", return_value=[market]),
+        patch("src.main._retry_connection", new=_passthrough),
+        patch("src.main._inject_staged_exit_features", side_effect=_inject_with_hard_stop),
+        patch(
+            "src.main._apply_staged_exit_override_for_hold",
+            side_effect=lambda **kwargs: kwargs["decision"],
+        ),
+        patch("src.main._sync_realtime_hard_stop_monitor", new=sync_mock),
+    ):
+        await run_daily_session(
+            broker=MagicMock(),
+            overseas_broker=overseas_broker,
+            scenario_engine=scenario_engine,
+            playbook_store=playbook_store,
+            pre_market_planner=MagicMock(),
+            risk=risk,
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(),
+            criticality_assessor=MagicMock(),
+            telegram=telegram,
+            settings=settings,
+            smart_scanner=smart_scanner,
+            daily_start_eval=0.0,
+            realtime_hard_stop_monitor=monitor,
+            realtime_hard_stop_client=websocket_client,
+        )
+
+    sync_mock.assert_awaited()
+    plu_calls = [
+        call
+        for call in sync_mock.await_args_list
+        if call.kwargs.get("stock_code") == "PLU"
+    ]
+    assert len(plu_calls) == 1
+    sync_call = plu_calls[0]
+    assert sync_call.kwargs["monitor"] is monitor
+    assert sync_call.kwargs["websocket_client"] is websocket_client
+    assert sync_call.kwargs["market"].code == "US_AMEX"
+    assert sync_call.kwargs["stock_code"] == "PLU"
+    assert sync_call.kwargs["decision_action"] == "HOLD"
+    assert sync_call.kwargs["open_position"]["quantity"] == 13
+    assert sync_call.kwargs["open_position"]["price"] == pytest.approx(42.01)
+    assert (
+        sync_call.kwargs["market_data"]["_staged_exit_evidence"]["stop_loss_threshold"]
+        == pytest.approx(-3.5)
+    )
+
+
 def test_load_daily_session_db_open_positions_ignores_hold_rows_and_uses_market_local_day() -> None:
     db_conn = init_db(":memory:")
     market = MagicMock()
@@ -12821,6 +13004,131 @@ async def test_run_daily_mode_warning_logs_startup_anchor_and_last_regular_batch
     # The next scheduled batch is already after KR regular-session close, so the
     # helper exits on the close-boundary check before consulting is_market_open().
     is_market_open_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_live_daily_mode_starts_realtime_hard_stop_monitor(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FakeEvent:
+        def __init__(self) -> None:
+            self._flag = False
+
+        def is_set(self) -> bool:
+            return self._flag
+
+        def set(self) -> None:
+            self._flag = True
+
+        def clear(self) -> None:
+            self._flag = False
+
+        async def wait(self) -> None:
+            return None
+
+    settings = _make_settings(
+        MODE="live",
+        TRADE_MODE="daily",
+        ENABLED_MARKETS="US",
+        REALTIME_HARD_STOP_ENABLED=True,
+    )
+    shutdown_event = _FakeEvent()
+    pause_event = _FakeEvent()
+    pause_event.set()
+
+    broker = MagicMock()
+    broker.close = AsyncMock()
+    overseas_broker = MagicMock()
+    overseas_broker.close = AsyncMock()
+
+    websocket_client = MagicMock()
+    websocket_client.run = AsyncMock(return_value=None)
+    websocket_client.stop = AsyncMock()
+
+    async def _run_daily_once(*args: Any, **kwargs: Any) -> float:
+        shutdown_event.set()
+        return 0.0
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("src.main.asyncio.Event", side_effect=[shutdown_event, pause_event])
+        )
+        stack.enter_context(
+            patch(
+                "src.main.asyncio.get_running_loop",
+                return_value=MagicMock(add_signal_handler=MagicMock()),
+            )
+        )
+        stack.enter_context(patch("src.main.KISBroker", return_value=broker))
+        stack.enter_context(patch("src.main.OverseasBroker", return_value=overseas_broker))
+        websocket_ctor = stack.enter_context(
+            patch("src.main.KISWebSocketClient", return_value=websocket_client)
+        )
+        stack.enter_context(patch("src.main.DecisionEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.RiskManager", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.init_db", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DecisionLogger", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextAggregator", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextScheduler", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.EvolutionOptimizer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextSelector", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ScenarioEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PlaybookStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DailyReviewer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PreMarketPlanner", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.NotificationFilter", return_value=MagicMock()))
+        telegram = stack.enter_context(
+            patch(
+                "src.main.TelegramClient",
+                return_value=MagicMock(
+                    notify_system_start=AsyncMock(),
+                    notify_system_shutdown=AsyncMock(),
+                    close=AsyncMock(),
+                ),
+            )
+        )
+        command_handler = MagicMock(
+            register_command=MagicMock(),
+            register_command_with_args=MagicMock(),
+            start_polling=AsyncMock(),
+            stop_polling=AsyncMock(),
+        )
+        stack.enter_context(patch("src.main.TelegramCommandHandler", return_value=command_handler))
+        stack.enter_context(patch("src.main.SmartVolatilityScanner", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.CriticalityAssessor", return_value=MagicMock()))
+        stack.enter_context(
+            patch(
+                "src.main.PriorityTaskQueue",
+                return_value=MagicMock(
+                    get_metrics=AsyncMock(return_value=MagicMock(total_enqueued=0))
+                ),
+            )
+        )
+        stack.enter_context(patch("src.main._start_dashboard_server"))
+        stack.enter_context(patch("src.main.sync_positions_from_broker", new=AsyncMock()))
+        stack.enter_context(patch("src.main.process_blackout_recovery_orders", new=AsyncMock()))
+        stack.enter_context(patch("src.main.handle_overseas_pending_orders", new=AsyncMock()))
+        stack.enter_context(
+            patch("src.main.build_overseas_symbol_universe", new=AsyncMock(return_value=[]))
+        )
+        stack.enter_context(patch("src.main.get_open_markets", return_value=[MARKETS["US_NASDAQ"]]))
+        stack.enter_context(patch("src.main._acquire_live_runtime_lock", return_value=None))
+        run_daily_session = stack.enter_context(
+            patch("src.main.run_daily_session", new=AsyncMock(side_effect=_run_daily_once))
+        )
+
+        with caplog.at_level(logging.INFO):
+            await main_module.run(settings)
+
+    run_daily_session.assert_awaited_once()
+    websocket_ctor.assert_called_once()
+    websocket_client.run.assert_awaited_once()
+    websocket_client.stop.assert_awaited_once()
+    telegram.assert_called_once()
+    assert "Realtime hard-stop websocket monitor started" in caplog.text
+    assert "enabled_markets=US_NASDAQ,US_NYSE,US_AMEX" in caplog.text
+    assert "source=websocket_hard_stop" in caplog.text
 
 
 @pytest.mark.asyncio

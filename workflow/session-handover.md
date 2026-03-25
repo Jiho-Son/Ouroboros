@@ -799,3 +799,19 @@
 - next_ticket: OOR-856
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #868 리뷰 스레드를 코드/테스트와 대조해 타당한 지적만 반영하고, 검증 후 모든 변경 사항에 대한 thread reply 및 PR 코멘트까지 마무리한다.
+
+### 2026-03-25 | session=codex-oor-857-start
+- branch: feature/issue-857-live-daily-hard-stop-monitoring
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-857
+- next_ticket: OOR-857
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: live + `TRADE_MODE=daily` 런타임에서 realtime hard-stop websocket startup guard 를 재현하고, held position 보호 누락을 TDD로 고정한 뒤 문서/운영 checklist 와 함께 정합화한다.
+
+### 2026-03-25 | session=codex-pr869-review-followup
+- branch: feature/issue-857-live-daily-hard-stop-monitoring
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-857, PR #869
+- next_ticket: OOR-857
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #869 top-level review 에 남은 테스트 순서 의존/부정 케이스 누락 지적의 타당성을 코드 기준으로 재검증하고, 필요한 최소 수정과 thread 대응/재검증까지 한 세션에서 마무리한다.

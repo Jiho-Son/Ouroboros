@@ -175,6 +175,17 @@ def _format_realtime_hard_stop_enabled_markets(settings: Settings | None) -> str
     return ",".join(enabled_markets) if enabled_markets else "none"
 
 
+def _should_start_realtime_hard_stop_monitor(settings: Settings) -> bool:
+    """Return whether websocket hard-stop monitoring should start for this runtime."""
+    if not settings.REALTIME_HARD_STOP_ENABLED:
+        return False
+    if _format_realtime_hard_stop_enabled_markets(settings) == "none":
+        return False
+    # Realtime mode keeps existing coverage; live daily mode also needs
+    # websocket protection for held positions between batch evaluations.
+    return settings.TRADE_MODE == "realtime" or settings.MODE == "live"
+
+
 def _log_realtime_hard_stop_monitor_start(settings: Settings) -> None:
     logger.info(
         "Realtime hard-stop websocket monitor started enabled_markets=%s "
@@ -2896,6 +2907,8 @@ async def _process_daily_session_stock(
     total_cash: float,
     runtime_session_id: str,
     daily_buy_cooldown: dict[str, float],
+    realtime_hard_stop_monitor: RealtimeHardStopMonitor | None = None,
+    realtime_hard_stop_client: KISWebSocketClient | None = None,
 ) -> None:
     """Evaluate, log, and optionally execute one daily-session stock decision."""
     stock_code = stock_data["stock_code"]
@@ -3031,6 +3044,7 @@ async def _process_daily_session_stock(
                     pullback_pct,
                 )
 
+    daily_open: dict[str, Any] | None = None
     if decision.action == "HOLD":
         daily_open = get_open_position(db_conn, stock_code, market.code)
         if not daily_open:
@@ -3076,6 +3090,18 @@ async def _process_daily_session_stock(
                 stock_code,
                 market.name,
             )
+
+    # Sync every decision so closed or skipped positions can be unsubscribed
+    # during the same daily batch lifecycle.
+    await _sync_realtime_hard_stop_monitor(
+        monitor=realtime_hard_stop_monitor,
+        websocket_client=realtime_hard_stop_client,
+        market=market,
+        stock_code=stock_code,
+        decision_action=decision.action,
+        open_position=daily_open if decision.action == "HOLD" else None,
+        market_data=stock_data,
+    )
 
     context_snapshot = {
         "L1": {
@@ -3474,6 +3500,8 @@ async def _run_daily_session_market(
     daily_start_eval: float,
     daily_buy_cooldown: dict[str, float],
     sell_resubmit_counts: dict[str, int],
+    realtime_hard_stop_monitor: RealtimeHardStopMonitor | None = None,
+    realtime_hard_stop_client: KISWebSocketClient | None = None,
 ) -> float:
     """Execute one open market within the daily session path."""
     runtime_session_id, domestic_quote_market_div_code, market_today = (
@@ -3611,6 +3639,8 @@ async def _run_daily_session_market(
             total_cash=total_cash,
             runtime_session_id=runtime_session_id,
             daily_buy_cooldown=daily_buy_cooldown,
+            realtime_hard_stop_monitor=realtime_hard_stop_monitor,
+            realtime_hard_stop_client=realtime_hard_stop_client,
         )
 
     return daily_start_eval
@@ -3631,6 +3661,8 @@ async def run_daily_session(
     settings: Settings,
     smart_scanner: SmartVolatilityScanner | None = None,
     daily_start_eval: float = 0.0,
+    realtime_hard_stop_monitor: RealtimeHardStopMonitor | None = None,
+    realtime_hard_stop_client: KISWebSocketClient | None = None,
 ) -> float:
     """Execute one daily trading session.
 
@@ -3674,6 +3706,8 @@ async def run_daily_session(
             daily_start_eval=daily_start_eval,
             daily_buy_cooldown=daily_buy_cooldown,
             sell_resubmit_counts=sell_resubmit_counts,
+            realtime_hard_stop_monitor=realtime_hard_stop_monitor,
+            realtime_hard_stop_client=realtime_hard_stop_client,
         )
 
     logger.info("Daily trading session completed")
@@ -4033,7 +4067,7 @@ async def run(settings: Settings) -> None:
     realtime_hard_stop_client: KISWebSocketClient | None = None
     realtime_hard_stop_task: asyncio.Task[None] | None = None
 
-    if settings.TRADE_MODE == "realtime" and settings.REALTIME_HARD_STOP_ENABLED:
+    if _should_start_realtime_hard_stop_monitor(settings):
         async def _on_realtime_price(event: KISWebSocketPriceEvent) -> None:
             await _handle_realtime_price_event(
                 event=event,
@@ -4530,6 +4564,8 @@ async def run(settings: Settings) -> None:
                         settings,
                         smart_scanner=smart_scanner,
                         daily_start_eval=_cb_daily_start_eval,
+                        realtime_hard_stop_monitor=realtime_hard_stop_monitor,
+                        realtime_hard_stop_client=realtime_hard_stop_client,
                     )
                     # The next wait starts after the current batch completes, so long
                     # batches intentionally shift the next scheduled timestamp later.
