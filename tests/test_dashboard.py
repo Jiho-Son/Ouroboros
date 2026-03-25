@@ -327,6 +327,19 @@ def test_index_documents_overview_market_linkage_rules(tmp_path: Path) -> None:
     assert "메인 화면에서는 market 필터만 공유합니다." in html
 
 
+def test_index_prevents_stale_decision_fetch_from_overwriting_market_focus(
+    tmp_path: Path,
+) -> None:
+    app = _app_with_trace_decisions(tmp_path)
+    client = TestClient(app)
+    html = client.get("/").text
+
+    assert "let latestDecisionRequestId = 0;" in html
+    assert "const requestId = ++latestDecisionRequestId;" in html
+    assert "if (requestId !== latestDecisionRequestId) return;" in html
+    assert html.count("activeOverviewMarket = normalizeOverviewMarket(") == 1
+
+
 def test_status_endpoint(tmp_path: Path) -> None:
     app = _app(tmp_path)
     get_status = _endpoint(app, "/api/status")
@@ -357,6 +370,43 @@ def test_status_endpoint_returns_market_operating_summary(tmp_path: Path) -> Non
     assert us["current_pnl_pct"] == -3.5
     assert us["circuit_breaker_status"] == "tripped"
     assert us["status_tone"] == "tripped"
+
+
+def test_status_endpoint_excludes_stale_markets_without_today_activity_or_positions(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "dashboard_status_stale_markets.db"
+    conn = init_db(str(db_path))
+    _seed_db(conn)
+    conn.execute(
+        """
+        INSERT INTO decision_logs (
+            decision_id, timestamp, stock_code, market, exchange_code,
+            session_id, action, confidence, rationale, context_snapshot, input_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "d-jp-old",
+            "2026-02-01T01:00:00+00:00",
+            "7203",
+            "JP",
+            "TSE",
+            "JP_REG",
+            "BUY",
+            70,
+            "old signal",
+            json.dumps({}),
+            json.dumps({}),
+        ),
+    )
+    _seed_cb_context(conn, -0.5, market="JP")
+    conn.close()
+
+    app = create_dashboard_app(str(db_path))
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+
+    assert "JP" not in body["markets"]
 
 
 def test_playbook_found(tmp_path: Path) -> None:

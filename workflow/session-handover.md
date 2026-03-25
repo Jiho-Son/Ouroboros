@@ -839,3 +839,11 @@
 - next_ticket: OOR-854
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: `main` 에 반영된 OOR-853 대시보드 정리 결과를 기준으로 시장별 상태 요약과 diagnostics 분리 구조를 재정의하고, summary/history/filter 규칙을 문서/테스트까지 함께 정리한다.
+
+### 2026-03-25 | session=codex-pr871-review-followup
+- branch: feature/issue-854-dashboard-status-summary
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-854, PR #871
+- next_ticket: OOR-854
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #871 review thread를 코드/테스트와 대조해 타당한 지적만 반영하고, 수정 사항 검증 후 push 및 PR thread/top-level comment까지 같은 세션에서 마무리한다.

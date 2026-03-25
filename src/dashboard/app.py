@@ -81,6 +81,8 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
                 row["market"]: int(row["open_position_count"])
                 for row in conn.execute(
                     """
+                    -- Count symbols whose latest trade is still BUY to reflect
+                    -- the current open-position inventory per market.
                     SELECT market, COUNT(*) AS open_position_count
                     FROM (
                         SELECT market,
@@ -133,12 +135,7 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
                 (today, today, today),
             ).fetchall()
             activity_markets = {row[0] for row in activity_rows}
-            markets = sorted(
-                activity_markets
-                | set(position_rows)
-                | set(latest_decision_rows)
-                | set(market_pnl_pct)
-            )
+            markets = sorted(activity_markets | set(position_rows))
             market_status: dict[str, Any] = {}
             total_trades = 0
             total_pnl = 0.0

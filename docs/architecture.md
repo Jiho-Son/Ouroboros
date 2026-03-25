@@ -330,7 +330,7 @@ High-frequency trading with individual stock analysis:
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/` | GET | Static HTML dashboard with `Overview` / `Diagnostics` surfaces |
-| `/api/status` | GET | Daily trading status by market, including operating summary fields (`open_position_count`, latest decision/session, market CB state, `status_tone`) |
+| `/api/status` | GET | Daily trading status by market, limited to markets with today's activity or current open positions, including operating summary fields (`open_position_count`, latest decision/session, market CB state, `status_tone`) |
 | `/api/playbook/{date}` | GET | Playbook for specific date and market |
 | `/api/scorecard/{date}` | GET | Daily scorecard from L6_DAILY context |
 | `/api/performance` | GET | Trading performance metrics (by market + combined) |

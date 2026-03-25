@@ -795,6 +795,7 @@
       let pnlChart = null;
       let currentDays = 7;
       let decisionFetchTimer = null;
+      let latestDecisionRequestId = 0;
       let activeSurface = 'overview';
       let activeOverviewMarket = 'all';
       let lastStatusPayload = null;
@@ -1112,17 +1113,6 @@
         }
       }
 
-      async function fetchPerformance() {
-        try {
-          const r = await fetch('/api/performance?market=all');
-          if (!r.ok) return;
-          const d = await r.json();
-          const c = d.combined || {};
-          document.getElementById('card-winrate').textContent = c.win_rate !== undefined ? `${c.win_rate}%` : '--';
-          document.getElementById('card-total').textContent = c.total_trades ?? '--';
-        } catch {}
-      }
-
       async function fetchPnlHistory(days, market = activeOverviewMarket) {
         try {
           document.getElementById('pnl-market-caption').textContent = market === 'all'
@@ -1308,6 +1298,7 @@
       }
 
       async function fetchDecisions() {
+        const requestId = ++latestDecisionRequestId;
         const list = document.getElementById('decisions-body');
         const summary = document.getElementById('decision-summary');
         const windowEl = document.getElementById('decision-summary-window');
@@ -1323,11 +1314,10 @@
           const r = await fetch(`/api/decisions?${params.toString()}`);
           if (!r.ok) throw new Error('fetch failed');
           const d = await r.json();
+          if (requestId !== latestDecisionRequestId) return;
           lastDecisionMarkets = d.markets || [];
-          const currentMarket = d.filters?.market || activeOverviewMarket;
-          updateMarketSelects(currentMarket);
+          updateMarketSelects(activeOverviewMarket);
           syncSelectOptions('decision-session', d.sessions || [], d.filters?.session_id);
-          activeOverviewMarket = normalizeOverviewMarket(currentMarket);
           highlightMarketCards();
           updateOverviewCards(lastStatusPayload);
           countEl.textContent = d.count ?? 0;
