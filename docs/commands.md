@@ -304,7 +304,7 @@ Dashboard runs as a daemon thread on `DASHBOARD_HOST:DASHBOARD_PORT` (default: `
 | `GET /api/scorecard/{date}` | Daily scorecard from L6_DAILY context |
 | `GET /api/performance` | Performance metrics by market and combined |
 | `GET /api/context/{layer}` | Context data by layer L1-L7 (query: `timeframe`) |
-| `GET /api/decisions` | Decision log entries (query: `limit`, `market`) |
+| `GET /api/decisions` | Decision log entries with trace/filter metadata (query: `market`, `session_id`, `action`, `stock_code`, `min_confidence`, `from_date`, `to_date`, `matched_only`, `limit`) |
 | `GET /api/scenarios/active` | Today's matched scenarios |
 | `GET /api/pnl/history` | P&L history over time |
 | `GET /api/positions` | Current open positions |

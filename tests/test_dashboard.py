@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
+from fastapi.testclient import TestClient
 
 from src.dashboard.app import create_dashboard_app
 from src.db import init_db
@@ -186,12 +187,111 @@ def _endpoint(app: Any, path: str) -> Callable[..., Any]:
     raise AssertionError(f"route not found: {path}")
 
 
+def _app_with_trace_decisions(tmp_path: Path) -> Any:
+    db_path = tmp_path / "dashboard_trace_test.db"
+    conn = init_db(str(db_path))
+    decision_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(decision_logs)").fetchall()
+    }
+    if "llm_prompt" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN llm_prompt TEXT")
+    if "llm_response" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN llm_response TEXT")
+
+    today = datetime.now(UTC).date().isoformat()
+    conn.execute(
+        """
+        INSERT INTO decision_logs (
+            decision_id, timestamp, stock_code, market, exchange_code,
+            session_id, action, confidence, rationale, context_snapshot, input_data,
+            llm_prompt, llm_response
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "d-kr-1",
+            f"{today}T09:10:00+00:00",
+            "005930",
+            "KR",
+            "KRX",
+            "KRX_REG",
+            "BUY",
+            85,
+            "signal matched",
+            json.dumps({"scenario_match": {"rsi": 28.0}}),
+            json.dumps({"current_price": 70000}),
+            "kr prompt",
+            '{"action":"BUY","confidence":85}',
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO decision_logs (
+            decision_id, timestamp, stock_code, market, exchange_code,
+            session_id, action, confidence, rationale, context_snapshot, input_data,
+            llm_prompt, llm_response
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "d-us-1",
+            f"{today}T21:10:00+00:00",
+            "AAPL",
+            "US_NASDAQ",
+            "NASDAQ",
+            "US_REG",
+            "SELL",
+            80,
+            "no match",
+            json.dumps({"scenario_match": {}}),
+            json.dumps({"current_price": 200}),
+            "us prompt",
+            '{"action":"SELL","confidence":80}',
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO decision_logs (
+            decision_id, timestamp, stock_code, market, exchange_code,
+            session_id, action, confidence, rationale, context_snapshot, input_data,
+            llm_prompt, llm_response
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "d-jp-old",
+            "2026-02-13T01:10:00+00:00",
+            "7203",
+            "JP",
+            "TSE",
+            "JP_REG",
+            "HOLD",
+            60,
+            "older decision",
+            json.dumps({"scenario_match": {}}),
+            json.dumps({"current_price": 2500}),
+            "jp prompt",
+            '{"action":"HOLD","confidence":60}',
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return create_dashboard_app(str(db_path))
+
+
 def test_index_serves_html(tmp_path: Path) -> None:
     app = _app(tmp_path)
     index = _endpoint(app, "/")
     resp = index()
     assert isinstance(resp, FileResponse)
     assert "index.html" in str(resp.path)
+
+
+def test_index_exposes_decision_trace_controls(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    client = TestClient(app)
+    html = client.get("/").text
+    assert "결정 히스토리 필터" in html
+    assert "LLM request" in html
+    assert "LLM response" in html
+    assert "Diagnostics" in html
 
 
 def test_status_endpoint(tmp_path: Path) -> None:
@@ -277,6 +377,29 @@ def test_decisions_endpoint(tmp_path: Path) -> None:
     body = get_decisions(market="KR", limit=50)
     assert body["count"] == 1
     assert body["decisions"][0]["decision_id"] == "d-kr-1"
+
+
+def test_decisions_endpoint_supports_rich_filters_and_metadata(tmp_path: Path) -> None:
+    app = _app_with_trace_decisions(tmp_path)
+    get_decisions = _endpoint(app, "/api/decisions")
+    today = datetime.now(UTC).date().isoformat()
+    body = get_decisions(
+        market="all",
+        session_id="KRX_REG",
+        action="BUY",
+        stock_code="005",
+        min_confidence=80,
+        from_date=today,
+        to_date=today,
+        matched_only=True,
+        limit=50,
+    )
+    assert body["count"] == 1
+    assert body["decisions"][0]["decision_id"] == "d-kr-1"
+    assert body["decisions"][0]["llm_prompt"] == "kr prompt"
+    assert body["filters"]["session_id"] == "KRX_REG"
+    assert body["markets"] == ["JP", "KR", "US_NASDAQ"]
+    assert body["sessions"] == ["JP_REG", "KRX_REG", "US_REG"]
 
 
 def test_scenarios_active_filters_non_matched(tmp_path: Path) -> None:

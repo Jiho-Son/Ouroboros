@@ -118,30 +118,126 @@
       }
       .day-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(60, 179, 113, 0.08); }
 
-      /* Decisions panel */
+      /* Decision history */
       .decisions-panel {
         background: var(--panel);
         border: 1px solid var(--border);
         border-radius: 10px;
         padding: 16px;
+        margin-bottom: 20px;
       }
-      .market-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
-      .tab-btn {
-        background: none; border: 1px solid var(--border); color: var(--muted);
-        padding: 4px 10px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 11px;
+      .history-caption { color: var(--muted); font-size: 12px; line-height: 1.5; }
+      .history-toolbar {
+        display: grid;
+        gap: 12px;
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(40, 69, 95, 0.5);
       }
-      .tab-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(60, 179, 113, 0.08); }
-      .decisions-table { width: 100%; border-collapse: collapse; margin-top: 14px; }
-      .decisions-table th {
-        text-align: left; color: var(--muted); font-size: 11px; font-weight: 600;
-        padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
+      .filter-grid {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 10px;
       }
-      .decisions-table td {
-        padding: 8px 8px; border-bottom: 1px solid rgba(40, 69, 95, 0.5);
-        vertical-align: middle; white-space: nowrap;
+      @media (max-width: 980px) {
+        .filter-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       }
-      .decisions-table tr:last-child td { border-bottom: none; }
-      .decisions-table tr:hover td { background: rgba(255,255,255,0.02); }
+      @media (max-width: 620px) {
+        .filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      .filter-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .filter-label {
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+      }
+      .filter-field input,
+      .filter-field select {
+        width: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 12px;
+        font-family: inherit;
+      }
+      .filter-check {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        padding-top: 22px;
+      }
+      .filter-check input { width: auto; }
+      .filter-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .action-btn {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        border-radius: 999px;
+        padding: 7px 12px;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 12px;
+      }
+      .action-btn.primary {
+        color: var(--bg);
+        background: var(--accent);
+        border-color: var(--accent);
+        font-weight: 700;
+      }
+      .history-summary {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .history-list {
+        display: grid;
+        gap: 12px;
+        margin-top: 16px;
+      }
+      .decision-card {
+        border: 1px solid rgba(60, 179, 113, 0.18);
+        border-radius: 14px;
+        background:
+          linear-gradient(135deg, rgba(60, 179, 113, 0.08), rgba(18, 38, 58, 0.92)),
+          var(--panel);
+        overflow: hidden;
+      }
+      .decision-card summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 14px 16px;
+        display: grid;
+        gap: 12px;
+      }
+      .decision-card summary::-webkit-details-marker { display: none; }
+      .decision-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .decision-symbol { font-size: 18px; font-weight: 700; }
+      .decision-meta {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
       .badge {
         display: inline-block; padding: 2px 7px; border-radius: 4px;
         font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
@@ -153,8 +249,67 @@
       .conf-bar { flex: 1; height: 6px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; }
       .conf-fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.3s; }
       .conf-val { color: var(--muted); font-size: 11px; min-width: 26px; text-align: right; }
-      .rationale-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
-      .empty-row td { text-align: center; color: var(--muted); padding: 24px; }
+      .meta-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        border: 1px solid rgba(40, 69, 95, 0.7);
+        border-radius: 999px;
+        padding: 4px 8px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .decision-rationale {
+        color: var(--muted);
+        line-height: 1.6;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .decision-details {
+        border-top: 1px solid rgba(40, 69, 95, 0.5);
+        padding: 0 16px 16px;
+        display: grid;
+        gap: 12px;
+      }
+      .trace-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      @media (max-width: 860px) {
+        .trace-grid { grid-template-columns: 1fr; }
+      }
+      .trace-box {
+        background: var(--bg);
+        border: 1px solid rgba(40, 69, 95, 0.7);
+        border-radius: 10px;
+        padding: 12px;
+      }
+      .trace-label {
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+      }
+      .trace-box pre {
+        margin: 0;
+        font-size: 11px;
+        color: #a0c4ff;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 220px;
+        overflow: auto;
+      }
+      .decision-empty {
+        text-align: center;
+        color: var(--muted);
+        padding: 24px;
+        border: 1px dashed rgba(40, 69, 95, 0.7);
+        border-radius: 12px;
+      }
 
       /* Positions panel */
       .positions-panel {
@@ -230,6 +385,29 @@
       }
       .panel-date { color: var(--muted); font-size: 12px; }
       .empty-msg { color: var(--muted); text-align: center; padding: 20px 0; font-size: 12px; }
+      .diagnostics-shell {
+        margin-top: 20px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--panel);
+        overflow: hidden;
+      }
+      .diagnostics-shell > summary {
+        cursor: pointer;
+        padding: 16px;
+        font-weight: 700;
+        color: var(--fg);
+        background: rgba(255,255,255,0.02);
+      }
+      .diagnostics-shell[open] > summary {
+        border-bottom: 1px solid rgba(40, 69, 95, 0.5);
+      }
+      .diagnostics-body {
+        padding: 16px;
+        display: grid;
+        gap: 16px;
+      }
+      .diagnostics-body .panel { margin-top: 0; }
     </style>
   </head>
   <body>
@@ -315,105 +493,154 @@
         </div>
       </div>
 
-      <!-- Decisions log -->
+      <!-- Decision history -->
       <div class="decisions-panel">
         <div class="panel-header">
-          <span class="panel-title">최근 결정 로그</span>
-          <div class="market-tabs" id="market-tabs">
-            <button class="tab-btn active" data-market="KR" onclick="selectMarket(this)">KR</button>
-            <button class="tab-btn" data-market="US_NASDAQ" onclick="selectMarket(this)">US_NASDAQ</button>
-            <button class="tab-btn" data-market="US_NYSE" onclick="selectMarket(this)">US_NYSE</button>
-            <button class="tab-btn" data-market="JP" onclick="selectMarket(this)">JP</button>
-            <button class="tab-btn" data-market="HK" onclick="selectMarket(this)">HK</button>
+          <div>
+            <span class="panel-title">결정 히스토리</span>
+            <div class="history-caption">상태 파악은 최근 결정 흐름과 trace 에서 시작합니다.</div>
+          </div>
+          <span class="pos-count" id="decision-count">0</span>
+        </div>
+        <div class="history-toolbar">
+          <div class="history-caption">결정 히스토리 필터</div>
+          <div class="filter-grid">
+            <label class="filter-field">
+              <span class="filter-label">Market</span>
+              <select id="decision-market" onchange="fetchDecisions()">
+                <option value="all">전체</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span class="filter-label">Session</span>
+              <select id="decision-session" onchange="fetchDecisions()">
+                <option value="all">전체</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span class="filter-label">Action</span>
+              <select id="decision-action" onchange="fetchDecisions()">
+                <option value="all">전체</option>
+                <option value="BUY">BUY</option>
+                <option value="SELL">SELL</option>
+                <option value="HOLD">HOLD</option>
+              </select>
+            </label>
+            <label class="filter-field">
+              <span class="filter-label">Symbol</span>
+              <input id="decision-stock-code" type="text" placeholder="005930 / AAPL" oninput="debouncedFetchDecisions()" />
+            </label>
+            <label class="filter-field">
+              <span class="filter-label">Min Confidence</span>
+              <input id="decision-min-confidence" type="number" min="0" max="100" value="0" onchange="fetchDecisions()" />
+            </label>
+            <label class="filter-field">
+              <span class="filter-label">Limit</span>
+              <input id="decision-limit" type="number" min="1" max="200" value="50" onchange="fetchDecisions()" />
+            </label>
+            <label class="filter-field">
+              <span class="filter-label">From</span>
+              <input id="decision-from-date" type="date" onchange="fetchDecisions()" />
+            </label>
+            <label class="filter-field">
+              <span class="filter-label">To</span>
+              <input id="decision-to-date" type="date" onchange="fetchDecisions()" />
+            </label>
+            <label class="filter-field filter-check">
+              <input id="decision-matched-only" type="checkbox" onchange="fetchDecisions()" />
+              <span>시나리오 매칭만</span>
+            </label>
+          </div>
+          <div class="filter-actions">
+            <button class="action-btn" type="button" onclick="resetDecisionFilters()">필터 초기화</button>
+            <button class="action-btn primary" type="button" onclick="fetchDecisions()">필터 적용</button>
+          </div>
+          <div class="history-summary">
+            <div id="decision-summary">최근 결정을 불러오는 중...</div>
+            <div class="panel-date" id="decision-summary-window">전체 기간</div>
           </div>
         </div>
-        <table class="decisions-table">
-          <thead>
-            <tr>
-              <th>시각</th>
-              <th>종목</th>
-              <th>액션</th>
-              <th>신뢰도</th>
-              <th>사유</th>
-            </tr>
-          </thead>
-          <tbody id="decisions-body">
-            <tr class="empty-row"><td colspan="5"><span class="spinner"></span></td></tr>
-          </tbody>
-        </table>
+        <div id="decisions-body" class="history-list">
+          <div class="decision-empty"><span class="spinner"></span></div>
+        </div>
       </div>
 
-      <!-- playbook panel -->
-      <div class="panel playbook-panel">
-        <div class="panel-header">
-          <span class="panel-title">&#x1F4CB; 프리마켓 플레이북</span>
-          <div class="panel-controls">
-            <select id="pb-market-select" onchange="fetchPlaybook()">
-              <option value="KR">KR</option>
-              <option value="US_NASDAQ">US_NASDAQ</option>
-              <option value="US_NYSE">US_NYSE</option>
-            </select>
-            <span id="pb-date" class="panel-date"></span>
+      <details class="diagnostics-shell">
+        <summary>Diagnostics</summary>
+        <div class="diagnostics-body">
+          <!-- playbook panel -->
+          <div class="panel playbook-panel">
+            <div class="panel-header">
+              <span class="panel-title">&#x1F4CB; 프리마켓 플레이북</span>
+              <div class="panel-controls">
+                <select id="pb-market-select" onchange="fetchPlaybook()">
+                  <option value="KR">KR</option>
+                  <option value="US_NASDAQ">US_NASDAQ</option>
+                  <option value="US_NYSE">US_NYSE</option>
+                </select>
+                <span id="pb-date" class="panel-date"></span>
+              </div>
+            </div>
+            <div id="playbook-content"><p class="empty-msg">데이터 없음</p></div>
           </div>
-        </div>
-        <div id="playbook-content"><p class="empty-msg">데이터 없음</p></div>
-      </div>
 
-      <!-- scorecard panel -->
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">&#x1F4CA; 일간 스코어카드</span>
-          <div class="panel-controls">
-            <select id="sc-market-select" onchange="fetchScorecard()">
-              <option value="KR">KR</option>
-              <option value="US_NASDAQ">US_NASDAQ</option>
-            </select>
-            <span id="sc-date" class="panel-date"></span>
+          <!-- scorecard panel -->
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">&#x1F4CA; 일간 스코어카드</span>
+              <div class="panel-controls">
+                <select id="sc-market-select" onchange="fetchScorecard()">
+                  <option value="KR">KR</option>
+                  <option value="US_NASDAQ">US_NASDAQ</option>
+                </select>
+                <span id="sc-date" class="panel-date"></span>
+              </div>
+            </div>
+            <div id="scorecard-grid" class="scorecard-grid"><p class="empty-msg">데이터 없음</p></div>
           </div>
-        </div>
-        <div id="scorecard-grid" class="scorecard-grid"><p class="empty-msg">데이터 없음</p></div>
-      </div>
 
-      <!-- scenarios panel -->
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">&#x1F3AF; 활성 시나리오 매칭</span>
-          <div class="panel-controls">
-            <select id="scen-market-select" onchange="fetchScenarios()">
-              <option value="KR">KR</option>
-              <option value="US_NASDAQ">US_NASDAQ</option>
-            </select>
+          <!-- scenarios panel -->
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">&#x1F3AF; 활성 시나리오 매칭</span>
+              <div class="panel-controls">
+                <select id="scen-market-select" onchange="fetchScenarios()">
+                  <option value="KR">KR</option>
+                  <option value="US_NASDAQ">US_NASDAQ</option>
+                </select>
+              </div>
+            </div>
+            <div id="scenarios-content"><p class="empty-msg">데이터 없음</p></div>
           </div>
-        </div>
-        <div id="scenarios-content"><p class="empty-msg">데이터 없음</p></div>
-      </div>
 
-      <!-- context layer panel -->
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">&#x1F9E0; 컨텍스트 트리</span>
-          <div class="panel-controls">
-            <select id="ctx-layer-select" onchange="fetchContext()">
-              <option value="L7_REALTIME">L7_REALTIME</option>
-              <option value="L6_DAILY">L6_DAILY</option>
-              <option value="L5_WEEKLY">L5_WEEKLY</option>
-              <option value="L4_MONTHLY">L4_MONTHLY</option>
-              <option value="L3_QUARTERLY">L3_QUARTERLY</option>
-              <option value="L2_YEARLY">L2_YEARLY</option>
-              <option value="L1_LIFETIME">L1_LIFETIME</option>
-            </select>
-            <input id="ctx-limit" type="number" value="20" min="1" max="200"
-                   style="width:60px;" onchange="fetchContext()">
+          <!-- context layer panel -->
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">&#x1F9E0; 컨텍스트 트리</span>
+              <div class="panel-controls">
+                <select id="ctx-layer-select" onchange="fetchContext()">
+                  <option value="L7_REALTIME">L7_REALTIME</option>
+                  <option value="L6_DAILY">L6_DAILY</option>
+                  <option value="L5_WEEKLY">L5_WEEKLY</option>
+                  <option value="L4_MONTHLY">L4_MONTHLY</option>
+                  <option value="L3_QUARTERLY">L3_QUARTERLY</option>
+                  <option value="L2_YEARLY">L2_YEARLY</option>
+                  <option value="L1_LIFETIME">L1_LIFETIME</option>
+                </select>
+                <input id="ctx-limit" type="number" value="20" min="1" max="200"
+                       style="width:60px;" onchange="fetchContext()">
+              </div>
+            </div>
+            <div id="context-content"><p class="empty-msg">데이터 없음</p></div>
           </div>
         </div>
-        <div id="context-content"><p class="empty-msg">데이터 없음</p></div>
-      </div>
+      </details>
     </div>
 
     <script>
       let pnlChart = null;
       let currentDays = 7;
-      let currentMarket = 'KR';
+      let decisionFetchTimer = null;
 
       function fmt(dt) {
         try {
@@ -620,29 +847,172 @@
         });
       }
 
-      async function fetchDecisions(market) {
-        const tbody = document.getElementById('decisions-body');
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="5"><span class="spinner"></span></td></tr>';
+      function fmtStamp(dt) {
         try {
-          const r = await fetch(`/api/decisions?market=${market}&limit=50`);
+          return new Date(dt).toLocaleString('ko-KR', {
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          });
+        } catch { return dt || '--'; }
+      }
+
+      function prettyJson(value) {
+        if (value === null || value === undefined || value === '') return '--';
+        if (typeof value === 'string') {
+          try {
+            return JSON.stringify(JSON.parse(value), null, 2);
+          } catch {
+            return value;
+          }
+        }
+        return JSON.stringify(value, null, 2);
+      }
+
+      function readDecisionFilters() {
+        return {
+          market: document.getElementById('decision-market').value || 'all',
+          session_id: document.getElementById('decision-session').value || 'all',
+          action: document.getElementById('decision-action').value || 'all',
+          stock_code: document.getElementById('decision-stock-code').value.trim(),
+          min_confidence: document.getElementById('decision-min-confidence').value || '0',
+          from_date: document.getElementById('decision-from-date').value,
+          to_date: document.getElementById('decision-to-date').value,
+          matched_only: document.getElementById('decision-matched-only').checked,
+          limit: document.getElementById('decision-limit').value || '50',
+        };
+      }
+
+      function syncSelectOptions(selectId, values, currentValue) {
+        const select = document.getElementById(selectId);
+        const previous = currentValue || select.value || 'all';
+        const options = ['<option value="all">전체</option>'].concat(
+          values.map(value => `<option value="${esc(value)}">${esc(value)}</option>`)
+        );
+        select.innerHTML = options.join('');
+        select.value = values.includes(previous) || previous === 'all' ? previous : 'all';
+      }
+
+      function buildDecisionSummary(filters, count) {
+        const summary = [];
+        if (filters.market && filters.market !== 'all') summary.push(`시장 ${filters.market}`);
+        if (filters.session_id && filters.session_id !== 'all') summary.push(`세션 ${filters.session_id}`);
+        if (filters.action && filters.action !== 'all') summary.push(`액션 ${filters.action}`);
+        if (filters.stock_code) summary.push(`심볼 ${filters.stock_code}`);
+        if (parseInt(filters.min_confidence, 10) > 0) summary.push(`신뢰도 ${filters.min_confidence}+`);
+        if (filters.matched_only) summary.push('시나리오 매칭만');
+        const lead = summary.length > 0 ? summary.join(' / ') : '전체 결정';
+        return `${lead} · ${count}건`;
+      }
+
+      function renderDecisionCards(decisions) {
+        if (!decisions || decisions.length === 0) {
+          return '<div class="decision-empty">조건에 맞는 결정이 없습니다.</div>';
+        }
+        return decisions.map(dec => {
+          const responseFallback = dec.llm_response || JSON.stringify({
+            action: dec.action,
+            confidence: dec.confidence,
+            rationale: dec.rationale,
+          }, null, 2);
+          const outcomeChip = dec.outcome_pnl === null || dec.outcome_pnl === undefined
+            ? ''
+            : `<span class="meta-chip">PnL ${dec.outcome_pnl > 0 ? '+' : ''}${Number(dec.outcome_pnl).toFixed(2)}</span>`;
+          const matchChip = dec.has_scenario_match
+            ? '<span class="meta-chip">scenario matched</span>'
+            : '<span class="meta-chip">no scenario match</span>';
+          return `
+            <details class="decision-card">
+              <summary>
+                <div class="decision-top">
+                  <div>
+                    <div class="decision-symbol">${esc(dec.stock_code || '--')}</div>
+                    <div class="history-caption">${esc(fmtStamp(dec.timestamp))} · ${esc(dec.market || '--')} · ${esc(dec.session_id || '--')}</div>
+                  </div>
+                  <div class="decision-meta">
+                    ${badge(dec.action)}
+                    ${confBar(dec.confidence)}
+                    ${matchChip}
+                    ${outcomeChip}
+                  </div>
+                </div>
+                <div class="decision-rationale">${esc(dec.rationale || '--')}</div>
+              </summary>
+              <div class="decision-details">
+                <div class="trace-grid">
+                  <div class="trace-box">
+                    <div class="trace-label">LLM request</div>
+                    <pre>${esc(prettyJson(dec.llm_prompt || dec.input_data))}</pre>
+                  </div>
+                  <div class="trace-box">
+                    <div class="trace-label">LLM response</div>
+                    <pre>${esc(prettyJson(responseFallback))}</pre>
+                  </div>
+                  <div class="trace-box">
+                    <div class="trace-label">Decision input</div>
+                    <pre>${esc(prettyJson(dec.input_data))}</pre>
+                  </div>
+                  <div class="trace-box">
+                    <div class="trace-label">Decision context</div>
+                    <pre>${esc(prettyJson(dec.context_snapshot))}</pre>
+                  </div>
+                </div>
+              </div>
+            </details>
+          `;
+        }).join('');
+      }
+
+      async function fetchDecisions() {
+        const list = document.getElementById('decisions-body');
+        const summary = document.getElementById('decision-summary');
+        const windowEl = document.getElementById('decision-summary-window');
+        const countEl = document.getElementById('decision-count');
+        list.innerHTML = '<div class="decision-empty"><span class="spinner"></span></div>';
+        try {
+          const filters = readDecisionFilters();
+          const params = new URLSearchParams();
+          Object.entries(filters).forEach(([key, value]) => {
+            if (value === '' || value === false || value === null || value === undefined) return;
+            params.set(key, value);
+          });
+          const r = await fetch(`/api/decisions?${params.toString()}`);
           if (!r.ok) throw new Error('fetch failed');
           const d = await r.json();
-          if (!d.decisions || d.decisions.length === 0) {
-            tbody.innerHTML = '<tr class="empty-row"><td colspan="5">결정 로그 없음</td></tr>';
-            return;
-          }
-          tbody.innerHTML = d.decisions.map(dec => `
-            <tr>
-              <td>${fmt(dec.timestamp)}</td>
-              <td>${dec.stock_code || '--'}</td>
-              <td>${badge(dec.action)}</td>
-              <td>${confBar(dec.confidence)}</td>
-              <td class="rationale-cell" title="${(dec.rationale || '').replace(/"/g, '&quot;')}">${dec.rationale || '--'}</td>
-            </tr>
-          `).join('');
+          syncSelectOptions('decision-market', d.markets || [], d.filters?.market);
+          syncSelectOptions('decision-session', d.sessions || [], d.filters?.session_id);
+          countEl.textContent = d.count ?? 0;
+          summary.textContent = buildDecisionSummary(d.filters || filters, d.count ?? 0);
+          windowEl.textContent = d.filters?.from_date || d.filters?.to_date
+            ? `${d.filters?.from_date || '...'} -> ${d.filters?.to_date || '...'}`
+            : '전체 기간';
+          list.innerHTML = renderDecisionCards(d.decisions || []);
         } catch {
-          tbody.innerHTML = '<tr class="empty-row"><td colspan="5">데이터 로드 실패</td></tr>';
+          list.innerHTML = '<div class="decision-empty">결정 히스토리 로드 실패</div>';
+          summary.textContent = '결정 히스토리 로드 실패';
         }
+      }
+
+      function debouncedFetchDecisions() {
+        if (decisionFetchTimer) clearTimeout(decisionFetchTimer);
+        decisionFetchTimer = setTimeout(() => {
+          fetchDecisions();
+        }, 180);
+      }
+
+      function resetDecisionFilters() {
+        document.getElementById('decision-market').value = 'all';
+        document.getElementById('decision-session').value = 'all';
+        document.getElementById('decision-action').value = 'all';
+        document.getElementById('decision-stock-code').value = '';
+        document.getElementById('decision-min-confidence').value = '0';
+        document.getElementById('decision-from-date').value = '';
+        document.getElementById('decision-to-date').value = '';
+        document.getElementById('decision-matched-only').checked = false;
+        document.getElementById('decision-limit').value = '50';
+        fetchDecisions();
       }
 
       function selectDays(btn) {
@@ -650,13 +1020,6 @@
         btn.classList.add('active');
         currentDays = parseInt(btn.dataset.days, 10);
         fetchPnlHistory(currentDays);
-      }
-
-      function selectMarket(btn) {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        currentMarket = btn.dataset.market;
-        fetchDecisions(currentMarket);
       }
 
       function todayStr() {
@@ -777,7 +1140,7 @@
           fetchPerformance(),
           fetchPositions(),
           fetchPnlHistory(currentDays),
-          fetchDecisions(currentMarket),
+          fetchDecisions(),
           fetchPlaybook(),
           fetchScorecard(),
           fetchScenarios(),
