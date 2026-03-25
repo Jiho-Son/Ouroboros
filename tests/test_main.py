@@ -8094,6 +8094,167 @@ async def test_run_daily_session_applies_staged_exit_override_on_hold() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_daily_session_evaluates_held_symbol_outside_scanner_top_n() -> None:
+    """Daily mode must evaluate held symbols even when scanner top-N excludes them."""
+    from src.analysis.smart_scanner import ScanCandidate
+
+    db_conn = init_db(":memory:")
+    log_trade(
+        conn=db_conn,
+        stock_code="PLU",
+        action="BUY",
+        confidence=90,
+        rationale="entry",
+        quantity=13,
+        price=42.01,
+        market="US_AMEX",
+        exchange_code="AMS",
+        decision_id="buy-plu-1",
+    )
+
+    settings = _make_settings(MODE="paper", PAPER_OVERSEAS_CASH=10_000)
+
+    market = MagicMock()
+    market.name = "NYSE American"
+    market.code = "US_AMEX"
+    market.exchange_code = "AMS"
+    market.is_domestic = False
+    market.timezone = ZoneInfo("America/New_York")
+
+    smart_scanner = MagicMock()
+    smart_scanner.scan = AsyncMock(
+        return_value=[
+            ScanCandidate(
+                stock_code="CRCD",
+                name="Cardio",
+                price=12.0,
+                volume=1_000_000.0,
+                volume_ratio=2.0,
+                rsi=60.0,
+                signal="momentum",
+                score=90.0,
+            ),
+            ScanCandidate(
+                stock_code="AAOX",
+                name="Aox",
+                price=8.0,
+                volume=900_000.0,
+                volume_ratio=1.8,
+                rsi=58.0,
+                signal="momentum",
+                score=88.0,
+            ),
+            ScanCandidate(
+                stock_code="LITX",
+                name="Litx",
+                price=6.0,
+                volume=800_000.0,
+                volume_ratio=1.7,
+                rsi=55.0,
+                signal="momentum",
+                score=86.0,
+            ),
+        ]
+    )
+
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_balance = AsyncMock(
+        return_value={
+            "output1": [
+                {
+                    "ovrs_pdno": "PLU",
+                    "ovrs_item_name": "Pluri",
+                    "ord_psbl_qty": "13",
+                    "ovrs_cblc_qty": "13",
+                    "pchs_avg_pric": "42.01",
+                    "ovrs_excg_cd": "AMS",
+                }
+            ],
+            "output2": {
+                "frcr_evlu_tota": "100000",
+                "frcr_buy_amt_smtl": "54613",
+            },
+        }
+    )
+
+    def _price_payload(last: str, rate: str = "0.5") -> dict[str, dict[str, str]]:
+        return {"output": {"last": last, "rate": rate}}
+
+    overseas_prices = {
+        "CRCD": _price_payload("12.0"),
+        "AAOX": _price_payload("8.0"),
+        "LITX": _price_payload("6.0"),
+        "PLU": _price_payload("32.96", "-21.54"),
+    }
+
+    async def _get_overseas_price(exchange_code: str, stock_code: str) -> dict[str, dict[str, str]]:
+        return overseas_prices[stock_code]
+
+    overseas_broker.get_overseas_price = AsyncMock(side_effect=_get_overseas_price)
+    overseas_broker.get_overseas_buying_power = AsyncMock(
+        return_value={"output": {"ovrs_ord_psbl_amt": "10000"}}
+    )
+
+    playbook_store = MagicMock()
+    playbook_store.load = MagicMock(return_value=_make_playbook("US_AMEX"))
+
+    evaluated_codes: list[str] = []
+
+    def _evaluate(
+        playbook: DayPlaybook,
+        stock_code: str,
+        stock_data: dict[str, Any],
+        portfolio_data: dict[str, Any],
+    ) -> ScenarioMatch:
+        evaluated_codes.append(stock_code)
+        return _make_hold_match(stock_code)
+
+    scenario_engine = MagicMock(spec=ScenarioEngine)
+    scenario_engine.evaluate = MagicMock(side_effect=_evaluate)
+
+    risk = MagicMock()
+    risk.check_circuit_breaker = MagicMock()
+
+    decision_logger = MagicMock()
+    decision_logger.log_decision = MagicMock(return_value="decision-id")
+
+    telegram = MagicMock()
+    telegram.notify_trade_execution = AsyncMock()
+    telegram.notify_scenario_matched = AsyncMock()
+
+    async def _passthrough(fn, *a, label: str = "", **kw):  # type: ignore[override]
+        return await fn(*a, **kw)
+
+    with (
+        patch("src.main.get_open_markets", return_value=[market]),
+        patch("src.main._retry_connection", new=_passthrough),
+        patch("src.main._inject_staged_exit_features", new=AsyncMock()),
+        patch(
+            "src.main._apply_staged_exit_override_for_hold",
+            side_effect=lambda **kwargs: kwargs["decision"],
+        ),
+    ):
+        await run_daily_session(
+            broker=MagicMock(),
+            overseas_broker=overseas_broker,
+            scenario_engine=scenario_engine,
+            playbook_store=playbook_store,
+            pre_market_planner=MagicMock(),
+            risk=risk,
+            db_conn=db_conn,
+            decision_logger=decision_logger,
+            context_store=MagicMock(),
+            criticality_assessor=MagicMock(),
+            telegram=telegram,
+            settings=settings,
+            smart_scanner=smart_scanner,
+            daily_start_eval=0.0,
+        )
+
+    assert evaluated_codes == ["CRCD", "AAOX", "LITX", "PLU"]
+
+
+@pytest.mark.asyncio
 async def test_run_daily_session_passes_runtime_session_id_to_decision_and_trade_logs() -> None:
     """Daily session must explicitly forward runtime session_id to decision/trade logs."""
     from src.analysis.smart_scanner import ScanCandidate

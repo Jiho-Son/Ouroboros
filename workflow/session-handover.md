@@ -783,3 +783,11 @@
 - next_ticket: OOR-852
 - process_gate_checked: process_ticket=OOR-849 merged_to_feature_branch=yes
 - risks_or_notes: PR #865 mergeability, review, checks, workpad 상태를 재확인하고 `land` skill로 squash merge 및 Linear `Done` 전환까지 마무리한다.
+
+### 2026-03-25 | session=codex-oor-856-start
+- branch: feature/issue-856-daily-held-position-coverage
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-856
+- next_ticket: OOR-856
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `TRADE_MODE=daily` 경로가 scanner `top_n` 밖의 기존 보유 포지션을 평가에서 누락하는지 재현하고, daily exit coverage 를 보장하는 최소 수정과 회귀 테스트/문서 업데이트를 함께 완료한다.
