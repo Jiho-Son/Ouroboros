@@ -25,6 +25,117 @@
         font-size: 13px;
       }
       .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px; }
+      .surface-shell {
+        display: grid;
+        gap: 20px;
+      }
+      .surface-shell[hidden] { display: none; }
+      .surface-tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+      .surface-tab {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid var(--border);
+        color: var(--muted);
+        border-radius: 999px;
+        padding: 8px 14px;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      .surface-tab.active {
+        background: rgba(60, 179, 113, 0.12);
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .surface-intro { margin-bottom: 0; }
+      .overview-rule {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+        border-top: 1px solid rgba(40, 69, 95, 0.5);
+        padding-top: 12px;
+      }
+      .compact-field {
+        min-width: 180px;
+      }
+      .market-summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        gap: 12px;
+      }
+      .market-card {
+        background:
+          linear-gradient(135deg, rgba(60, 179, 113, 0.08), rgba(18, 38, 58, 0.95)),
+          var(--panel);
+        border: 1px solid rgba(40, 69, 95, 0.8);
+        border-radius: 14px;
+        padding: 14px;
+        display: grid;
+        gap: 10px;
+        cursor: pointer;
+        text-align: left;
+        font-family: inherit;
+        color: var(--fg);
+      }
+      .market-card.active {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(60, 179, 113, 0.35);
+      }
+      .market-card-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+      }
+      .market-card-name {
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .market-tone {
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+      }
+      .market-tone.tripped { background: rgba(224, 85, 85, 0.16); color: var(--red); }
+      .market-tone.warning { background: rgba(232, 160, 64, 0.16); color: var(--warn); }
+      .market-tone.active { background: rgba(60, 179, 113, 0.16); color: var(--accent); }
+      .market-tone.watching,
+      .market-tone.ready,
+      .market-tone.idle { background: rgba(159, 179, 200, 0.14); color: var(--muted); }
+      .market-card-meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .market-stat {
+        background: rgba(11, 23, 36, 0.55);
+        border: 1px solid rgba(40, 69, 95, 0.55);
+        border-radius: 10px;
+        padding: 10px;
+      }
+      .market-stat-label {
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+      }
+      .market-stat-value {
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .market-card-foot {
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.5;
+      }
 
       /* Header */
       header {
@@ -385,25 +496,7 @@
       }
       .panel-date { color: var(--muted); font-size: 12px; }
       .empty-msg { color: var(--muted); text-align: center; padding: 20px 0; font-size: 12px; }
-      .diagnostics-shell {
-        margin-top: 20px;
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        background: var(--panel);
-        overflow: hidden;
-      }
-      .diagnostics-shell > summary {
-        cursor: pointer;
-        padding: 16px;
-        font-weight: 700;
-        color: var(--fg);
-        background: rgba(255,255,255,0.02);
-      }
-      .diagnostics-shell[open] > summary {
-        border-bottom: 1px solid rgba(40, 69, 95, 0.5);
-      }
       .diagnostics-body {
-        padding: 16px;
         display: grid;
         gap: 16px;
       }
@@ -429,32 +522,76 @@
         </div>
       </header>
 
-      <!-- Summary cards -->
-      <div class="cards">
-        <div class="card">
-          <div class="card-label">오늘 거래</div>
-          <div class="card-value neutral" id="card-trades">--</div>
-          <div class="card-sub" id="card-trades-sub">거래 건수</div>
-        </div>
-        <div class="card">
-          <div class="card-label">오늘 P&amp;L</div>
-          <div class="card-value" id="card-pnl">--</div>
-          <div class="card-sub" id="card-pnl-sub">실현 손익</div>
-        </div>
-        <div class="card">
-          <div class="card-label">승률</div>
-          <div class="card-value neutral" id="card-winrate">--</div>
-          <div class="card-sub">전체 누적</div>
-        </div>
-        <div class="card">
-          <div class="card-label">누적 거래</div>
-          <div class="card-value neutral" id="card-total">--</div>
-          <div class="card-sub">전체 기간</div>
-        </div>
+      <div class="surface-tabs">
+        <button
+          id="surface-overview-tab"
+          class="surface-tab active"
+          type="button"
+          onclick="setSurface('overview')"
+        >
+          Overview
+        </button>
+        <button
+          id="surface-diagnostics-tab"
+          class="surface-tab"
+          type="button"
+          onclick="setSurface('diagnostics')"
+        >
+          Diagnostics
+        </button>
       </div>
 
-      <!-- Open Positions -->
-      <div class="positions-panel">
+      <section id="overview-surface" class="surface-shell">
+        <div class="panel surface-intro">
+          <div class="panel-header">
+            <div>
+              <span class="panel-title">운영 개요</span>
+              <div class="history-caption">
+                시장별 상태 요약에서 현재 운영 판단을 시작하고, 필요한 시장을 고르면 같은
+                focus 로 차트와 결정 히스토리를 따라갑니다.
+              </div>
+            </div>
+            <div class="panel-controls">
+              <label class="filter-field compact-field">
+                <span class="filter-label">Overview Market</span>
+                <select id="overview-market-select" onchange="syncOverviewMarket(this.value, 'overview')">
+                  <option value="all">전체 시장</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="overview-rule">메인 화면에서는 market 필터만 공유합니다.</div>
+        </div>
+
+        <div id="market-summary-grid" class="market-summary-grid">
+          <div class="decision-empty"><span class="spinner"></span></div>
+        </div>
+
+        <div class="cards">
+          <div class="card">
+            <div class="card-label">운영 포커스</div>
+            <div class="card-value neutral" id="overview-card-focus">--</div>
+            <div class="card-sub" id="overview-card-focus-sub">선택 시장 없음</div>
+          </div>
+          <div class="card">
+            <div class="card-label">오늘 흐름</div>
+            <div class="card-value neutral" id="overview-card-flow">--</div>
+            <div class="card-sub" id="overview-card-flow-sub">trade / decision</div>
+          </div>
+          <div class="card">
+            <div class="card-label">오픈 포지션</div>
+            <div class="card-value neutral" id="overview-card-positions">--</div>
+            <div class="card-sub" id="overview-card-positions-sub">시장별 보유 현황</div>
+          </div>
+          <div class="card">
+            <div class="card-label">Today P&amp;L / CB</div>
+            <div class="card-value neutral" id="overview-card-pnl">--</div>
+            <div class="card-sub" id="overview-card-pnl-sub">circuit breaker</div>
+          </div>
+        </div>
+
+        <!-- Open Positions -->
+        <div class="positions-panel">
         <div class="panel-header">
           <span class="panel-title">
             현재 보유 포지션
@@ -475,12 +612,15 @@
             <tr><td colspan="5" class="pos-empty"><span class="spinner"></span></td></tr>
           </tbody>
         </table>
-      </div>
+        </div>
 
-      <!-- P&L Chart -->
-      <div class="chart-panel">
+        <!-- P&L Chart -->
+        <div class="chart-panel">
         <div class="panel-header">
-          <span class="panel-title">P&amp;L 추이</span>
+          <div>
+            <span class="panel-title">P&amp;L 추이</span>
+            <div class="panel-date" id="pnl-market-caption">전체 시장</div>
+          </div>
           <div class="days-selector">
             <button class="day-btn active" data-days="7" onclick="selectDays(this)">7일</button>
             <button class="day-btn" data-days="30" onclick="selectDays(this)">30일</button>
@@ -491,14 +631,17 @@
           <canvas id="pnl-chart"></canvas>
           <div class="chart-error" id="chart-error" style="display:none">데이터 없음</div>
         </div>
-      </div>
+        </div>
 
-      <!-- Decision history -->
-      <div class="decisions-panel">
+        <!-- Decision history -->
+        <div class="decisions-panel">
         <div class="panel-header">
           <div>
             <span class="panel-title">결정 히스토리</span>
-            <div class="history-caption">상태 파악은 최근 결정 흐름과 trace 에서 시작합니다.</div>
+            <div class="history-caption">
+              상태 파악은 최근 결정 흐름과 trace 에서 시작합니다. market 선택만 overview 와
+              공유합니다.
+            </div>
           </div>
           <span class="pos-count" id="decision-count">0</span>
         </div>
@@ -507,7 +650,7 @@
           <div class="filter-grid">
             <label class="filter-field">
               <span class="filter-label">Market</span>
-              <select id="decision-market" onchange="fetchDecisions()">
+              <select id="decision-market" onchange="handleDecisionMarketChange()">
                 <option value="all">전체</option>
               </select>
             </label>
@@ -563,10 +706,21 @@
         <div id="decisions-body" class="history-list">
           <div class="decision-empty"><span class="spinner"></span></div>
         </div>
-      </div>
+        </div>
+      </section>
 
-      <details class="diagnostics-shell">
-        <summary>Diagnostics</summary>
+      <section id="diagnostics-surface" class="surface-shell" hidden>
+        <div class="panel surface-intro">
+          <div class="panel-header">
+            <div>
+              <span class="panel-title">Diagnostics Surface</span>
+              <div class="history-caption">
+                진단 전용 Surface 입니다. playbook, scorecard, scenario, context 탐색은
+                여기서만 수행하며 overview market state 를 변경하지 않습니다.
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="diagnostics-body">
           <!-- playbook panel -->
           <div class="panel playbook-panel">
@@ -634,13 +788,20 @@
             <div id="context-content"><p class="empty-msg">데이터 없음</p></div>
           </div>
         </div>
-      </details>
+      </section>
     </div>
 
     <script>
       let pnlChart = null;
       let currentDays = 7;
       let decisionFetchTimer = null;
+      let latestDecisionRequestId = 0;
+      let activeSurface = 'overview';
+      let activeOverviewMarket = 'all';
+      let lastStatusPayload = null;
+      let lastOverviewMarkets = [];
+      let lastDecisionMarkets = [];
+      let lastPositionsPayload = null;
 
       function fmt(dt) {
         try {
@@ -678,29 +839,215 @@
         return sym + n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 4 });
       }
 
-      async function fetchPositions() {
+      function signedFixed(value, digits = 2) {
+        if (value === null || value === undefined) return '--';
+        const n = parseFloat(value);
+        const sign = n > 0 ? '+' : '';
+        return `${sign}${n.toFixed(digits)}`;
+      }
+
+      function formatPct(value) {
+        if (value === null || value === undefined) return '--';
+        return `${signedFixed(value, 2)}%`;
+      }
+
+      function availableOverviewMarkets() {
+        return Array.from(new Set([...(lastOverviewMarkets || []), ...(lastDecisionMarkets || [])]));
+      }
+
+      function setSurface(surface) {
+        activeSurface = surface === 'diagnostics' ? 'diagnostics' : 'overview';
+        const overview = document.getElementById('overview-surface');
+        const diagnostics = document.getElementById('diagnostics-surface');
+        overview.hidden = activeSurface !== 'overview';
+        diagnostics.hidden = activeSurface !== 'diagnostics';
+        document.getElementById('surface-overview-tab').classList.toggle('active', activeSurface === 'overview');
+        document.getElementById('surface-diagnostics-tab').classList.toggle('active', activeSurface === 'diagnostics');
+      }
+
+      function toneLabel(tone) {
+        const labels = {
+          tripped: 'CB TRIPPED',
+          warning: 'CB WARNING',
+          active: 'ACTIVE',
+          watching: 'WATCHING',
+          ready: 'READY',
+          idle: 'IDLE',
+        };
+        return labels[tone] || 'UNKNOWN';
+      }
+
+      function normalizeOverviewMarket(market) {
+        return market && market.trim() ? market : 'all';
+      }
+
+      function updateMarketSelects(selectedMarket) {
+        const currentMarket = normalizeOverviewMarket(selectedMarket);
+        const options = currentMarket === 'all'
+          ? availableOverviewMarkets()
+          : Array.from(new Set([...availableOverviewMarkets(), currentMarket]));
+        syncSelectOptions('overview-market-select', options, currentMarket);
+        syncSelectOptions('decision-market', options, currentMarket);
+      }
+
+      function highlightMarketCards() {
+        document.querySelectorAll('.market-card').forEach(card => {
+          card.classList.toggle('active', card.dataset.market === activeOverviewMarket);
+        });
+      }
+
+      function renderMarketSummary(markets) {
+        const grid = document.getElementById('market-summary-grid');
+        const entries = Object.entries(markets || {});
+        if (entries.length === 0) {
+          grid.innerHTML = '<div class="decision-empty">운영 요약 데이터가 없습니다.</div>';
+          return;
+        }
+        grid.innerHTML = entries.map(([market, info]) => `
+          <button type="button" class="market-card ${market === activeOverviewMarket ? 'active' : ''}" data-market="${esc(market)}">
+            <div class="market-card-top">
+              <div>
+                <div class="market-card-name">${esc(market)}</div>
+                <div class="history-caption">${esc(info.playbook_status || 'playbook 없음')}</div>
+              </div>
+              <span class="market-tone ${esc(info.status_tone || 'idle')}">${esc(toneLabel(info.status_tone))}</span>
+            </div>
+            <div class="market-card-meta">
+              <div class="market-stat">
+                <div class="market-stat-label">Trade / Decision</div>
+                <div class="market-stat-value">${esc(`${info.trade_count ?? 0} / ${info.decision_count ?? 0}`)}</div>
+              </div>
+              <div class="market-stat">
+                <div class="market-stat-label">Open Positions</div>
+                <div class="market-stat-value">${esc(String(info.open_position_count ?? 0))}</div>
+              </div>
+              <div class="market-stat">
+                <div class="market-stat-label">Today P&L</div>
+                <div class="market-stat-value">${fmtPnl(info.total_pnl)}</div>
+              </div>
+              <div class="market-stat">
+                <div class="market-stat-label">CB</div>
+                <div class="market-stat-value">${esc(info.circuit_breaker_status || 'unknown')}</div>
+              </div>
+            </div>
+            <div class="market-card-foot">
+              latest ${esc(info.latest_session_id || 'session 없음')}
+              ${info.latest_decision_action ? ` · ${esc(info.latest_decision_action)}` : ''}
+              ${info.current_pnl_pct !== null && info.current_pnl_pct !== undefined ? ` · ${esc(formatPct(info.current_pnl_pct))}` : ''}
+            </div>
+          </button>
+        `).join('');
+        grid.querySelectorAll('.market-card').forEach(card => {
+          card.addEventListener('click', () => syncOverviewMarket(card.dataset.market, 'card'));
+        });
+        highlightMarketCards();
+      }
+
+      function updateOverviewCards(statusPayload) {
+        const markets = statusPayload?.markets || {};
+        const focusEl = document.getElementById('overview-card-focus');
+        const focusSubEl = document.getElementById('overview-card-focus-sub');
+        const flowEl = document.getElementById('overview-card-flow');
+        const flowSubEl = document.getElementById('overview-card-flow-sub');
+        const positionsEl = document.getElementById('overview-card-positions');
+        const positionsSubEl = document.getElementById('overview-card-positions-sub');
+        const pnlEl = document.getElementById('overview-card-pnl');
+        const pnlSubEl = document.getElementById('overview-card-pnl-sub');
+
+        if (activeOverviewMarket !== 'all' && markets[activeOverviewMarket]) {
+          const info = markets[activeOverviewMarket];
+          focusEl.textContent = activeOverviewMarket;
+          focusSubEl.textContent = `${toneLabel(info.status_tone)} · playbook ${info.playbook_status || '없음'}`;
+          flowEl.textContent = `T${info.trade_count ?? 0} / D${info.decision_count ?? 0}`;
+          flowSubEl.textContent = `${info.latest_session_id || 'session 없음'}${info.latest_decision_action ? ` · ${info.latest_decision_action}` : ''}`;
+          positionsEl.textContent = String(info.open_position_count ?? 0);
+          positionsSubEl.textContent = info.latest_decision_at ? `last decision ${fmtStamp(info.latest_decision_at)}` : '최근 결정 없음';
+          const pnlValue = info.total_pnl ?? 0;
+          pnlEl.textContent = signedFixed(pnlValue, 2);
+          pnlEl.className = `card-value ${pnlValue > 0 ? 'positive' : pnlValue < 0 ? 'negative' : 'neutral'}`;
+          pnlSubEl.textContent = `CB ${info.circuit_breaker_status || 'unknown'} · ${formatPct(info.current_pnl_pct)}`;
+          return;
+        }
+
+        if (activeOverviewMarket !== 'all') {
+          focusEl.textContent = activeOverviewMarket;
+          focusSubEl.textContent = '상태 요약 없음 · history 중심 market';
+          flowEl.textContent = '--';
+          flowSubEl.textContent = 'today activity unavailable';
+          positionsEl.textContent = '--';
+          positionsSubEl.textContent = '포지션 정보 없음';
+          pnlEl.textContent = '--';
+          pnlEl.className = 'card-value neutral';
+          pnlSubEl.textContent = 'CB unavailable';
+          return;
+        }
+
+        const totals = statusPayload?.totals || {};
+        const activeMarketCount = Object.values(markets).filter(info => (info.open_position_count || 0) > 0).length;
+        focusEl.textContent = 'ALL';
+        focusSubEl.textContent = `${Object.keys(markets).length} markets in view`;
+        flowEl.textContent = `T${totals.trade_count ?? 0} / D${totals.decision_count ?? 0}`;
+        flowSubEl.textContent = 'today overview';
+        positionsEl.textContent = String(activeMarketCount);
+        positionsSubEl.textContent = '포지션 보유 시장 수';
+        const pnlValue = totals.total_pnl ?? 0;
+        pnlEl.textContent = signedFixed(pnlValue, 2);
+        pnlEl.className = `card-value ${pnlValue > 0 ? 'positive' : pnlValue < 0 ? 'negative' : 'neutral'}`;
+        pnlSubEl.textContent = `CB ${statusPayload?.circuit_breaker?.status || 'unknown'} · ${formatPct(statusPayload?.circuit_breaker?.current_pnl_pct)}`;
+      }
+
+      function renderPositionsFromCache() {
         const tbody = document.getElementById('positions-body');
         const countEl = document.getElementById('positions-count');
+        const payload = lastPositionsPayload;
+        const positions = payload?.positions || [];
+        const visiblePositions = activeOverviewMarket === 'all'
+          ? positions
+          : positions.filter(position => position.market === activeOverviewMarket);
+        countEl.textContent = visiblePositions.length;
+        if (visiblePositions.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="pos-empty">현재 보유 중인 포지션 없음</td></tr>';
+          return;
+        }
+        tbody.innerHTML = visiblePositions.map(p => `
+          <tr>
+            <td><strong>${p.stock_code || '--'}</strong></td>
+            <td><span style="color:var(--muted);font-size:11px">${p.market || '--'}</span></td>
+            <td>${p.quantity ?? '--'}</td>
+            <td>${fmtPrice(p.entry_price, p.market)}</td>
+            <td style="color:var(--muted);font-size:11px">${p.held || '--'}</td>
+          </tr>
+        `).join('');
+      }
+
+      function syncOverviewMarket(market, source = 'overview') {
+        activeOverviewMarket = normalizeOverviewMarket(market);
+        updateMarketSelects(activeOverviewMarket);
+        document.getElementById('pnl-market-caption').textContent = activeOverviewMarket === 'all'
+          ? '전체 시장'
+          : `${activeOverviewMarket} focus`;
+        highlightMarketCards();
+        updateOverviewCards(lastStatusPayload);
+        renderPositionsFromCache();
+        if (source !== 'status') {
+          fetchPnlHistory(currentDays, activeOverviewMarket);
+          fetchDecisions();
+        }
+      }
+
+      function handleDecisionMarketChange() {
+        const selected = document.getElementById('decision-market').value || 'all';
+        syncOverviewMarket(selected, 'history');
+      }
+
+      async function fetchPositions() {
         try {
           const r = await fetch('/api/positions');
           if (!r.ok) throw new Error('fetch failed');
-          const d = await r.json();
-          countEl.textContent = d.count ?? 0;
-          if (!d.positions || d.positions.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="pos-empty">현재 보유 중인 포지션 없음</td></tr>';
-            return;
-          }
-          tbody.innerHTML = d.positions.map(p => `
-            <tr>
-              <td><strong>${p.stock_code || '--'}</strong></td>
-              <td><span style="color:var(--muted);font-size:11px">${p.market || '--'}</span></td>
-              <td>${p.quantity ?? '--'}</td>
-              <td>${fmtPrice(p.entry_price, p.market)}</td>
-              <td style="color:var(--muted);font-size:11px">${p.held || '--'}</td>
-            </tr>
-          `).join('');
+          lastPositionsPayload = await r.json();
+          renderPositionsFromCache();
         } catch {
-          tbody.innerHTML = '<tr><td colspan="5" class="pos-empty">데이터 로드 실패</td></tr>';
+          document.getElementById('positions-body').innerHTML = '<tr><td colspan="5" class="pos-empty">데이터 로드 실패</td></tr>';
         }
       }
 
@@ -741,17 +1088,14 @@
           const r = await fetch('/api/status');
           if (!r.ok) return;
           const d = await r.json();
-          const t = d.totals || {};
-          document.getElementById('card-trades').textContent = t.trade_count ?? '--';
-          const pnlEl = document.getElementById('card-pnl');
-          const pnlV = t.total_pnl;
-          if (pnlV !== undefined) {
-            const n = parseFloat(pnlV);
-            const sign = n > 0 ? '+' : '';
-            pnlEl.textContent = `${sign}${n.toFixed(2)}`;
-            pnlEl.className = `card-value ${n > 0 ? 'positive' : n < 0 ? 'negative' : 'neutral'}`;
-          }
-          document.getElementById('card-pnl-sub').textContent = `결정 ${t.decision_count ?? 0}건`;
+          lastStatusPayload = d;
+          lastOverviewMarkets = Object.keys(d.markets || {});
+          updateMarketSelects(activeOverviewMarket);
+          renderMarketSummary(d.markets || {});
+          updateOverviewCards(d);
+          document.getElementById('pnl-market-caption').textContent = activeOverviewMarket === 'all'
+            ? '전체 시장'
+            : `${activeOverviewMarket} focus`;
           renderCbGauge(d.circuit_breaker);
           renderModeBadge(d.mode);
         } catch {}
@@ -769,20 +1113,12 @@
         }
       }
 
-      async function fetchPerformance() {
+      async function fetchPnlHistory(days, market = activeOverviewMarket) {
         try {
-          const r = await fetch('/api/performance?market=all');
-          if (!r.ok) return;
-          const d = await r.json();
-          const c = d.combined || {};
-          document.getElementById('card-winrate').textContent = c.win_rate !== undefined ? `${c.win_rate}%` : '--';
-          document.getElementById('card-total').textContent = c.total_trades ?? '--';
-        } catch {}
-      }
-
-      async function fetchPnlHistory(days) {
-        try {
-          const r = await fetch(`/api/pnl/history?days=${days}`);
+          document.getElementById('pnl-market-caption').textContent = market === 'all'
+            ? '전체 시장'
+            : `${market} focus`;
+          const r = await fetch(`/api/pnl/history?days=${days}&market=${encodeURIComponent(market)}`);
           if (!r.ok) throw new Error('fetch failed');
           const d = await r.json();
           renderChart(d);
@@ -962,6 +1298,7 @@
       }
 
       async function fetchDecisions() {
+        const requestId = ++latestDecisionRequestId;
         const list = document.getElementById('decisions-body');
         const summary = document.getElementById('decision-summary');
         const windowEl = document.getElementById('decision-summary-window');
@@ -977,8 +1314,12 @@
           const r = await fetch(`/api/decisions?${params.toString()}`);
           if (!r.ok) throw new Error('fetch failed');
           const d = await r.json();
-          syncSelectOptions('decision-market', d.markets || [], d.filters?.market);
+          if (requestId !== latestDecisionRequestId) return;
+          lastDecisionMarkets = d.markets || [];
+          updateMarketSelects(activeOverviewMarket);
           syncSelectOptions('decision-session', d.sessions || [], d.filters?.session_id);
+          highlightMarketCards();
+          updateOverviewCards(lastStatusPayload);
           countEl.textContent = d.count ?? 0;
           summary.textContent = buildDecisionSummary(d.filters || filters, d.count ?? 0);
           windowEl.textContent = d.filters?.from_date || d.filters?.to_date
@@ -1015,7 +1356,7 @@
         document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         currentDays = parseInt(btn.dataset.days, 10);
-        fetchPnlHistory(currentDays);
+        fetchPnlHistory(currentDays, activeOverviewMarket);
       }
 
       function todayStr() {
@@ -1131,11 +1472,10 @@
 
       async function refreshAll() {
         document.getElementById('last-updated').textContent = '업데이트 중...';
+        await fetchStatus();
         await Promise.all([
-          fetchStatus(),
-          fetchPerformance(),
           fetchPositions(),
-          fetchPnlHistory(currentDays),
+          fetchPnlHistory(currentDays, activeOverviewMarket),
           fetchDecisions(),
           fetchPlaybook(),
           fetchScorecard(),

@@ -180,6 +180,25 @@ def _app(tmp_path: Path) -> Any:
     return create_dashboard_app(str(db_path))
 
 
+def _app_with_operating_status(tmp_path: Path) -> Any:
+    db_path = tmp_path / "dashboard_status_test.db"
+    conn = init_db(str(db_path))
+    _seed_db(conn)
+    conn.execute(
+        "UPDATE decision_logs SET session_id = ? WHERE decision_id = ?",
+        ("KRX_REG", "d-kr-1"),
+    )
+    conn.execute(
+        "UPDATE decision_logs SET session_id = ? WHERE decision_id = ?",
+        ("US_REG", "d-us-1"),
+    )
+    _seed_cb_context(conn, -1.5, market="KR")
+    _seed_cb_context(conn, -3.5, market="US_NASDAQ")
+    conn.commit()
+    conn.close()
+    return create_dashboard_app(str(db_path))
+
+
 def _endpoint(app: Any, path: str) -> Callable[..., Any]:
     for route in app.routes:
         if getattr(route, "path", None) == path:
@@ -287,6 +306,40 @@ def test_index_exposes_decision_trace_controls(tmp_path: Path) -> None:
     assert "Diagnostics" in html
 
 
+def test_index_exposes_overview_and_diagnostics_surfaces(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+    client = TestClient(app)
+    html = client.get("/").text
+
+    assert "surface-overview-tab" in html
+    assert "surface-diagnostics-tab" in html
+    assert "market-summary-grid" in html
+    assert "diagnostics-surface" in html
+
+
+def test_index_documents_overview_market_linkage_rules(tmp_path: Path) -> None:
+    app = _app_with_trace_decisions(tmp_path)
+    client = TestClient(app)
+    html = client.get("/").text
+
+    assert "activeOverviewMarket" in html
+    assert "syncOverviewMarket" in html
+    assert "메인 화면에서는 market 필터만 공유합니다." in html
+
+
+def test_index_prevents_stale_decision_fetch_from_overwriting_market_focus(
+    tmp_path: Path,
+) -> None:
+    app = _app_with_trace_decisions(tmp_path)
+    client = TestClient(app)
+    html = client.get("/").text
+
+    assert "let latestDecisionRequestId = 0;" in html
+    assert "const requestId = ++latestDecisionRequestId;" in html
+    assert "if (requestId !== latestDecisionRequestId) return;" in html
+    assert html.count("activeOverviewMarket = normalizeOverviewMarket(") == 1
+
+
 def test_status_endpoint(tmp_path: Path) -> None:
     app = _app(tmp_path)
     get_status = _endpoint(app, "/api/status")
@@ -294,6 +347,66 @@ def test_status_endpoint(tmp_path: Path) -> None:
     assert "KR" in body["markets"]
     assert "US_NASDAQ" in body["markets"]
     assert "totals" in body
+
+
+def test_status_endpoint_returns_market_operating_summary(tmp_path: Path) -> None:
+    app = _app_with_operating_status(tmp_path)
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+
+    kr = body["markets"]["KR"]
+    us = body["markets"]["US_NASDAQ"]
+
+    assert kr["open_position_count"] == 1
+    assert kr["latest_decision_action"] == "BUY"
+    assert kr["latest_session_id"] == "KRX_REG"
+    assert kr["current_pnl_pct"] == -1.5
+    assert kr["circuit_breaker_status"] == "ok"
+    assert kr["status_tone"] == "active"
+
+    assert us["open_position_count"] == 0
+    assert us["latest_decision_action"] == "SELL"
+    assert us["latest_session_id"] == "US_REG"
+    assert us["current_pnl_pct"] == -3.5
+    assert us["circuit_breaker_status"] == "tripped"
+    assert us["status_tone"] == "tripped"
+
+
+def test_status_endpoint_excludes_stale_markets_without_today_activity_or_positions(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "dashboard_status_stale_markets.db"
+    conn = init_db(str(db_path))
+    _seed_db(conn)
+    conn.execute(
+        """
+        INSERT INTO decision_logs (
+            decision_id, timestamp, stock_code, market, exchange_code,
+            session_id, action, confidence, rationale, context_snapshot, input_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "d-jp-old",
+            "2026-02-01T01:00:00+00:00",
+            "7203",
+            "JP",
+            "TSE",
+            "JP_REG",
+            "BUY",
+            70,
+            "old signal",
+            json.dumps({}),
+            json.dumps({}),
+        ),
+    )
+    _seed_cb_context(conn, -0.5, market="JP")
+    conn.close()
+
+    app = create_dashboard_app(str(db_path))
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+
+    assert "JP" not in body["markets"]
 
 
 def test_playbook_found(tmp_path: Path) -> None:
