@@ -666,28 +666,26 @@ def _empty_performance(market: str) -> dict[str, Any]:
 
 
 def _load_market_pnl_pct(conn: sqlite3.Connection) -> dict[str, float]:
+    # system_metrics.key is PRIMARY KEY and written via INSERT OR REPLACE,
+    # so at most one row exists per market key. LIMIT 20 is a conservative
+    # guard in case the schema assumption ever changes.
     rows = conn.execute(
         """
         SELECT key, value
         FROM system_metrics
         WHERE key LIKE 'portfolio_pnl_pct_%'
         ORDER BY updated_at DESC
+        LIMIT 20
         """
     ).fetchall()
     market_pnl_pct: dict[str, float] = {}
     prefix = "portfolio_pnl_pct_"
     for row in rows:
-        key = row["key"]
-        if not key.startswith(prefix):
-            continue
-        market = key.removeprefix(prefix)
-        if market in market_pnl_pct:
-            continue
+        market = row["key"].removeprefix(prefix)
         payload = json.loads(row["value"])
         pnl_pct = payload.get("pnl_pct")
-        if pnl_pct is None:
-            continue
-        market_pnl_pct[market] = round(float(pnl_pct), 4)
+        if pnl_pct is not None:
+            market_pnl_pct[market] = round(float(pnl_pct), 4)
     return market_pnl_pct
 
 
