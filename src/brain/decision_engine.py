@@ -46,6 +46,8 @@ class TradeDecision:
     rationale: str
     token_count: int = 0  # Estimated tokens used
     cached: bool = False  # Whether decision came from cache
+    llm_prompt: str | None = None
+    llm_response: str | None = None
 
 
 class DecisionEngine:
@@ -420,6 +422,8 @@ class DecisionEngine:
                     rationale=cached_decision.rationale,
                     token_count=0,
                     cached=True,
+                    llm_prompt=cached_decision.llm_prompt,
+                    llm_response=cached_decision.llm_response,
                 )
 
         # Build prompt (prompt_override takes priority for callers like pre_market_planner)
@@ -444,7 +448,11 @@ class DecisionEngine:
         except Exception as exc:
             logger.error("LLM provider error: %s", exc)
             return TradeDecision(
-                action="HOLD", confidence=0, rationale=f"API error: {exc}", token_count=token_count
+                action="HOLD",
+                confidence=0,
+                rationale=f"API error: {exc}",
+                token_count=token_count,
+                llm_prompt=prompt,
             )
 
         # prompt_override callers (e.g. pre_market_planner) expect raw text back,
@@ -454,7 +462,12 @@ class DecisionEngine:
             logger.info("LLM raw response received (prompt_override, tokens=%d)", token_count)
             # Not a trade decision — don't inflate _total_decisions metrics
             return TradeDecision(
-                action="HOLD", confidence=0, rationale=raw, token_count=token_count
+                action="HOLD",
+                confidence=0,
+                rationale=raw,
+                token_count=token_count,
+                llm_prompt=prompt,
+                llm_response=raw,
             )
 
         decision = self.parse_response(raw)
@@ -467,6 +480,8 @@ class DecisionEngine:
             rationale=decision.rationale,
             token_count=token_count,
             cached=False,
+            llm_prompt=prompt,
+            llm_response=raw,
         )
 
         # Cache if appropriate

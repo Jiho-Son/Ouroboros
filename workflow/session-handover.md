@@ -815,3 +815,19 @@
 - next_ticket: OOR-857
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #869 top-level review 에 남은 테스트 순서 의존/부정 케이스 누락 지적의 타당성을 코드 기준으로 재검증하고, 필요한 최소 수정과 thread 대응/재검증까지 한 세션에서 마무리한다.
+
+### 2026-03-25 | session=codex-oor-853-rework-fresh-branch
+- branch: feature/issue-853-dashboard-cleanup-rework
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-853, PR #866
+- next_ticket: OOR-853
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: reviewer 코멘트에 따라 PR #866/workpad를 정리했고, `origin/main@af9cd97` 기준 fresh branch에서 재현부터 다시 시작한다.
+
+### 2026-03-25 | session=codex-pr870-review-followup
+- branch: feature/issue-853-dashboard-cleanup-rework
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-853, PR #870
+- next_ticket: OOR-853
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #870 review thread를 코드/테스트와 대조해 타당한 지적만 반영하고, 수정 사항 검증 후 push 및 inline reply/top-level comment까지 같은 세션에서 마무리한다.

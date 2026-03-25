@@ -74,6 +74,11 @@ async def test_decision_engine_uses_injected_llm_provider(settings) -> None:
 
     assert decision.action == "BUY"
     assert decision.confidence == 92
+    assert decision.llm_prompt == engine.build_prompt_sync(market_data)
+    assert (
+        decision.llm_response
+        == '{"action": "BUY", "confidence": 92, "rationale": "Local model approved"}'
+    )
     assert llm_provider.calls == [
         {
             "model": settings.GEMINI_MODEL,

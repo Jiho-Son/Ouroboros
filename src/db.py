@@ -118,6 +118,8 @@ def init_db(db_path: str) -> sqlite3.Connection:
             rationale TEXT NOT NULL,
             context_snapshot TEXT NOT NULL,
             input_data TEXT NOT NULL,
+            llm_prompt TEXT,
+            llm_response TEXT,
             outcome_pnl REAL,
             outcome_accuracy INTEGER,
             reviewed INTEGER DEFAULT 0,
@@ -139,6 +141,10 @@ def init_db(db_path: str) -> sqlite3.Connection:
         )
     if "outcome_pnl" not in decision_columns:
         conn.execute("ALTER TABLE decision_logs ADD COLUMN outcome_pnl REAL")
+    if "llm_prompt" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN llm_prompt TEXT")
+    if "llm_response" not in decision_columns:
+        conn.execute("ALTER TABLE decision_logs ADD COLUMN llm_response TEXT")
     if "outcome_accuracy" not in decision_columns:
         conn.execute("ALTER TABLE decision_logs ADD COLUMN outcome_accuracy INTEGER")
     if "reviewed" not in decision_columns:

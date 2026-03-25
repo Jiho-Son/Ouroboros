@@ -25,6 +25,8 @@ class DecisionLog:
     rationale: str
     context_snapshot: dict[str, Any]
     input_data: dict[str, Any]
+    llm_prompt: str | None = None
+    llm_response: str | None = None
     outcome_pnl: float | None = None
     outcome_accuracy: int | None = None
     reviewed: bool = False
@@ -49,6 +51,8 @@ class DecisionLogger:
         context_snapshot: dict[str, Any],
         input_data: dict[str, Any],
         session_id: str | None = None,
+        llm_prompt: str | None = None,
+        llm_response: str | None = None,
     ) -> str:
         """Log a trading decision with full context.
 
@@ -62,6 +66,8 @@ class DecisionLogger:
             context_snapshot: L1-L7 context snapshot at decision time
             input_data: Market data inputs (price, volume, orderbook, etc.)
             session_id: Runtime session identifier
+            llm_prompt: Exact prompt sent to the provider, when available
+            llm_response: Raw provider response text, when available
 
         Returns:
             decision_id: Unique identifier for this decision
@@ -74,9 +80,10 @@ class DecisionLogger:
             """
             INSERT INTO decision_logs (
                 decision_id, timestamp, stock_code, market, exchange_code,
-                session_id, action, confidence, rationale, context_snapshot, input_data
+                session_id, action, confidence, rationale, context_snapshot, input_data,
+                llm_prompt, llm_response
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 decision_id,
@@ -90,6 +97,8 @@ class DecisionLogger:
                 rationale,
                 json.dumps(context_snapshot),
                 json.dumps(input_data),
+                llm_prompt,
+                llm_response,
             ),
         )
         self.conn.commit()
@@ -112,7 +121,7 @@ class DecisionLogger:
             SELECT
                 decision_id, timestamp, stock_code, market, exchange_code,
                 session_id, action, confidence, rationale, context_snapshot, input_data,
-                outcome_pnl, outcome_accuracy, reviewed, review_notes
+                llm_prompt, llm_response, outcome_pnl, outcome_accuracy, reviewed, review_notes
             FROM decision_logs
             WHERE reviewed = 0 AND confidence >= ?
             ORDER BY timestamp DESC
@@ -172,7 +181,7 @@ class DecisionLogger:
             SELECT
                 decision_id, timestamp, stock_code, market, exchange_code,
                 session_id, action, confidence, rationale, context_snapshot, input_data,
-                outcome_pnl, outcome_accuracy, reviewed, review_notes
+                llm_prompt, llm_response, outcome_pnl, outcome_accuracy, reviewed, review_notes
             FROM decision_logs
             WHERE decision_id = ?
             """,
@@ -200,7 +209,7 @@ class DecisionLogger:
             SELECT
                 decision_id, timestamp, stock_code, market, exchange_code,
                 session_id, action, confidence, rationale, context_snapshot, input_data,
-                outcome_pnl, outcome_accuracy, reviewed, review_notes
+                llm_prompt, llm_response, outcome_pnl, outcome_accuracy, reviewed, review_notes
             FROM decision_logs
             WHERE confidence >= ?
               AND outcome_pnl IS NOT NULL
@@ -232,8 +241,10 @@ class DecisionLogger:
             rationale=row[8],
             context_snapshot=json.loads(row[9]),
             input_data=json.loads(row[10]),
-            outcome_pnl=row[11],
-            outcome_accuracy=row[12],
-            reviewed=bool(row[13]),
-            review_notes=row[14],
+            llm_prompt=row[11],
+            llm_response=row[12],
+            outcome_pnl=row[13],
+            outcome_accuracy=row[14],
+            reviewed=bool(row[15]),
+            review_notes=row[16],
         )

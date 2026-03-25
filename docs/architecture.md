@@ -327,7 +327,7 @@ High-frequency trading with individual stock analysis:
 | `/api/scorecard/{date}` | GET | Daily scorecard from L6_DAILY context |
 | `/api/performance` | GET | Trading performance metrics (by market + combined) |
 | `/api/context/{layer}` | GET | Query context by layer (L1-L7) |
-| `/api/decisions` | GET | Decision log entries with outcomes |
+| `/api/decisions` | GET | Decision log entries with trace fields, outcomes, and rich filters |
 | `/api/scenarios/active` | GET | Today's matched scenarios |
 | `/api/pnl/history` | GET | P&L history time series |
 | `/api/positions` | GET | Current open positions |
