@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from src.analysis.smart_scanner import ScanCandidate
-from src.broker.balance_utils import _extract_held_qty_from_balance
+from src.broker.balance_utils import _extract_avg_price_from_balance, _extract_held_qty_from_balance
 from src.config import Settings
 from src.core.order_policy import get_session_info
 from src.core.session_risk import _resolve_market_setting
@@ -70,6 +70,42 @@ def _resolve_buy_suppression_position(
     if broker_qty > 0:
         return {"price": 0.0, "quantity": broker_qty}
     return None
+
+
+def _resolve_open_position_context(
+    *,
+    db_conn: Any,
+    balance_data: dict[str, Any],
+    stock_code: str,
+    market: MarketInfo,
+) -> dict[str, Any] | None:
+    """Resolve open-position context with broker fallback for exit protections.
+
+    Risk defenses must not disappear just because the local DB missed a prior
+    startup sync or restart recovery. Prefer DB state when present, but fall
+    back to broker-held quantity and average price so HOLD -> SELL overrides
+    and realtime hard-stop tracking still have position context.
+    """
+    existing_position = get_open_position(db_conn, stock_code, market.code)
+    if existing_position:
+        return existing_position
+
+    broker_qty = _extract_held_qty_from_balance(
+        balance_data, stock_code, is_domestic=market.is_domestic
+    )
+    if broker_qty <= 0:
+        return None
+
+    entry_price = _extract_avg_price_from_balance(
+        balance_data, stock_code, is_domestic=market.is_domestic
+    )
+    return {
+        "decision_id": "",
+        "price": entry_price,
+        "quantity": broker_qty,
+        "timestamp": "",
+        "source": "broker_balance_fallback",
+    }
 
 
 def _determine_order_quantity(

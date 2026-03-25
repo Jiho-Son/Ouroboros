@@ -783,3 +783,11 @@
 - next_ticket: OOR-852
 - process_gate_checked: process_ticket=OOR-849 merged_to_feature_branch=yes
 - risks_or_notes: PR #865 mergeability, review, checks, workpad 상태를 재확인하고 `land` skill로 squash merge 및 Linear `Done` 전환까지 마무리한다.
+
+### 2026-03-25 | session=codex-oor-855-start
+- branch: feature/issue-855-risk-stop-loss
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-855
+- next_ticket: OOR-855
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: -21% 손실 보유 상태에서 리스크 방어 손절이 미실행된 경로를 먼저 재현하고, hard-stop/runtime 방어 로직을 약화시키지 않는 최소 범위 TDD 수정과 검증 증적을 남긴다.

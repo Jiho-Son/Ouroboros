@@ -72,6 +72,7 @@ from src.core.order_helpers import (
     _determine_order_quantity,
     _resolve_buy_suppression_position,
     _resolve_domestic_quote_market_div_code,
+    _resolve_open_position_context,
     _resolve_recent_sell_guard_window_seconds,
     _resolve_sell_qty_for_pnl,
     _should_block_buy_above_recent_sell,
@@ -1274,7 +1275,12 @@ async def _collect_trading_cycle_market_snapshot(
         else:
             market_data["volume_ratio"] = 1.0
 
-    open_pos = get_open_position(db_conn, stock_code, market.code)
+    open_pos = _resolve_open_position_context(
+        db_conn=db_conn,
+        balance_data=balance_data,
+        stock_code=stock_code,
+        market=market,
+    )
     if open_pos and current_price > 0:
         entry_price = safe_float(open_pos.get("price"), 0.0)
         if entry_price > 0:
@@ -1381,6 +1387,7 @@ async def _collect_trading_cycle_market_snapshot(
         "market_candidates": market_candidates,
         "candidate": candidate,
         "criticality": criticality,
+        "open_position": open_pos,
     }
 
 
@@ -1628,7 +1635,7 @@ async def _evaluate_trading_cycle_decision(
                 )
 
     if decision.action == "HOLD":
-        open_position = get_open_position(db_conn, stock_code, market.code)
+        open_position = snapshot.get("open_position")
         if not open_position:
             _clear_runtime_exit_cache_for_symbol(
                 market_code=market.code,
@@ -2653,6 +2660,26 @@ async def _process_daily_session_stock(
     )
     if stock_name is not None:
         stock_data["stock_name"] = stock_name
+    daily_open = _resolve_open_position_context(
+        db_conn=db_conn,
+        balance_data=balance_data,
+        stock_code=stock_code,
+        market=market,
+    )
+    if daily_open and stock_data["current_price"] > 0:
+        entry_price = safe_float(daily_open.get("price"), 0.0)
+        if entry_price > 0:
+            stock_data["unrealized_pnl_pct"] = (
+                (stock_data["current_price"] - entry_price) / entry_price * 100
+            )
+        entry_ts = daily_open.get("timestamp")
+        if entry_ts:
+            try:
+                entry_date = datetime.fromisoformat(entry_ts).date()
+                stock_data["holding_days"] = (datetime.now(UTC).date() - entry_date).days
+            except (ValueError, TypeError):
+                pass
+
     match = scenario_engine.evaluate(
         playbook,
         stock_code,
@@ -2777,7 +2804,6 @@ async def _process_daily_session_stock(
                 )
 
     if decision.action == "HOLD":
-        daily_open = get_open_position(db_conn, stock_code, market.code)
         if not daily_open:
             _clear_runtime_exit_cache_for_symbol(
                 market_code=market.code,
