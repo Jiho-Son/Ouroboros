@@ -105,7 +105,8 @@ python -m src.main --mode=live --dashboard
 - [ ] 로그에 `MODE=live` 출력 확인
 - [ ] 첫 잔고 조회 성공 (ConnectionError 없음)
 - [ ] Telegram 알림 수신 확인 ("System started")
-- [ ] realtime hard-stop 모드에서 `Realtime hard-stop websocket monitor started enabled_markets=<...> source=websocket_hard_stop` 로그 확인
+- [ ] live runtime 에서는 `TRADE_MODE=daily` / `TRADE_MODE=realtime` 여부와 무관하게 supported held position 보호용 realtime hard-stop websocket 이 유지된다는 점을 확인한다.
+- [ ] supported market 이 하나라도 있으면 `Realtime hard-stop websocket monitor started enabled_markets=<...> source=websocket_hard_stop` 로그 확인
 - [ ] US 보유 포지션이 realtime hard-stop 추적 대상이면 `Realtime websocket action=connect` 와 해당 종목의 `Realtime websocket action=subscribe` 또는 `Realtime websocket action=resubscribe` 로그 확인
 - [ ] US 추적 종목에 대해 `Realtime websocket action=parsed_us_event` 또는 `Realtime websocket action=ignore_us_parse_failure` 또는 `Realtime price event action=no_trigger` 또는 `Realtime price event action=dispatch_trigger` 중 최소 1개가 관측되는지 확인
 - [ ] 첫 주문 후 KIS 앱에서 체결 내역 확인

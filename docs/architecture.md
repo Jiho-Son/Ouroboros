@@ -39,6 +39,14 @@ merges open holdings from broker balance / DB into a separate mandatory
 evaluation set before playbook/scenario execution. This keeps entry ranking
 cost-efficient without allowing held-position exit checks to be skipped.
 
+**Live daily hard-stop coverage**: in `MODE=live`, realtime websocket hard-stop
+monitoring stays active for supported markets even when `TRADE_MODE=daily`.
+Daily batch cadence still governs entry and polling-based staged exits, but
+held-position hard-stop protection is not allowed to wait for the next batch.
+The runtime should therefore emit the same websocket startup / subscribe
+evidence for supported held positions in live daily mode as it does in realtime
+mode.
+
 ### Realtime Mode
 
 High-frequency trading with individual stock analysis:
