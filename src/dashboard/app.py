@@ -28,7 +28,99 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
     def get_status() -> dict[str, Any]:
         today = datetime.now(UTC).date().isoformat()
         with _connect(db_path) as conn:
-            market_rows = conn.execute(
+            trade_rows = {
+                row["market"]: row
+                for row in conn.execute(
+                    """
+                    SELECT market,
+                           COUNT(*) AS trade_count,
+                           COALESCE(SUM(pnl), 0.0) AS total_pnl
+                    FROM trades
+                    WHERE DATE(timestamp) = ?
+                    GROUP BY market
+                    ORDER BY market
+                    """,
+                    (today,),
+                ).fetchall()
+            }
+            decision_rows = {
+                row["market"]: row
+                for row in conn.execute(
+                    """
+                    SELECT market, COUNT(*) AS decision_count
+                    FROM decision_logs
+                    WHERE DATE(timestamp) = ?
+                    GROUP BY market
+                    ORDER BY market
+                    """,
+                    (today,),
+                ).fetchall()
+            }
+            playbook_rows = {
+                row["market"]: row["status"]
+                for row in conn.execute(
+                    """
+                    SELECT market, status
+                    FROM (
+                        SELECT market,
+                               status,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY market
+                                   ORDER BY generated_at DESC
+                               ) AS rn
+                        FROM playbooks
+                        WHERE date = ?
+                    )
+                    WHERE rn = 1
+                    ORDER BY market
+                    """,
+                    (today,),
+                ).fetchall()
+            }
+            position_rows = {
+                row["market"]: int(row["open_position_count"])
+                for row in conn.execute(
+                    """
+                    SELECT market, COUNT(*) AS open_position_count
+                    FROM (
+                        SELECT market,
+                               action,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY stock_code, market
+                                   ORDER BY timestamp DESC
+                               ) AS rn
+                        FROM trades
+                    )
+                    WHERE rn = 1 AND action = 'BUY'
+                    GROUP BY market
+                    ORDER BY market
+                    """
+                ).fetchall()
+            }
+            latest_decision_rows = {
+                row["market"]: row
+                for row in conn.execute(
+                    """
+                    SELECT market, timestamp, action, session_id
+                    FROM (
+                        SELECT market,
+                               timestamp,
+                               action,
+                               session_id,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY market
+                                   ORDER BY timestamp DESC
+                               ) AS rn
+                        FROM decision_logs
+                    )
+                    WHERE rn = 1
+                    ORDER BY market
+                    """
+                ).fetchall()
+            }
+            market_pnl_pct = _load_market_pnl_pct(conn)
+
+            activity_rows = conn.execute(
                 """
                 SELECT DISTINCT market FROM (
                     SELECT market FROM trades WHERE DATE(timestamp) = ?
@@ -40,76 +132,60 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
                 """,
                 (today, today, today),
             ).fetchall()
-            markets = [row[0] for row in market_rows] if market_rows else []
+            activity_markets = {row[0] for row in activity_rows}
+            markets = sorted(
+                activity_markets
+                | set(position_rows)
+                | set(latest_decision_rows)
+                | set(market_pnl_pct)
+            )
             market_status: dict[str, Any] = {}
             total_trades = 0
             total_pnl = 0.0
             total_decisions = 0
+            cb_threshold = float(os.getenv("CIRCUIT_BREAKER_PCT", "-3.0"))
             for market in markets:
-                trade_row = conn.execute(
-                    """
-                    SELECT COUNT(*) AS c, COALESCE(SUM(pnl), 0.0) AS p
-                    FROM trades
-                    WHERE DATE(timestamp) = ? AND market = ?
-                    """,
-                    (today, market),
-                ).fetchone()
-                decision_row = conn.execute(
-                    """
-                    SELECT COUNT(*) AS c
-                    FROM decision_logs
-                    WHERE DATE(timestamp) = ? AND market = ?
-                    """,
-                    (today, market),
-                ).fetchone()
-                playbook_row = conn.execute(
-                    """
-                    SELECT status
-                    FROM playbooks
-                    WHERE date = ? AND market = ?
-                    ORDER BY generated_at DESC
-                    LIMIT 1
-                    """,
-                    (today, market),
-                ).fetchone()
+                trade_row = trade_rows.get(market)
+                decision_row = decision_rows.get(market)
+                latest_decision = latest_decision_rows.get(market)
+                current_market_pnl_pct = market_pnl_pct.get(market)
+                market_cb_status = _cb_status_from_pnl_pct(cb_threshold, current_market_pnl_pct)
+                open_position_count = position_rows.get(market, 0)
+                decision_count = int(
+                    decision_row["decision_count"] if decision_row is not None else 0
+                )
                 market_status[market] = {
-                    "trade_count": int(trade_row["c"] if trade_row else 0),
-                    "total_pnl": float(trade_row["p"] if trade_row else 0.0),
-                    "decision_count": int(decision_row["c"] if decision_row else 0),
-                    "playbook_status": playbook_row["status"] if playbook_row else None,
+                    "trade_count": int(trade_row["trade_count"] if trade_row else 0),
+                    "total_pnl": float(trade_row["total_pnl"] if trade_row else 0.0),
+                    "decision_count": decision_count,
+                    "playbook_status": playbook_rows.get(market),
+                    "open_position_count": open_position_count,
+                    "latest_decision_at": latest_decision["timestamp"]
+                    if latest_decision
+                    else None,
+                    "latest_decision_action": latest_decision["action"]
+                    if latest_decision
+                    else None,
+                    "latest_session_id": latest_decision["session_id"]
+                    if latest_decision
+                    else None,
+                    "current_pnl_pct": current_market_pnl_pct,
+                    "circuit_breaker_status": market_cb_status,
+                    "status_tone": _market_status_tone(
+                        circuit_breaker_status=market_cb_status,
+                        open_position_count=open_position_count,
+                        decision_count=decision_count,
+                        playbook_status=playbook_rows.get(market),
+                    ),
                 }
                 total_trades += market_status[market]["trade_count"]
                 total_pnl += market_status[market]["total_pnl"]
                 total_decisions += market_status[market]["decision_count"]
 
-            cb_threshold = float(os.getenv("CIRCUIT_BREAKER_PCT", "-3.0"))
-            pnl_pct_rows = conn.execute(
-                """
-                SELECT key, value
-                FROM system_metrics
-                WHERE key LIKE 'portfolio_pnl_pct_%'
-                ORDER BY updated_at DESC
-                LIMIT 20
-                """
-            ).fetchall()
-            current_pnl_pct: float | None = None
-            if pnl_pct_rows:
-                values = [
-                    json.loads(row["value"]).get("pnl_pct")
-                    for row in pnl_pct_rows
-                    if json.loads(row["value"]).get("pnl_pct") is not None
-                ]
-                if values:
-                    current_pnl_pct = round(min(values), 4)
-
-            if current_pnl_pct is None:
-                cb_status = "unknown"
-            elif current_pnl_pct <= cb_threshold:
-                cb_status = "tripped"
-            elif current_pnl_pct <= cb_threshold + 1.0:
-                cb_status = "warning"
-            else:
-                cb_status = "ok"
+            current_pnl_pct = (
+                round(min(market_pnl_pct.values()), 4) if market_pnl_pct else None
+            )
+            cb_status = _cb_status_from_pnl_pct(cb_threshold, current_pnl_pct)
 
             return {
                 "date": today,
@@ -590,3 +666,62 @@ def _empty_performance(market: str) -> dict[str, Any]:
         "total_pnl": 0.0,
         "avg_confidence": 0.0,
     }
+
+
+def _load_market_pnl_pct(conn: sqlite3.Connection) -> dict[str, float]:
+    rows = conn.execute(
+        """
+        SELECT key, value
+        FROM system_metrics
+        WHERE key LIKE 'portfolio_pnl_pct_%'
+        ORDER BY updated_at DESC
+        """
+    ).fetchall()
+    market_pnl_pct: dict[str, float] = {}
+    prefix = "portfolio_pnl_pct_"
+    for row in rows:
+        key = row["key"]
+        if not key.startswith(prefix):
+            continue
+        market = key.removeprefix(prefix)
+        if market in market_pnl_pct:
+            continue
+        payload = json.loads(row["value"])
+        pnl_pct = payload.get("pnl_pct")
+        if pnl_pct is None:
+            continue
+        market_pnl_pct[market] = round(float(pnl_pct), 4)
+    return market_pnl_pct
+
+
+def _cb_status_from_pnl_pct(
+    threshold_pct: float,
+    current_pnl_pct: float | None,
+) -> str:
+    if current_pnl_pct is None:
+        return "unknown"
+    if current_pnl_pct <= threshold_pct:
+        return "tripped"
+    if current_pnl_pct <= threshold_pct + 1.0:
+        return "warning"
+    return "ok"
+
+
+def _market_status_tone(
+    *,
+    circuit_breaker_status: str,
+    open_position_count: int,
+    decision_count: int,
+    playbook_status: str | None,
+) -> str:
+    if circuit_breaker_status == "tripped":
+        return "tripped"
+    if circuit_breaker_status == "warning":
+        return "warning"
+    if open_position_count > 0:
+        return "active"
+    if decision_count > 0:
+        return "watching"
+    if playbook_status == "ready":
+        return "ready"
+    return "idle"

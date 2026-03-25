@@ -316,20 +316,28 @@ High-frequency trading with individual stock analysis:
   non-`main` worktrees should use the shared runtime scripts so `LOG_DIR`,
   dashboard port, tmux session prefix, and lock path auto-scope per branch.
 - Serves static HTML frontend
+- UI is split into two operator-facing surfaces:
+  - `Overview`: market status summary, positions, P&L chart, decision history
+  - `Diagnostics`: playbook, scorecard, active scenario, context inspection
+- Filter linkage contract:
+  - `market` is the only shared state across overview summary, P&L chart, and
+    decision history
+  - decision history filters other than `market` remain local to the history panel
+  - diagnostics selectors never mutate overview market focus
 
 **10 API Endpoints:**
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/` | GET | Static HTML dashboard |
-| `/api/status` | GET | Daily trading status by market |
+| `/` | GET | Static HTML dashboard with `Overview` / `Diagnostics` surfaces |
+| `/api/status` | GET | Daily trading status by market, including operating summary fields (`open_position_count`, latest decision/session, market CB state, `status_tone`) |
 | `/api/playbook/{date}` | GET | Playbook for specific date and market |
 | `/api/scorecard/{date}` | GET | Daily scorecard from L6_DAILY context |
 | `/api/performance` | GET | Trading performance metrics (by market + combined) |
 | `/api/context/{layer}` | GET | Query context by layer (L1-L7) |
-| `/api/decisions` | GET | Decision log entries with trace fields, outcomes, and rich filters |
+| `/api/decisions` | GET | Decision log entries with trace fields, outcomes, and rich filters; only `market` is shared with overview focus |
 | `/api/scenarios/active` | GET | Today's matched scenarios |
-| `/api/pnl/history` | GET | P&L history time series |
+| `/api/pnl/history` | GET | P&L history time series for the selected overview market (or `all`) |
 | `/api/positions` | GET | Current open positions |
 
 ### 8. Notifications (`src/notifications/telegram_client.py`)

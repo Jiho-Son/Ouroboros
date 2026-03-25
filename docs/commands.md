@@ -298,16 +298,22 @@ Dashboard runs as a daemon thread on `DASHBOARD_HOST:DASHBOARD_PORT` (default: `
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /` | HTML dashboard UI |
-| `GET /api/status` | Daily trading status by market |
+| `GET /` | HTML dashboard UI with `Overview` / `Diagnostics` surfaces |
+| `GET /api/status` | Daily trading status by market, including operating summary fields (`open_position_count`, latest decision/session, market CB state, `status_tone`) |
 | `GET /api/playbook/{date}` | Playbook for specific date (query: `market`) |
 | `GET /api/scorecard/{date}` | Daily scorecard from L6_DAILY context |
 | `GET /api/performance` | Performance metrics by market and combined |
 | `GET /api/context/{layer}` | Context data by layer L1-L7 (query: `timeframe`) |
 | `GET /api/decisions` | Decision log entries with trace/filter metadata (query: `market`, `session_id`, `action`, `stock_code`, `min_confidence`, `from_date`, `to_date`, `matched_only`, `limit`) |
 | `GET /api/scenarios/active` | Today's matched scenarios |
-| `GET /api/pnl/history` | P&L history over time |
+| `GET /api/pnl/history` | P&L history over time (query: `market`, `days`) |
 | `GET /api/positions` | Current open positions |
+
+Dashboard filter linkage 규칙:
+
+- `Overview` 에서는 `market` 만 summary, P&L chart, decision history 가 공유한다.
+- decision history 의 나머지 필터(`session_id`, `action`, `stock_code`, `min_confidence`, `from_date`, `to_date`, `matched_only`, `limit`)는 history 패널 안에서만 적용된다.
+- `Diagnostics` surface 의 playbook/scorecard/scenario/context selector 는 overview market focus 와 독립이다.
 
 ## Telegram Commands
 
