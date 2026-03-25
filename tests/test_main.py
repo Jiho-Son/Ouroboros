@@ -154,6 +154,30 @@ def test_realtime_hard_stop_startup_predicate_includes_live_daily_mode() -> None
     assert main_module._should_start_realtime_hard_stop_monitor(settings) is True
 
 
+@pytest.mark.parametrize(
+    ("mode", "trade_mode", "hard_stop_enabled", "enabled_markets"),
+    [
+        ("paper", "daily", True, "US"),
+        ("live", "daily", False, "US"),
+        ("live", "daily", True, ""),
+    ],
+)
+def test_realtime_hard_stop_startup_predicate_skips_unsupported_runtime_cases(
+    mode: str,
+    trade_mode: str,
+    hard_stop_enabled: bool,
+    enabled_markets: str,
+) -> None:
+    settings = _make_settings(
+        MODE=mode,
+        TRADE_MODE=trade_mode,
+        REALTIME_HARD_STOP_ENABLED=hard_stop_enabled,
+        ENABLED_MARKETS=enabled_markets,
+    )
+
+    assert main_module._should_start_realtime_hard_stop_monitor(settings) is False
+
+
 def test_daily_mode_batch_cadence_detects_no_additional_kr_regular_session() -> None:
     current_batch_started_at = datetime(
         2026,
@@ -8394,8 +8418,13 @@ async def test_run_daily_session_syncs_realtime_hard_stop_for_live_daily_held_po
         )
 
     sync_mock.assert_awaited()
-    sync_call = sync_mock.await_args
-    assert sync_call is not None
+    plu_calls = [
+        call
+        for call in sync_mock.await_args_list
+        if call.kwargs.get("stock_code") == "PLU"
+    ]
+    assert len(plu_calls) == 1
+    sync_call = plu_calls[0]
     assert sync_call.kwargs["monitor"] is monitor
     assert sync_call.kwargs["websocket_client"] is websocket_client
     assert sync_call.kwargs["market"].code == "US_AMEX"

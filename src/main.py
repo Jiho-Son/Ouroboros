@@ -3091,6 +3091,8 @@ async def _process_daily_session_stock(
                 market.name,
             )
 
+    # Sync every decision so closed or skipped positions can be unsubscribed
+    # during the same daily batch lifecycle.
     await _sync_realtime_hard_stop_monitor(
         monitor=realtime_hard_stop_monitor,
         websocket_client=realtime_hard_stop_client,
