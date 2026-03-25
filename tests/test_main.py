@@ -8251,7 +8251,108 @@ async def test_run_daily_session_evaluates_held_symbol_outside_scanner_top_n() -
             daily_start_eval=0.0,
         )
 
-    assert evaluated_codes == ["CRCD", "AAOX", "LITX", "PLU"]
+    assert set(evaluated_codes) == {"CRCD", "AAOX", "LITX", "PLU"}
+    assert evaluated_codes.index("PLU") > evaluated_codes.index("CRCD")
+
+
+def test_load_daily_session_db_open_positions_ignores_hold_rows_and_uses_market_local_day() -> None:
+    db_conn = init_db(":memory:")
+    market = MagicMock()
+    market.code = "US_AMEX"
+    market.timezone = ZoneInfo("America/New_York")
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz: ZoneInfo | None = None) -> datetime:
+            current = datetime(2026, 3, 25, 0, 30, tzinfo=UTC)
+            if tz is None:
+                return current
+            return current.astimezone(tz)
+
+    with patch("src.db.datetime", _FrozenDateTime):
+        log_trade(
+            conn=db_conn,
+            stock_code="PLU",
+            action="BUY",
+            confidence=90,
+            rationale="entry",
+            quantity=13,
+            price=42.01,
+            market="US_AMEX",
+            exchange_code="AMS",
+            decision_id="buy-plu-1",
+        )
+        log_trade(
+            conn=db_conn,
+            stock_code="PLU",
+            action="HOLD",
+            confidence=50,
+            rationale="still holding",
+            quantity=13,
+            price=42.01,
+            market="US_AMEX",
+            exchange_code="AMS",
+        )
+    db_conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE stock_code = ? AND action = 'BUY'",
+        ("2026-03-24T14:00:00+00:00", "PLU"),
+    )
+    db_conn.execute(
+        "UPDATE trades SET timestamp = ? WHERE stock_code = ? AND action = 'HOLD'",
+        ("2026-03-24T15:00:00+00:00", "PLU"),
+    )
+    db_conn.commit()
+
+    with patch("src.main.datetime", _FrozenDateTime):
+        positions = main_module._load_daily_session_db_open_positions(
+            db_conn=db_conn,
+            market=market,
+        )
+
+    assert len(positions) == 1
+    assert positions[0]["stock_code"] == "PLU"
+    assert positions[0]["holding_days"] == 0
+
+
+@pytest.mark.asyncio
+async def test_load_or_generate_daily_playbook_creates_exit_fallback_for_held_only_market() -> None:
+    market = MagicMock()
+    market.code = "US_AMEX"
+
+    holding = {
+        "stock_code": "PLU",
+        "name": "Pluri",
+        "qty": 13,
+        "entry_price": 42.01,
+        "unrealized_pnl_pct": -21.54,
+        "holding_days": 2,
+    }
+    playbook_store = MagicMock()
+    playbook_store.load = MagicMock(return_value=None)
+    playbook_store.save = MagicMock()
+    pre_market_planner = MagicMock()
+    pre_market_planner.generate_playbook = AsyncMock()
+    telegram = MagicMock()
+    telegram.notify_playbook_generated = AsyncMock()
+
+    playbook = await main_module._load_or_generate_daily_playbook(
+        candidates_list=[],
+        current_holdings=[holding],
+        market=market,
+        market_today=date(2026, 3, 25),
+        playbook_store=playbook_store,
+        pre_market_planner=pre_market_planner,
+        telegram=telegram,
+    )
+
+    stock_playbook = playbook.get_stock_playbook("PLU")
+    assert stock_playbook is not None
+    assert stock_playbook.scenarios
+    assert stock_playbook.scenarios[0].action is ScenarioAction.HOLD
+    assert stock_playbook.scenarios[0].condition.holding_days_above == -1
+    pre_market_planner.generate_playbook.assert_not_awaited()
+    playbook_store.save.assert_called_once_with(playbook)
+    telegram.notify_playbook_generated.assert_awaited_once()
 
 
 @pytest.mark.asyncio

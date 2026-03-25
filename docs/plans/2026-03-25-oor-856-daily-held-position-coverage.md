@@ -1,7 +1,5 @@
 # OOR-856 Daily Held Position Coverage Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** `TRADE_MODE=daily` 경로가 scanner `top_n` 밖의 기존 보유 포지션도 반드시 평가하도록 바꾸고, entry ranking 과 mandatory exit coverage 를 분리한 계약을 테스트와 문서로 고정한다.
 
 **Architecture:** daily mode 는 scanner 가 만든 신규 진입 candidate set 을 그대로 유지하되, broker/DB open holding 으로 별도의 mandatory evaluation set 을 만든다. playbook/scenario 단계에는 scanner candidates 와 holdings context 를 함께 전달하고, market data / stock loop 는 `scanner_codes + held_codes` 합집합을 사용해 exit 평가 누락을 제거한다.
