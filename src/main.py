@@ -125,7 +125,14 @@ from src.strategy.exit_manager import (
     _merge_staged_exit_evidence_into_log,
     update_runtime_exit_peak,
 )
-from src.strategy.models import DayPlaybook, MarketOutlook
+from src.strategy.models import (
+    DayPlaybook,
+    MarketOutlook,
+    ScenarioAction,
+    StockCondition,
+    StockPlaybook,
+    StockScenario,
+)
 from src.strategy.playbook_store import PlaybookStore
 from src.strategy.pre_market_planner import PreMarketPlanner
 from src.strategy.scenario_engine import ScenarioEngine
@@ -1282,8 +1289,11 @@ async def _collect_trading_cycle_market_snapshot(
         entry_ts = open_pos.get("timestamp")
         if entry_ts:
             try:
-                entry_date = datetime.fromisoformat(entry_ts).date()
-                market_data["holding_days"] = (datetime.now(UTC).date() - entry_date).days
+                entry_dt = datetime.fromisoformat(entry_ts)
+                market_today = datetime.now(market.timezone).date()
+                market_data["holding_days"] = (
+                    market_today - entry_dt.astimezone(market.timezone).date()
+                ).days
             except (ValueError, TypeError):
                 pass
 
@@ -2373,6 +2383,153 @@ async def _load_daily_session_market_candidates(
         return []
 
 
+def _load_daily_session_db_open_positions(
+    *,
+    db_conn: Any,
+    market: MarketInfo,
+    market_today: date | None = None,
+) -> list[dict[str, Any]]:
+    """Return current DB-tracked open positions for one market."""
+    cursor = db_conn.execute(
+        """
+        SELECT stock_code, price, quantity, timestamp
+        FROM (
+            SELECT stock_code, price, quantity, timestamp, action,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY stock_code, market
+                       ORDER BY timestamp DESC
+                   ) AS rn
+            FROM trades
+            WHERE market = ?
+              AND action IN ('BUY', 'SELL')
+        )
+        WHERE rn = 1 AND action = 'BUY'
+        ORDER BY timestamp DESC
+        """,
+        (market.code,),
+    )
+
+    positions: list[dict[str, Any]] = []
+    today = market_today or datetime.now(market.timezone).date()
+    for stock_code, entry_price, quantity, entry_ts in cursor.fetchall():
+        holding_days = 0
+        if isinstance(entry_ts, str) and entry_ts:
+            try:
+                entry_dt = datetime.fromisoformat(entry_ts.replace("Z", "+00:00"))
+                holding_days = max(
+                    0,
+                    (today - entry_dt.astimezone(market.timezone).date()).days,
+                )
+            except ValueError:
+                holding_days = 0
+        positions.append(
+            {
+                "stock_code": stock_code,
+                "name": stock_code,
+                "qty": int(quantity or 0),
+                "entry_price": safe_float(entry_price, 0.0),
+                "unrealized_pnl_pct": 0.0,
+                "holding_days": holding_days,
+            }
+        )
+    return positions
+
+
+async def _load_daily_session_market_holdings(
+    *,
+    broker: KISBroker,
+    db_conn: Any,
+    market: MarketInfo,
+    market_today: date,
+    overseas_broker: OverseasBroker,
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Load mandatory daily-evaluation holdings from DB and broker balance."""
+    holdings_by_code = {
+        holding["stock_code"]: holding
+        for holding in _load_daily_session_db_open_positions(
+            db_conn=db_conn,
+            market=market,
+            market_today=market_today,
+        )
+    }
+
+    try:
+        if market.is_domestic:
+            balance_data = await _retry_connection(
+                broker.get_balance,
+                label=f"balance:{market.code}",
+            )
+        else:
+            balance_data = await _retry_connection(
+                overseas_broker.get_overseas_balance,
+                market.exchange_code,
+                label=f"overseas_balance:{market.exchange_code}",
+            )
+    except Exception as exc:
+        logger.warning(
+            "Failed to fetch daily holdings for %s: %s — using DB open positions only",
+            market.code,
+            exc,
+        )
+        return None, list(holdings_by_code.values())
+
+    held_codes = _extract_held_codes_from_balance(
+        balance_data,
+        is_domestic=market.is_domestic,
+        exchange_code=None if market.is_domestic else market.exchange_code,
+    )
+    output1 = balance_data.get("output1", [])
+    if isinstance(output1, dict):
+        output1 = [output1]
+
+    holdings_by_symbol = {
+        str(item.get("pdno") if market.is_domestic else item.get("ovrs_pdno") or "")
+        .strip()
+        .upper(): item
+        for item in output1
+        if isinstance(item, dict)
+    }
+
+    for stock_code in held_codes:
+        holding_payload = holdings_by_symbol.get(stock_code, {})
+        holding = holdings_by_code.setdefault(
+            stock_code,
+            {
+                "stock_code": stock_code,
+                "name": stock_code,
+                "qty": 0,
+                "entry_price": 0.0,
+                "unrealized_pnl_pct": 0.0,
+                "holding_days": 0,
+            },
+        )
+        holding["name"] = (
+            _resolve_notification_stock_name(
+                holding.get("name"),
+                holding_payload.get("prdt_name"),
+                holding_payload.get("ovrs_item_name"),
+                stock_code,
+            )
+            or stock_code
+        )
+        holding_qty = _extract_held_qty_from_balance(
+            balance_data,
+            stock_code,
+            is_domestic=market.is_domestic,
+        )
+        if holding_qty > 0:
+            holding["qty"] = holding_qty
+        holding_entry_price = _extract_avg_price_from_balance(
+            balance_data,
+            stock_code,
+            is_domestic=market.is_domestic,
+        )
+        if holding_entry_price > 0:
+            holding["entry_price"] = holding_entry_price
+
+    return balance_data, list(holdings_by_code.values())
+
+
 async def _prepare_daily_session_market(
     *,
     broker: KISBroker,
@@ -2435,9 +2592,49 @@ async def _prepare_daily_session_market(
     return runtime_session_id, domestic_quote_market_div_code, market_today
 
 
+def _build_daily_exit_only_playbook(
+    *,
+    current_holdings: list[dict[str, Any]],
+    market: MarketInfo,
+    market_today: date,
+) -> DayPlaybook:
+    """Build a minimal playbook that keeps held-position exit checks active."""
+    stock_playbooks: list[StockPlaybook] = []
+    for holding in current_holdings:
+        stock_code = str(holding.get("stock_code") or "").strip().upper()
+        if not stock_code:
+            continue
+        stock_playbooks.append(
+            StockPlaybook(
+                stock_code=stock_code,
+                scenarios=[
+                    StockScenario(
+                        condition=StockCondition(holding_days_above=-1),
+                        action=ScenarioAction.HOLD,
+                        confidence=60,
+                        allocation_pct=0.0,
+                        take_profit_pct=0.0,
+                        rationale=(
+                            "Held-position fallback playbook keeps exit evaluation active "
+                            "when the scanner returns no candidates"
+                        ),
+                    )
+                ],
+            )
+        )
+
+    return DayPlaybook(
+        date=market_today,
+        market=market.code,
+        market_outlook=MarketOutlook.NEUTRAL,
+        stock_playbooks=stock_playbooks,
+    )
+
+
 async def _load_or_generate_daily_playbook(
     *,
     candidates_list: list[ScanCandidate],
+    current_holdings: list[dict[str, Any]],
     market: MarketInfo,
     market_today: date,
     playbook_store: PlaybookStore,
@@ -2449,11 +2646,37 @@ async def _load_or_generate_daily_playbook(
     if playbook is not None:
         return playbook
 
+    if not candidates_list and current_holdings:
+        playbook = _build_daily_exit_only_playbook(
+            current_holdings=current_holdings,
+            market=market,
+            market_today=market_today,
+        )
+        playbook_store.save(playbook)
+        try:
+            await telegram.notify_playbook_generated(
+                market=market.code,
+                stock_count=playbook.stock_count,
+                scenario_count=playbook.scenario_count,
+                token_count=playbook.token_count,
+                slot="open",
+            )
+        except Exception as exc:
+            logger.warning("Playbook notification failed: %s", exc)
+        logger.info(
+            "Generated held-only fallback playbook for %s: %d stocks, %d scenarios",
+            market.code,
+            playbook.stock_count,
+            playbook.scenario_count,
+        )
+        return playbook
+
     try:
         playbook = await pre_market_planner.generate_playbook(
             market=market.code,
             candidates=candidates_list,
             today=market_today,
+            current_holdings=current_holdings,
         )
         playbook_store.save(playbook)
         try:
@@ -2490,14 +2713,18 @@ async def _collect_daily_session_market_data(
     broker: KISBroker,
     market: MarketInfo,
     overseas_broker: OverseasBroker,
-    candidates_list: list[ScanCandidate],
+    stock_codes: list[str],
+    candidate_map: dict[str, ScanCandidate],
+    current_holdings: list[dict[str, Any]],
     domestic_quote_market_div_code: str,
 ) -> list[dict[str, Any]]:
     """Collect per-stock market snapshots for one daily session market."""
     stocks_data: list[dict[str, Any]] = []
-    candidate_map = {candidate.stock_code: candidate for candidate in candidates_list}
+    holding_map = {
+        holding["stock_code"]: holding for holding in current_holdings if holding.get("stock_code")
+    }
 
-    for stock_code in [candidate.stock_code for candidate in candidates_list]:
+    for stock_code in stock_codes:
         try:
             price_output: dict[str, Any] = {}
             if market.is_domestic:
@@ -2551,10 +2778,34 @@ async def _collect_daily_session_market_data(
             if session_high_price > 0:
                 stock_data["session_high_price"] = session_high_price
             cand = candidate_map.get(stock_code)
+            holding = holding_map.get(stock_code)
             if cand:
                 stock_data["stock_name"] = cand.name
                 stock_data["rsi"] = cand.rsi
                 stock_data["volume_ratio"] = cand.volume_ratio
+            else:
+                if holding and holding.get("name"):
+                    stock_data["stock_name"] = holding["name"]
+                stock_data["rsi"] = max(0.0, min(100.0, 50.0 + price_change_pct * 2.0))
+                if price_output and current_price > 0:
+                    pr_high = safe_float(
+                        price_output.get("high")
+                        or price_output.get("ovrs_hgpr")
+                        or price_output.get("stck_hgpr")
+                    )
+                    pr_low = safe_float(
+                        price_output.get("low")
+                        or price_output.get("ovrs_lwpr")
+                        or price_output.get("stck_lwpr")
+                    )
+                    if pr_high > 0 and pr_low > 0 and pr_high >= pr_low:
+                        intraday_range_pct = (pr_high - pr_low) / current_price * 100.0
+                        volatility_pct = max(abs(price_change_pct), intraday_range_pct)
+                        stock_data["volume_ratio"] = max(1.0, volatility_pct / 2.0)
+                    else:
+                        stock_data["volume_ratio"] = 1.0
+                else:
+                    stock_data["volume_ratio"] = 1.0
             stocks_data.append(stock_data)
         except Exception as exc:
             logger.error("Failed to fetch data for %s: %s", stock_code, exc)
@@ -2570,17 +2821,21 @@ async def _get_daily_session_balance_snapshot(
     overseas_broker: OverseasBroker,
     settings: Settings,
     stocks_data: list[dict[str, Any]],
+    preloaded_balance_data: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], float, float, float]:
     """Load balance and buying-power data for one market."""
     if market.is_domestic:
-        balance_data = await _retry_connection(broker.get_balance, label=f"balance:{market.code}")
+        balance_data = preloaded_balance_data or await _retry_connection(
+            broker.get_balance,
+            label=f"balance:{market.code}",
+        )
         output2 = balance_data.get("output2", [{}])
         total_eval = safe_float(output2[0].get("tot_evlu_amt", "0")) if output2 else 0
         total_cash = safe_float(output2[0].get("dnca_tot_amt", "0")) if output2 else 0
         purchase_total = safe_float(output2[0].get("pchs_amt_smtl_amt", "0")) if output2 else 0
         return balance_data, {}, total_eval, total_cash, purchase_total
 
-    balance_data = await _retry_connection(
+    balance_data = preloaded_balance_data or await _retry_connection(
         overseas_broker.get_overseas_balance,
         market.exchange_code,
         label=f"overseas_balance:{market.exchange_code}",
@@ -3240,16 +3495,36 @@ async def _run_daily_session_market(
         overseas_broker=overseas_broker,
         smart_scanner=smart_scanner,
     )
-    if not candidates_list:
-        logger.info("No scanner candidates for market %s — skipping", market.code)
+    candidate_map = {candidate.stock_code: candidate for candidate in candidates_list}
+    balance_data, current_holdings = await _load_daily_session_market_holdings(
+        broker=broker,
+        db_conn=db_conn,
+        market=market,
+        market_today=market_today,
+        overseas_broker=overseas_broker,
+    )
+    held_codes = [
+        holding["stock_code"] for holding in current_holdings if holding.get("stock_code")
+    ]
+    watchlist = list(
+        dict.fromkeys([candidate.stock_code for candidate in candidates_list] + held_codes)
+    )
+    if not watchlist:
+        logger.info("No scanner candidates or open holdings for market %s — skipping", market.code)
         return daily_start_eval
 
-    watchlist = [candidate.stock_code for candidate in candidates_list]
-    candidate_map = {candidate.stock_code: candidate for candidate in candidates_list}
+    extra_held = [stock_code for stock_code in held_codes if stock_code not in candidate_map]
+    if extra_held:
+        logger.info(
+            "Holdings added to daily evaluation for %s (not in scanner): %s",
+            market.name,
+            extra_held,
+        )
     logger.info("Processing market: %s (%d stocks)", market.name, len(watchlist))
 
     playbook = await _load_or_generate_daily_playbook(
         candidates_list=candidates_list,
+        current_holdings=current_holdings,
         market=market,
         market_today=market_today,
         playbook_store=playbook_store,
@@ -3261,7 +3536,9 @@ async def _run_daily_session_market(
         broker=broker,
         market=market,
         overseas_broker=overseas_broker,
-        candidates_list=candidates_list,
+        stock_codes=watchlist,
+        candidate_map=candidate_map,
+        current_holdings=current_holdings,
         domestic_quote_market_div_code=domestic_quote_market_div_code,
     )
     if not stocks_data:
@@ -3276,6 +3553,7 @@ async def _run_daily_session_market(
                 overseas_broker=overseas_broker,
                 settings=settings,
                 stocks_data=stocks_data,
+                preloaded_balance_data=balance_data,
             )
         )
     except ConnectionError as exc:

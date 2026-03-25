@@ -33,6 +33,12 @@ Optimized for cost-sensitive/provider-limited deployments:
 runtime warns when an enabled market has no additional regular-session batch
 before close under the current cadence.
 
+**Daily evaluation coverage**: in `TRADE_MODE=daily`, scanner `top_n` still
+defines the ranked entry-candidate set, but the market evaluation loop also
+merges open holdings from broker balance / DB into a separate mandatory
+evaluation set before playbook/scenario execution. This keeps entry ranking
+cost-efficient without allowing held-position exit checks to be skipped.
+
 ### Realtime Mode
 
 High-frequency trading with individual stock analysis:
@@ -237,6 +243,9 @@ High-frequency trading with individual stock analysis:
 
 - Runs before market open (configurable `PRE_MARKET_MINUTES`, default 30)
 - Generates scenario-based playbooks via single Gemini API call per market
+- Daily mode may pass `current_holdings` alongside scanner candidates so the
+  planner can generate SELL/HOLD context for already-held symbols without
+  changing scanner-based entry ranking
 - Uses `ContextSelector.select_layers(decision_type=DecisionType.STRATEGIC, include_realtime=True)` to inject a `Strategic Context` block from the latest `L7/L6/L5` layers, plus self/cross-market `scorecard_<market>` summaries and the recent self-market guard.
 - Handles timeout (`PLANNER_TIMEOUT_SECONDS`, default 60) with defensive playbook fallback
 - Persists playbooks to database for audit trail
