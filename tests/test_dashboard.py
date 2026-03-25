@@ -190,14 +190,6 @@ def _endpoint(app: Any, path: str) -> Callable[..., Any]:
 def _app_with_trace_decisions(tmp_path: Path) -> Any:
     db_path = tmp_path / "dashboard_trace_test.db"
     conn = init_db(str(db_path))
-    decision_columns = {
-        row[1] for row in conn.execute("PRAGMA table_info(decision_logs)").fetchall()
-    }
-    if "llm_prompt" not in decision_columns:
-        conn.execute("ALTER TABLE decision_logs ADD COLUMN llm_prompt TEXT")
-    if "llm_response" not in decision_columns:
-        conn.execute("ALTER TABLE decision_logs ADD COLUMN llm_response TEXT")
-
     today = datetime.now(UTC).date().isoformat()
     conn.execute(
         """
@@ -291,6 +283,7 @@ def test_index_exposes_decision_trace_controls(tmp_path: Path) -> None:
     assert "결정 히스토리 필터" in html
     assert "LLM request" in html
     assert "LLM response" in html
+    assert "trace 없음" in html
     assert "Diagnostics" in html
 
 
@@ -374,7 +367,17 @@ def test_context_layer_timeframe_filter(tmp_path: Path) -> None:
 def test_decisions_endpoint(tmp_path: Path) -> None:
     app = _app(tmp_path)
     get_decisions = _endpoint(app, "/api/decisions")
-    body = get_decisions(market="KR", limit=50)
+    body = get_decisions(
+        market="KR",
+        session_id="all",
+        action="all",
+        stock_code=None,
+        min_confidence=0,
+        from_date=None,
+        to_date=None,
+        matched_only=False,
+        limit=50,
+    )
     assert body["count"] == 1
     assert body["decisions"][0]["decision_id"] == "d-kr-1"
 
@@ -400,6 +403,26 @@ def test_decisions_endpoint_supports_rich_filters_and_metadata(tmp_path: Path) -
     assert body["filters"]["session_id"] == "KRX_REG"
     assert body["markets"] == ["JP", "KR", "US_NASDAQ"]
     assert body["sessions"] == ["JP_REG", "KRX_REG", "US_REG"]
+
+
+def test_decisions_endpoint_applies_limit_after_matched_only_filter(tmp_path: Path) -> None:
+    app = _app_with_trace_decisions(tmp_path)
+    get_decisions = _endpoint(app, "/api/decisions")
+
+    body = get_decisions(
+        market="all",
+        session_id="all",
+        action="all",
+        stock_code=None,
+        min_confidence=0,
+        from_date=None,
+        to_date=None,
+        matched_only=True,
+        limit=1,
+    )
+
+    assert body["count"] == 1
+    assert body["decisions"][0]["decision_id"] == "d-kr-1"
 
 
 def test_scenarios_active_filters_non_matched(tmp_path: Path) -> None:

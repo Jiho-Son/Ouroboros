@@ -286,15 +286,6 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
         matched_only: bool = Query(default=False),
         limit: int = Query(default=50, ge=1, le=500),
     ) -> dict[str, Any]:
-        market = market if isinstance(market, str) else "KR"
-        session_id = session_id if isinstance(session_id, str) else "all"
-        action = action if isinstance(action, str) else "all"
-        stock_code = stock_code if isinstance(stock_code, str) else None
-        min_confidence = min_confidence if isinstance(min_confidence, int) else 0
-        from_date = from_date if isinstance(from_date, str) else None
-        to_date = to_date if isinstance(to_date, str) else None
-        matched_only = matched_only if isinstance(matched_only, bool) else False
-        limit = limit if isinstance(limit, int) else 50
         with _connect(db_path) as conn:
             where_clauses: list[str] = []
             params: list[Any] = []
@@ -319,6 +310,11 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
             if to_date:
                 where_clauses.append("DATE(timestamp) <= ?")
                 params.append(to_date)
+            if matched_only:
+                where_clauses.append(
+                    "json_extract(context_snapshot, '$.scenario_match') IS NOT NULL"
+                )
+                where_clauses.append("json_extract(context_snapshot, '$.scenario_match') != '{}'")
 
             where_sql = ""
             if where_clauses:

@@ -912,11 +912,7 @@
           return '<div class="decision-empty">조건에 맞는 결정이 없습니다.</div>';
         }
         return decisions.map(dec => {
-          const responseFallback = dec.llm_response || JSON.stringify({
-            action: dec.action,
-            confidence: dec.confidence,
-            rationale: dec.rationale,
-          }, null, 2);
+          const responseTrace = dec.llm_response || 'trace 없음';
           const outcomeChip = dec.outcome_pnl === null || dec.outcome_pnl === undefined
             ? ''
             : `<span class="meta-chip">PnL ${dec.outcome_pnl > 0 ? '+' : ''}${Number(dec.outcome_pnl).toFixed(2)}</span>`;
@@ -948,7 +944,7 @@
                   </div>
                   <div class="trace-box">
                     <div class="trace-label">LLM response</div>
-                    <pre>${esc(prettyJson(responseFallback))}</pre>
+                    <pre>${esc(prettyJson(responseTrace))}</pre>
                   </div>
                   <div class="trace-box">
                     <div class="trace-label">Decision input</div>
