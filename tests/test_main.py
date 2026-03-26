@@ -70,6 +70,7 @@ from src.main import (
     _acquire_live_runtime_lock,
     _apply_dashboard_flag,
     _execute_trading_cycle_action,
+    _process_daily_session_stock,
     _register_post_buy_for_hard_stop,
     _handle_market_close,
     _handle_realtime_hard_stop_trigger,
@@ -13332,4 +13333,99 @@ async def test_execute_trading_cycle_action_registers_hard_stop_after_successful
 
     tracked = monitor.get("KR", "005930")
     assert tracked is not None, "Newly bought position must be registered for hard-stop monitoring"
+    ws_client.subscribe.assert_awaited_once_with("KR", "005930")
+
+
+@pytest.mark.asyncio
+async def test_register_post_buy_for_hard_stop_noop_when_monitor_is_none() -> None:
+    ws_client = MagicMock()
+    ws_client.subscribe = AsyncMock()
+
+    await _register_post_buy_for_hard_stop(
+        monitor=None,
+        websocket_client=ws_client,
+        market=MARKETS["KR"],
+        stock_code="005930",
+        stock_name=None,
+        entry_price=100.0,
+        quantity=5,
+        market_data={},
+    )
+
+    ws_client.subscribe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_register_post_buy_for_hard_stop_noop_for_unsupported_market() -> None:
+    monitor = RealtimeHardStopMonitor()
+    ws_client = MagicMock()
+    ws_client.subscribe = AsyncMock()
+
+    # MARKETS["JP"] is not in _SUPPORTED_MARKETS, so no subscription should happen
+    await _register_post_buy_for_hard_stop(
+        monitor=monitor,
+        websocket_client=ws_client,
+        market=MARKETS["JP"],
+        stock_code="7203",
+        stock_name=None,
+        entry_price=2000.0,
+        quantity=10,
+        market_data={},
+    )
+
+    assert monitor.get("JP", "7203") is None
+    ws_client.subscribe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_daily_session_stock_registers_hard_stop_after_successful_buy() -> None:
+    db_conn = init_db(":memory:")
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    monitor = RealtimeHardStopMonitor()
+    ws_client = MagicMock()
+    ws_client.subscribe = AsyncMock()
+    ws_client.unsubscribe = AsyncMock()
+
+    playbook = _make_playbook("KR")
+    engine = MagicMock()
+    engine.evaluate = MagicMock(return_value=_make_buy_match())
+
+    decision_logger = MagicMock()
+    decision_logger.log_decision = MagicMock(return_value="buy-dec-daily")
+
+    await _process_daily_session_stock(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        scenario_engine=engine,
+        playbook=playbook,
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        telegram=MagicMock(notify_trade_execution=AsyncMock()),
+        settings=_make_settings(),
+        market=MARKETS["KR"],
+        stock_data={
+            "stock_code": "005930",
+            "current_price": 70000.0,
+            "foreigner_net": 0,
+            "price_change_pct": 0.0,
+            "volume_ratio": 1.0,
+        },
+        candidate_map={},
+        portfolio_data={},
+        balance_data={},
+        balance_info={},
+        purchase_total=0.0,
+        pnl_pct=0.0,
+        total_eval=10_000_000.0,
+        total_cash=10_000_000.0,
+        runtime_session_id="KRX_REG",
+        daily_buy_cooldown={},
+        realtime_hard_stop_monitor=monitor,
+        realtime_hard_stop_client=ws_client,
+    )
+
+    tracked = monitor.get("KR", "005930")
+    assert tracked is not None, "daily batch BUY must register position for hard-stop monitoring"
     ws_client.subscribe.assert_awaited_once_with("KR", "005930")

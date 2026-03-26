@@ -501,6 +501,17 @@ async def _register_post_buy_for_hard_stop(
 
     Called immediately after a successful BUY order so the position is watched
     from the moment of purchase rather than waiting for the next HOLD cycle.
+
+    Note: position_timestamp defaults to "" because the DB timestamp assigned by
+    log_trade() is not yet available at call time.  This means the runtime peak
+    cache key used by update_runtime_exit_peak() will be
+    ``market:stock:decision_id:`` (empty suffix), which differs from the key
+    ``market:stock:decision_id:<timestamp>`` created on the next HOLD cycle when
+    the real timestamp is read from the DB.  Any peak data accumulated during the
+    post-buy monitoring window is therefore orphaned once the HOLD cycle
+    re-registers with the real timestamp.  This is acceptable — the alternative
+    (no monitoring at all) was worse — but worth revisiting if peak-tracking
+    accuracy becomes a priority.
     """
     if monitor is None or not supports_realtime_price_market(market.code):
         return
