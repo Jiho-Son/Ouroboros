@@ -536,7 +536,15 @@ async def _register_post_buy_for_hard_stop(
         position_timestamp=position_timestamp,
     )
     if websocket_client is not None:
-        await websocket_client.subscribe(market.code, stock_code)
+        try:
+            await websocket_client.subscribe(market.code, stock_code)
+        except Exception as exc:
+            logger.warning(
+                "Realtime hard-stop post-buy subscribe failed for %s (%s): %s",
+                stock_code,
+                market.code,
+                exc,
+            )
         logger.info(
             "Realtime hard-stop post-buy action=register market=%s "
             "stock=%s stop_loss_pct=%.4f source=websocket_hard_stop",

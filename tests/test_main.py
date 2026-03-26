@@ -13529,3 +13529,25 @@ async def test_process_daily_session_stock_no_hard_stop_on_failed_buy() -> None:
         "Rejected BUY must not create hard-stop subscription"
     )
     ws_client.subscribe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_register_post_buy_for_hard_stop_survives_subscribe_failure() -> None:
+    """Websocket subscribe failure must not propagate — monitor registration is preserved."""
+    monitor = RealtimeHardStopMonitor()
+    ws_client = MagicMock()
+    ws_client.subscribe = AsyncMock(side_effect=Exception("ws error"))
+
+    await _register_post_buy_for_hard_stop(
+        monitor=monitor,
+        websocket_client=ws_client,
+        market=MARKETS["KR"],
+        stock_code="005930",
+        stock_name="Samsung",
+        entry_price=100.0,
+        quantity=7,
+        market_data={},
+    )
+
+    tracked = monitor.get("KR", "005930")
+    assert tracked is not None, "monitor.register() must succeed even if subscribe() raises"
