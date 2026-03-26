@@ -224,6 +224,67 @@ def _daily_mode_has_additional_regular_session_batch(
     return False
 
 
+def _resolve_daily_mode_next_batch_at(
+    *,
+    open_markets: list[MarketInfo],
+    current_batch_started_at: datetime,
+    batch_completed_at: datetime,
+    session_interval: timedelta,
+) -> datetime:
+    """Return the next daily batch time, inserting a regular-session catch-up when needed."""
+    default_next_batch_at = batch_completed_at + session_interval
+    if session_interval <= timedelta(0):
+        return default_next_batch_at
+
+    catchup_candidates: list[datetime] = []
+    for market in open_markets:
+        if _daily_mode_has_additional_regular_session_batch(
+            market=market,
+            current_batch_started_at=current_batch_started_at,
+            next_scheduled_batch_at=default_next_batch_at,
+            session_interval=session_interval,
+        ):
+            continue
+
+        expected_regular_session_id: str | None = None
+        if market.code == "KR":
+            expected_regular_session_id = "KRX_REG"
+        elif market.code.startswith("US"):
+            expected_regular_session_id = "US_REG"
+
+        if expected_regular_session_id is None:
+            continue
+        if (
+            get_session_info(market, current_batch_started_at).session_id
+            == expected_regular_session_id
+        ):
+            continue
+
+        market_close_local = datetime.combine(
+            current_batch_started_at.astimezone(market.timezone).date(),
+            market.close_time,
+            tzinfo=market.timezone,
+        )
+        market_close_utc = market_close_local.astimezone(UTC)
+        probe = batch_completed_at.astimezone(UTC).replace(second=0, microsecond=0)
+        if probe <= batch_completed_at:
+            probe = probe + timedelta(minutes=1)
+
+        # US_PRE can overlap the first regular-session hour during DST; scan
+        # forward minute-by-minute until the current market reaches its regular
+        # session classification and use that as the catch-up slot.
+        while probe < market_close_utc and probe < default_next_batch_at:
+            if get_session_info(market, probe).session_id == expected_regular_session_id:
+                catchup_candidates.append(probe)
+                break
+            probe = probe + timedelta(minutes=1)
+
+    if not catchup_candidates:
+        return default_next_batch_at
+
+    return min(catchup_candidates)
+
+
 def _log_daily_mode_startup_anchor(
     *,
     settings: Settings,
@@ -4655,6 +4716,7 @@ async def run(settings: Settings) -> None:
                     settings.enabled_market_list,
                     now=current_batch_started_at,
                 )
+                wait_seconds = session_interval_seconds
 
                 try:
                     _cb_daily_start_eval = await run_daily_session(
@@ -4676,8 +4738,18 @@ async def run(settings: Settings) -> None:
                         realtime_hard_stop_client=realtime_hard_stop_client,
                     )
                     # The next wait starts after the current batch completes, so long
-                    # batches intentionally shift the next scheduled timestamp later.
-                    next_scheduled_batch_at = datetime.now(UTC) + session_interval
+                    # batches intentionally shift the default scheduled timestamp later.
+                    batch_completed_at = datetime.now(UTC)
+                    next_scheduled_batch_at = _resolve_daily_mode_next_batch_at(
+                        open_markets=current_open_markets,
+                        current_batch_started_at=current_batch_started_at,
+                        batch_completed_at=batch_completed_at,
+                        session_interval=session_interval,
+                    )
+                    wait_seconds = max(
+                        (next_scheduled_batch_at - batch_completed_at).total_seconds(),
+                        0.0,
+                    )
                     _log_daily_mode_last_regular_batch_warning(
                         open_markets=current_open_markets,
                         current_batch_started_at=current_batch_started_at,
@@ -4700,9 +4772,9 @@ async def run(settings: Settings) -> None:
                     logger.exception("Daily session error: %s", exc)
 
                 # Wait for next session or shutdown
-                logger.info("Next session in %.1f hours", session_interval_seconds / 3600)
+                logger.info("Next session in %.1f hours", wait_seconds / 3600)
                 try:
-                    await asyncio.wait_for(shutdown.wait(), timeout=session_interval_seconds)
+                    await asyncio.wait_for(shutdown.wait(), timeout=wait_seconds)
                 except TimeoutError:
                     pass  # Normal — time for next session
 
