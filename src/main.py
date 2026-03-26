@@ -2213,7 +2213,7 @@ async def _execute_trading_cycle_action(
             market=market,
             stock_code=stock_code,
             stock_name=stock_name,
-            entry_price=current_price,
+            entry_price=current_price,  # approximation: actual fill price not yet available
             quantity=quantity,
             market_data=market_data,
             decision_id=str(decision_data.get("decision_id") or ""),

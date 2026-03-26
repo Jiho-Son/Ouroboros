@@ -13551,3 +13551,4 @@ async def test_register_post_buy_for_hard_stop_survives_subscribe_failure() -> N
 
     tracked = monitor.get("KR", "005930")
     assert tracked is not None, "monitor.register() must succeed even if subscribe() raises"
+    ws_client.subscribe.assert_awaited_once_with("KR", "005930")
