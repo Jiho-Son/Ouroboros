@@ -15,6 +15,7 @@ from src.broker.kis_api import KISBroker
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CUSTOMER_TYPE = "P"
+_MAX_RETRY_BACKOFF_SECONDS = 300.0
 _DOMESTIC_PRICE_TR_ID = "H0STCNT0"
 _OVERSEAS_PRICE_TR_ID = "HDFSCNT0"
 _SUPPORTED_MARKETS = {"KR", "US_NASDAQ", "US_NYSE", "US_AMEX"}
@@ -131,7 +132,10 @@ def parse_price_event(raw: str) -> KISWebSocketPriceEvent | None:
     try:
         price = int(last_price_raw) / (10**decimals)
     except ValueError:
-        return None
+        try:
+            price = float(last_price_raw)
+        except ValueError:
+            return None
 
     return KISWebSocketPriceEvent(
         market_code=market_code,
@@ -182,7 +186,10 @@ def classify_price_event_parse_failure(raw: str) -> str | None:
     try:
         int(last_price_raw)
     except ValueError:
-        return "invalid overseas last price"
+        try:
+            float(last_price_raw)
+        except ValueError:
+            return "invalid overseas last price"
     return None
 
 
@@ -323,7 +330,11 @@ class KISWebSocketClient:
 
             if self._stop_requested or retries >= self._max_retries:
                 break
-            await asyncio.sleep(self._retry_delay_seconds)
+            delay = min(
+                self._retry_delay_seconds * (2 ** min(retries - 1, 8)),
+                _MAX_RETRY_BACKOFF_SECONDS,
+            )
+            await asyncio.sleep(delay)
 
         if self._ws is not None and hasattr(self._ws, "close"):
             await self._ws.close()
