@@ -484,6 +484,84 @@ async def _sync_realtime_hard_stop_monitor(
         )
 
 
+async def _register_post_buy_for_hard_stop(
+    *,
+    monitor: RealtimeHardStopMonitor | None,
+    websocket_client: KISWebSocketClient | None,
+    market: MarketInfo,
+    stock_code: str,
+    stock_name: str | None,
+    entry_price: float,
+    quantity: int,
+    market_data: dict[str, Any],
+    decision_id: str = "",
+    position_timestamp: str = "",
+) -> None:
+    """Register a newly bought position for realtime hard-stop monitoring.
+
+    Called immediately after a successful BUY order so the position is watched
+    from the moment of purchase rather than waiting for the next HOLD cycle.
+
+    Note: position_timestamp defaults to "" because the DB timestamp assigned by
+    log_trade() is not yet available at call time.  This means the runtime peak
+    cache key used by update_runtime_exit_peak() will be
+    ``market:stock:decision_id:`` (empty suffix), which differs from the key
+    ``market:stock:decision_id:<timestamp>`` created on the next HOLD cycle when
+    the real timestamp is read from the DB.  Any peak data accumulated during the
+    post-buy monitoring window is therefore orphaned once the HOLD cycle
+    re-registers with the real timestamp.  This is acceptable — the alternative
+    (no monitoring at all) was worse — but worth revisiting if peak-tracking
+    accuracy becomes a priority.
+    """
+    if monitor is None or not supports_realtime_price_market(market.code):
+        return
+    if entry_price <= 0 or quantity <= 0:
+        return
+
+    stop_loss_pct = -2.0  # conservative default
+    raw_evidence = market_data.get("_staged_exit_evidence")
+    if isinstance(raw_evidence, dict):
+        candidate = safe_float(raw_evidence.get("stop_loss_threshold"), 0.0)
+        if candidate < 0:
+            stop_loss_pct = candidate
+
+    monitor.register(
+        market_code=market.code,
+        stock_code=stock_code,
+        stock_name=stock_name or "",
+        entry_price=entry_price,
+        quantity=quantity,
+        hard_stop_pct=stop_loss_pct,
+        decision_id=decision_id,
+        position_timestamp=position_timestamp,
+    )
+    if websocket_client is not None:
+        try:
+            await websocket_client.subscribe(market.code, stock_code)
+        except Exception as exc:
+            logger.warning(
+                "Realtime hard-stop post-buy subscribe failed for %s (%s): %s",
+                stock_code,
+                market.code,
+                exc,
+            )
+        logger.info(
+            "Realtime hard-stop post-buy action=register market=%s "
+            "stock=%s stop_loss_pct=%.4f source=websocket_hard_stop",
+            market.code,
+            stock_code,
+            stop_loss_pct,
+        )
+    else:
+        logger.debug(
+            "Realtime hard-stop post-buy action=register market=%s "
+            "stock=%s stop_loss_pct=%.4f source=monitor_only",
+            market.code,
+            stock_code,
+            stop_loss_pct,
+        )
+
+
 async def _clear_realtime_hard_stop_tracking(
     *,
     monitor: RealtimeHardStopMonitor | None,
@@ -2128,6 +2206,19 @@ async def _execute_trading_cycle_action(
         except Exception as exc:
             logger.warning("Telegram notification failed: %s", exc)
 
+    if decision.action == "BUY" and order_succeeded:
+        await _register_post_buy_for_hard_stop(
+            monitor=realtime_hard_stop_monitor,
+            websocket_client=realtime_hard_stop_client,
+            market=market,
+            stock_code=stock_code,
+            stock_name=stock_name,
+            entry_price=current_price,  # approximation: actual fill price not yet available
+            quantity=quantity,
+            market_data=market_data,
+            decision_id=str(decision_data.get("decision_id") or ""),
+        )
+
     if decision.action == "SELL" and order_succeeded:
         await _clear_realtime_hard_stop_tracking(
             monitor=realtime_hard_stop_monitor,
@@ -3393,6 +3484,19 @@ async def _process_daily_session_stock(
         except Exception as exc:
             logger.error("Order execution failed for %s: %s", stock_code, exc)
             return
+
+        if decision.action == "BUY" and order_succeeded:
+            await _register_post_buy_for_hard_stop(
+                monitor=realtime_hard_stop_monitor,
+                websocket_client=realtime_hard_stop_client,
+                market=market,
+                stock_code=stock_code,
+                stock_name=stock_name,
+                entry_price=trade_price,
+                quantity=quantity,
+                market_data=stock_data,
+                decision_id=str(decision_id or ""),
+            )
 
         if decision.action == "SELL" and order_succeeded:
             buy_trade = get_latest_buy_trade(
