@@ -847,3 +847,19 @@
 - next_ticket: OOR-854
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #871 review thread를 코드/테스트와 대조해 타당한 지적만 반영하고, 수정 사항 검증 후 push 및 PR thread/top-level comment까지 같은 세션에서 마무리한다.
+
+### 2026-03-26 | session=codex-oor-865-start
+- branch: feature/issue-865-us-reg-daily-batch-coverage
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-865
+- next_ticket: OOR-865
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: daily mode 6시간 cadence가 US_REG를 건너뛰는 재현 신호를 먼저 확보하고, 장중 추가 배치 보장 로직을 TDD로 최소 수정한다.
+
+### 2026-03-26 | session=codex-pr874-review-followup
+- branch: feature/issue-865-us-reg-daily-batch-coverage
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-865, PR #874
+- next_ticket: OOR-865
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #874 review thread를 코드/테스트와 대조해 타당한 지적만 반영하고, 수정 사항 검증 후 push 및 GitHub inline reply까지 같은 세션에서 마무리한다.
