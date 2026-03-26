@@ -70,6 +70,7 @@ from src.main import (
     _acquire_live_runtime_lock,
     _apply_dashboard_flag,
     _execute_trading_cycle_action,
+    _register_post_buy_for_hard_stop,
     _handle_market_close,
     _handle_realtime_hard_stop_trigger,
     _handle_realtime_price_event,
@@ -13216,3 +13217,119 @@ async def test_trading_cycle_orchestrates_stage_helpers_in_order() -> None:
 
     assert call_order == ["collect", "evaluate", "execute", "log"]
     criticality_assessor.get_timeout.assert_called_once_with(criticality)
+
+
+# ---------------------------------------------------------------------------
+# _register_post_buy_for_hard_stop
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_register_post_buy_for_hard_stop_subscribes_new_position() -> None:
+    monitor = RealtimeHardStopMonitor()
+    ws_client = MagicMock()
+    ws_client.subscribe = AsyncMock()
+
+    await _register_post_buy_for_hard_stop(
+        monitor=monitor,
+        websocket_client=ws_client,
+        market=MARKETS["KR"],
+        stock_code="005930",
+        stock_name="Samsung",
+        entry_price=100.0,
+        quantity=7,
+        market_data={},
+    )
+
+    tracked = monitor.get("KR", "005930")
+    assert tracked is not None
+    assert tracked.quantity == 7
+    assert tracked.stock_name == "Samsung"
+    ws_client.subscribe.assert_awaited_once_with("KR", "005930")
+
+
+@pytest.mark.asyncio
+async def test_register_post_buy_for_hard_stop_uses_staged_exit_evidence_stop_loss() -> None:
+    monitor = RealtimeHardStopMonitor()
+    ws_client = MagicMock()
+    ws_client.subscribe = AsyncMock()
+
+    await _register_post_buy_for_hard_stop(
+        monitor=monitor,
+        websocket_client=ws_client,
+        market=MARKETS["KR"],
+        stock_code="005930",
+        stock_name=None,
+        entry_price=100.0,
+        quantity=5,
+        market_data={"_staged_exit_evidence": {"stop_loss_threshold": -4.0}},
+    )
+
+    tracked = monitor.get("KR", "005930")
+    assert tracked is not None
+    assert tracked.hard_stop_price == pytest.approx(96.0)
+
+
+@pytest.mark.asyncio
+async def test_register_post_buy_for_hard_stop_falls_back_to_default_stop_loss() -> None:
+    monitor = RealtimeHardStopMonitor()
+    ws_client = MagicMock()
+    ws_client.subscribe = AsyncMock()
+
+    await _register_post_buy_for_hard_stop(
+        monitor=monitor,
+        websocket_client=ws_client,
+        market=MARKETS["KR"],
+        stock_code="005930",
+        stock_name=None,
+        entry_price=100.0,
+        quantity=5,
+        market_data={},
+    )
+
+    tracked = monitor.get("KR", "005930")
+    assert tracked is not None
+    assert tracked.hard_stop_price == pytest.approx(98.0)  # default -2.0%
+
+
+@pytest.mark.asyncio
+async def test_execute_trading_cycle_action_registers_hard_stop_after_successful_buy() -> None:
+    db_conn = init_db(":memory:")
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"rt_cd": "0", "msg1": "OK"})
+    monitor = RealtimeHardStopMonitor()
+    ws_client = MagicMock()
+    ws_client.subscribe = AsyncMock()
+    ws_client.unsubscribe = AsyncMock()
+
+    await _execute_trading_cycle_action(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=MagicMock(),
+        telegram=MagicMock(notify_trade_execution=AsyncMock()),
+        market=MARKETS["KR"],
+        stock_code="005930",
+        runtime_session_id="KRX_REG",
+        snapshot={
+            "current_price": 100.0,
+            "total_cash": 1_000_000.0,
+            "pnl_pct": 0.0,
+            "candidate": None,
+            "balance_data": {},
+            "market_data": {},
+        },
+        decision_data={
+            "decision": main_module.TradeDecision(action="BUY", confidence=85, rationale="buy"),
+            "match": _make_buy_match(),
+            "decision_id": "buy-dec",
+        },
+        settings=_make_settings(),
+        realtime_hard_stop_monitor=monitor,
+        realtime_hard_stop_client=ws_client,
+    )
+
+    tracked = monitor.get("KR", "005930")
+    assert tracked is not None, "Newly bought position must be registered for hard-stop monitoring"
+    ws_client.subscribe.assert_awaited_once_with("KR", "005930")
