@@ -310,7 +310,8 @@ def test_daily_mode_batch_cadence_uses_is_market_open_for_future_batches() -> No
     assert is_market_open_mock.call_count == 2
 
 
-def test_resolve_daily_mode_next_batch_at_adjusts_us_pre_gap_to_regular_session() -> None:
+def test_resolve_daily_mode_next_batch_at_keeps_default_when_dst_regular_session_is_active(
+) -> None:
     current_batch_started_at = datetime(2026, 3, 25, 14, 12, tzinfo=UTC)
     batch_completed_at = datetime(2026, 3, 25, 14, 13, tzinfo=UTC)
 
@@ -319,7 +320,7 @@ def test_resolve_daily_mode_next_batch_at_adjusts_us_pre_gap_to_regular_session(
         current_batch_started_at=current_batch_started_at,
         batch_completed_at=batch_completed_at,
         session_interval=timedelta(hours=6),
-    ) == datetime(2026, 3, 25, 14, 30, tzinfo=UTC)
+    ) == datetime(2026, 3, 25, 20, 13, tzinfo=UTC)
 
 
 def test_resolve_terminal_sell_order_price_uses_limit_in_low_liquidity_session() -> None:
@@ -13449,7 +13450,7 @@ async def test_run_live_daily_mode_starts_realtime_hard_stop_monitor(
 
 
 @pytest.mark.asyncio
-async def test_run_daily_mode_schedules_us_regular_session_catchup_batch(
+async def test_run_daily_mode_keeps_default_wait_when_dst_regular_session_is_active(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     class _FakeEvent:
@@ -13578,8 +13579,8 @@ async def test_run_daily_mode_schedules_us_regular_session_catchup_batch(
     run_daily_session.assert_awaited_once()
     telegram.assert_called_once()
     assert "Daily batch cadence anchored to process start" in caplog.text
-    assert "Next session in 0.3 hours" in caplog.text
-    assert "Daily mode has no additional regular-session batch before close" not in caplog.text
+    assert "Next session in 6.0 hours" in caplog.text
+    assert "Daily mode has no additional regular-session batch before close" in caplog.text
 
 
 @pytest.mark.asyncio

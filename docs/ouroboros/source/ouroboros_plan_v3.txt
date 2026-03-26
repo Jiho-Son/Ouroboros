@@ -19,11 +19,11 @@ KR 세션:
 - KRX_REG   : 09:00 ~ 15:30 (KST)
 - NXT_AFTER : 15:30 ~ 20:00 (KST)
 
-US 세션(KST 관점 운영):
-- US_DAY    : 10:00 ~ 18:00
-- US_PRE    : 18:00 ~ 23:30
-- US_REG    : 23:30 ~ 06:00
-- US_AFTER  : 06:00 ~ 07:00
+US 세션(현지 시각 기준, America/New_York / DST-aware):
+- US_DAY    : 20:00 ~ 04:00
+- US_PRE    : 04:00 ~ 09:30
+- US_REG    : 09:30 ~ 16:00
+- US_AFTER  : 16:00 ~ 17:00
 
 원칙:
 - 모든 피처/신호/주문/로그에 session_id를 명시적으로 포함

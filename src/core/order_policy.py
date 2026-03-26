@@ -13,6 +13,11 @@ from zoneinfo import ZoneInfo
 from src.markets.schedule import MarketInfo
 
 _LOW_LIQUIDITY_SESSIONS = {"NXT_AFTER", "US_PRE", "US_DAY", "US_AFTER"}
+_US_PRE_OPEN = time(4, 0)
+_US_REGULAR_OPEN = time(9, 30)
+_US_REGULAR_CLOSE = time(16, 0)
+_US_AFTER_CLOSE = time(17, 0)
+_US_DAY_START = time(20, 0)
 
 
 class OrderPolicyRejectedError(Exception):
@@ -31,7 +36,7 @@ class SessionInfo:
 
 
 def classify_session_id(market: MarketInfo, now: datetime | None = None) -> str:
-    """Classify current session by KST schedule used in v3 docs."""
+    """Classify current session using market-local trading clocks."""
     now = now or datetime.now(UTC)
     market_timezone = market.timezone
     if not isinstance(market_timezone, tzinfo):
@@ -42,30 +47,39 @@ def classify_session_id(market: MarketInfo, now: datetime | None = None) -> str:
         else:
             market_timezone = UTC
     local_now = now.astimezone(market_timezone)
-    # v3 session tables are explicitly defined in KST perspective.
-    kst_time = now.astimezone(ZoneInfo("Asia/Seoul")).timetz().replace(tzinfo=None)
+    local_time = local_now.timetz().replace(tzinfo=None)
+    market_open_time = (
+        market.open_time
+        if isinstance(getattr(market, "open_time", None), time)
+        else _US_REGULAR_OPEN
+    )
+    market_close_time = (
+        market.close_time
+        if isinstance(getattr(market, "close_time", None), time)
+        else _US_REGULAR_CLOSE
+    )
 
     if market.code == "KR":
         if local_now.weekday() >= 5:
             return "KR_OFF"
-        if time(8, 0) <= kst_time < time(8, 50):
+        if time(8, 0) <= local_time < time(8, 50):
             return "NXT_PRE"
-        if time(9, 0) <= kst_time < time(15, 30):
+        if time(9, 0) <= local_time < time(15, 30):
             return "KRX_REG"
-        if time(15, 30) <= kst_time < time(20, 0):
+        if time(15, 30) <= local_time < time(20, 0):
             return "NXT_AFTER"
         return "KR_OFF"
 
     if market.code.startswith("US"):
         if local_now.weekday() >= 5:
             return "US_OFF"
-        if time(10, 0) <= kst_time < time(18, 0):
+        if local_time >= _US_DAY_START or local_time < _US_PRE_OPEN:
             return "US_DAY"
-        if time(18, 0) <= kst_time < time(23, 30):
+        if _US_PRE_OPEN <= local_time < market_open_time:
             return "US_PRE"
-        if time(23, 30) <= kst_time or kst_time < time(6, 0):
+        if market_open_time <= local_time < market_close_time:
             return "US_REG"
-        if time(6, 0) <= kst_time < time(7, 0):
+        if market_close_time <= local_time < _US_AFTER_CLOSE:
             return "US_AFTER"
         return "US_OFF"
 
