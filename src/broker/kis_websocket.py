@@ -133,6 +133,8 @@ def parse_price_event(raw: str) -> KISWebSocketPriceEvent | None:
         price = int(last_price_raw) / (10**decimals)
     except ValueError:
         try:
+            # Live KIS endpoint sends pre-scaled float strings (e.g. "15.07");
+            # decimals does not apply in this path.
             price = float(last_price_raw)
         except ValueError:
             return None
@@ -280,6 +282,11 @@ class KISWebSocketClient:
                     self._ws = ws
                     logger.info("Realtime websocket action=connect url=%s", self._ws_url)
                     await self._resubscribe_all(ws)
+                    logger.info(
+                        "Realtime websocket action=connected url=%s subscriptions=%d",
+                        self._ws_url,
+                        len(self._subscriptions),
+                    )
                     async for raw in ws:
                         if self._stop_requested:
                             break
@@ -317,7 +324,7 @@ class KISWebSocketClient:
                                 event.price,
                                 event.tr_id,
                             )
-                        if event is not None and self._on_price is not None:
+                        if self._on_price is not None:
                             await self._on_price(event)
                 if self._stop_requested:
                     break
@@ -331,7 +338,7 @@ class KISWebSocketClient:
             if self._stop_requested or retries >= self._max_retries:
                 break
             delay = min(
-                self._retry_delay_seconds * (2 ** min(retries - 1, 8)),
+                self._retry_delay_seconds * (2 ** (retries - 1)),
                 _MAX_RETRY_BACKOFF_SECONDS,
             )
             await asyncio.sleep(delay)
