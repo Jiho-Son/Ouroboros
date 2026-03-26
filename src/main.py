@@ -270,9 +270,12 @@ def _resolve_daily_mode_next_batch_at(
         if probe <= batch_completed_at:
             probe = probe + timedelta(minutes=1)
 
-        # US_PRE can overlap the first regular-session hour during DST; scan
-        # forward minute-by-minute until the current market reaches its regular
-        # session classification and use that as the catch-up slot.
+        # Session boundaries are classified in fixed KST windows, so scan
+        # minute-by-minute to find the first UTC minute that maps to the
+        # market's regular-session classification. The upper bound remains the
+        # market-local close (for example, 20:00 UTC during EDT), so the
+        # KST-only 20:00-21:00 UTC tail of US_REG is intentionally treated as
+        # post-close and is not caught up here.
         while probe < market_close_utc and probe < default_next_batch_at:
             if get_session_info(market, probe).session_id == expected_regular_session_id:
                 catchup_candidates.append(probe)
@@ -4716,6 +4719,8 @@ async def run(settings: Settings) -> None:
                     settings.enabled_market_list,
                     now=current_batch_started_at,
                 )
+                # Preserve the legacy cadence if the batch run fails before it
+                # can compute a catch-up timestamp.
                 wait_seconds = session_interval_seconds
 
                 try:
