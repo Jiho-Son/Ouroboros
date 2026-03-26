@@ -537,13 +537,21 @@ async def _register_post_buy_for_hard_stop(
     )
     if websocket_client is not None:
         await websocket_client.subscribe(market.code, stock_code)
-    logger.info(
-        "Realtime hard-stop post-buy action=register market=%s "
-        "stock=%s stop_loss_pct=%.4f source=websocket_hard_stop",
-        market.code,
-        stock_code,
-        stop_loss_pct,
-    )
+        logger.info(
+            "Realtime hard-stop post-buy action=register market=%s "
+            "stock=%s stop_loss_pct=%.4f source=websocket_hard_stop",
+            market.code,
+            stock_code,
+            stop_loss_pct,
+        )
+    else:
+        logger.debug(
+            "Realtime hard-stop post-buy action=register market=%s "
+            "stock=%s stop_loss_pct=%.4f source=monitor_only",
+            market.code,
+            stock_code,
+            stop_loss_pct,
+        )
 
 
 async def _clear_realtime_hard_stop_tracking(

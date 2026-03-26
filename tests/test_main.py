@@ -13429,3 +13429,103 @@ async def test_process_daily_session_stock_registers_hard_stop_after_successful_
     tracked = monitor.get("KR", "005930")
     assert tracked is not None, "daily batch BUY must register position for hard-stop monitoring"
     ws_client.subscribe.assert_awaited_once_with("KR", "005930")
+
+
+@pytest.mark.asyncio
+async def test_execute_trading_cycle_action_no_hard_stop_on_failed_buy() -> None:
+    """Ghost subscription must NOT be created when the broker rejects a BUY order."""
+    db_conn = init_db(":memory:")
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"rt_cd": "9", "msg1": "insufficient balance"})
+    monitor = RealtimeHardStopMonitor()
+    ws_client = MagicMock()
+    ws_client.subscribe = AsyncMock()
+    ws_client.unsubscribe = AsyncMock()
+
+    await _execute_trading_cycle_action(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=MagicMock(),
+        telegram=MagicMock(notify_trade_execution=AsyncMock()),
+        market=MARKETS["KR"],
+        stock_code="005930",
+        runtime_session_id="KRX_REG",
+        snapshot={
+            "current_price": 100.0,
+            "total_cash": 1_000_000.0,
+            "pnl_pct": 0.0,
+            "candidate": None,
+            "balance_data": {},
+            "market_data": {},
+        },
+        decision_data={
+            "decision": main_module.TradeDecision(action="BUY", confidence=85, rationale="buy"),
+            "match": _make_buy_match(),
+            "decision_id": "buy-dec",
+        },
+        settings=_make_settings(),
+        realtime_hard_stop_monitor=monitor,
+        realtime_hard_stop_client=ws_client,
+    )
+
+    assert monitor.get("KR", "005930") is None, (
+        "Rejected BUY must not create hard-stop subscription"
+    )
+    ws_client.subscribe.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_daily_session_stock_no_hard_stop_on_failed_buy() -> None:
+    """Ghost subscription must NOT be created when the broker rejects a BUY in daily batch."""
+    db_conn = init_db(":memory:")
+    broker = MagicMock()
+    broker.send_order = AsyncMock(return_value={"rt_cd": "9", "msg1": "insufficient balance"})
+    monitor = RealtimeHardStopMonitor()
+    ws_client = MagicMock()
+    ws_client.subscribe = AsyncMock()
+    ws_client.unsubscribe = AsyncMock()
+
+    playbook = _make_playbook("KR")
+    engine = MagicMock()
+    engine.evaluate = MagicMock(return_value=_make_buy_match())
+    decision_logger = MagicMock()
+    decision_logger.log_decision = MagicMock(return_value="buy-dec-daily")
+
+    await _process_daily_session_stock(
+        broker=broker,
+        overseas_broker=MagicMock(),
+        scenario_engine=engine,
+        playbook=playbook,
+        risk=MagicMock(),
+        db_conn=db_conn,
+        decision_logger=decision_logger,
+        telegram=MagicMock(notify_trade_execution=AsyncMock()),
+        settings=_make_settings(),
+        market=MARKETS["KR"],
+        stock_data={
+            "stock_code": "005930",
+            "current_price": 70000.0,
+            "foreigner_net": 0,
+            "price_change_pct": 0.0,
+            "volume_ratio": 1.0,
+        },
+        candidate_map={},
+        portfolio_data={},
+        balance_data={},
+        balance_info={},
+        purchase_total=0.0,
+        pnl_pct=0.0,
+        total_eval=10_000_000.0,
+        total_cash=10_000_000.0,
+        runtime_session_id="KRX_REG",
+        daily_buy_cooldown={},
+        realtime_hard_stop_monitor=monitor,
+        realtime_hard_stop_client=ws_client,
+    )
+
+    assert monitor.get("KR", "005930") is None, (
+        "Rejected BUY must not create hard-stop subscription"
+    )
+    ws_client.subscribe.assert_not_awaited()
