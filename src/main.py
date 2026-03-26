@@ -3939,6 +3939,7 @@ def _clear_realtime_market_runtime_state(
     active_stocks: dict[str, list[str]],
     scan_candidates: dict[str, dict[str, ScanCandidate]],
     last_scan_time: dict[str, float],
+    mid_refreshed: set[str],
 ) -> None:
     """Drop per-market realtime state after the market fully closes."""
     market_states.pop(market_code, None)
@@ -3947,6 +3948,7 @@ def _clear_realtime_market_runtime_state(
     active_stocks.pop(market_code, None)
     scan_candidates.pop(market_code, None)
     last_scan_time.pop(market_code, None)
+    mid_refreshed.discard(market_code)
 
 
 async def _handle_realtime_market_closures(
@@ -3958,6 +3960,7 @@ async def _handle_realtime_market_closures(
     active_stocks: dict[str, list[str]],
     scan_candidates: dict[str, dict[str, ScanCandidate]],
     last_scan_time: dict[str, float],
+    mid_refreshed: set[str],
     telegram: TelegramClient,
     context_aggregator: ContextAggregator,
     daily_reviewer: DailyReviewer,
@@ -3980,6 +3983,7 @@ async def _handle_realtime_market_closures(
                 active_stocks=active_stocks,
                 scan_candidates=scan_candidates,
                 last_scan_time=last_scan_time,
+                mid_refreshed=mid_refreshed,
             )
             continue
 
@@ -4004,6 +4008,7 @@ async def _handle_realtime_market_closures(
             active_stocks=active_stocks,
             scan_candidates=scan_candidates,
             last_scan_time=last_scan_time,
+            mid_refreshed=mid_refreshed,
         )
 
 
@@ -4897,6 +4902,7 @@ async def run(settings: Settings) -> None:
                     active_stocks=active_stocks,
                     scan_candidates=scan_candidates,
                     last_scan_time=last_scan_time,
+                    mid_refreshed=mid_refreshed,
                     telegram=telegram,
                     context_aggregator=context_aggregator,
                     daily_reviewer=daily_reviewer,
@@ -4945,6 +4951,9 @@ async def run(settings: Settings) -> None:
                         settings=settings,
                     )
 
+                    # get_session_info() wraps classify_session_id(), which always returns
+                    # a concrete non-empty session ID for supported markets, so session
+                    # transition checks can compare the raw string without extra truthy guards.
                     # Notify on market/session transition (e.g., US_PRE -> US_REG)
                     session_changed = _has_market_session_transition(
                         _market_states, market.code, session_info.session_id

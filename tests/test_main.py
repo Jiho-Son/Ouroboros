@@ -5655,6 +5655,7 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
     active_stocks = {"KR": ["005930"], "US_NASDAQ": ["AAPL"]}
     scan_candidates = {"KR": {"005930": MagicMock()}, "US_NASDAQ": {"AAPL": MagicMock()}}
     last_scan_time = {"KR": 1.0, "US_NASDAQ": 2.0}
+    mid_refreshed = {"KR", "US_NASDAQ"}
     close_handler = AsyncMock()
 
     with patch("src.main._handle_market_close", new=close_handler):
@@ -5666,6 +5667,7 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
             active_stocks=active_stocks,
             scan_candidates=scan_candidates,
             last_scan_time=last_scan_time,
+            mid_refreshed=mid_refreshed,
             telegram=MagicMock(),
             context_aggregator=MagicMock(),
             daily_reviewer=MagicMock(),
@@ -5679,6 +5681,7 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
             active_stocks=active_stocks,
             scan_candidates=scan_candidates,
             last_scan_time=last_scan_time,
+            mid_refreshed=mid_refreshed,
             telegram=MagicMock(),
             context_aggregator=MagicMock(),
             daily_reviewer=MagicMock(),
@@ -5693,8 +5696,113 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
     assert "KR" not in active_stocks
     assert "KR" not in scan_candidates
     assert "KR" not in last_scan_time
+    assert "KR" not in mid_refreshed
     assert "US_NASDAQ" in market_states
     assert "US_NASDAQ" in playbooks
+    assert "US_NASDAQ" in mid_refreshed
+
+
+@pytest.mark.asyncio
+async def test_handle_realtime_market_closures_discards_mid_refreshed_for_closed_market() -> None:
+    market_states = {"KR": "KRX_REG", "US_NASDAQ": "US_REG"}
+    playbooks = {"KR": _make_playbook("KR"), "US_NASDAQ": _make_playbook("US_NASDAQ")}
+    pre_refresh_playbooks = {"KR": _make_playbook("KR")}
+    active_stocks = {"KR": ["005930"]}
+    scan_candidates = {"KR": {"005930": MagicMock()}}
+    last_scan_time = {"KR": 1.0}
+    mid_refreshed = {"KR", "US_NASDAQ"}
+
+    with patch("src.main._handle_market_close", new=AsyncMock()):
+        await main_module._handle_realtime_market_closures(
+            current_open_markets=[MARKETS["US_NASDAQ"]],
+            market_states=market_states,
+            playbooks=playbooks,
+            pre_refresh_playbooks=pre_refresh_playbooks,
+            active_stocks=active_stocks,
+            scan_candidates=scan_candidates,
+            last_scan_time=last_scan_time,
+            mid_refreshed=mid_refreshed,
+            telegram=MagicMock(),
+            context_aggregator=MagicMock(),
+            daily_reviewer=MagicMock(),
+            evolution_optimizer=MagicMock(),
+        )
+
+    assert "KR" not in mid_refreshed
+    assert "US_NASDAQ" in mid_refreshed
+
+
+@pytest.mark.asyncio
+async def test_handle_realtime_market_closures_unknown_market_logs_warning_and_cleans_runtime_state(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    market_states = {"MISSING": "CUSTOM_SESSION"}
+    playbooks = {"MISSING": _make_playbook("KR")}
+    pre_refresh_playbooks = {"MISSING": _make_playbook("KR")}
+    active_stocks = {"MISSING": ["005930"]}
+    scan_candidates = {"MISSING": {"005930": MagicMock()}}
+    last_scan_time = {"MISSING": 1.0}
+    mid_refreshed = {"MISSING"}
+
+    with caplog.at_level(logging.WARNING):
+        await main_module._handle_realtime_market_closures(
+            current_open_markets=[],
+            market_states=market_states,
+            playbooks=playbooks,
+            pre_refresh_playbooks=pre_refresh_playbooks,
+            active_stocks=active_stocks,
+            scan_candidates=scan_candidates,
+            last_scan_time=last_scan_time,
+            mid_refreshed=mid_refreshed,
+            telegram=MagicMock(),
+            context_aggregator=MagicMock(),
+            daily_reviewer=MagicMock(),
+            evolution_optimizer=MagicMock(),
+        )
+
+    assert "Missing market metadata for closed market: MISSING" in caplog.text
+    assert market_states == {}
+    assert playbooks == {}
+    assert pre_refresh_playbooks == {}
+    assert active_stocks == {}
+    assert scan_candidates == {}
+    assert last_scan_time == {}
+    assert mid_refreshed == set()
+
+
+@pytest.mark.asyncio
+async def test_handle_realtime_market_closures_cleans_runtime_state_after_close_failure() -> None:
+    market_states = {"KR": "KRX_REG"}
+    playbooks = {"KR": _make_playbook("KR")}
+    pre_refresh_playbooks = {"KR": _make_playbook("KR")}
+    active_stocks = {"KR": ["005930"]}
+    scan_candidates = {"KR": {"005930": MagicMock()}}
+    last_scan_time = {"KR": 1.0}
+    mid_refreshed = {"KR"}
+
+    with patch("src.main._handle_market_close", new=AsyncMock(side_effect=RuntimeError("boom"))):
+        await main_module._handle_realtime_market_closures(
+            current_open_markets=[],
+            market_states=market_states,
+            playbooks=playbooks,
+            pre_refresh_playbooks=pre_refresh_playbooks,
+            active_stocks=active_stocks,
+            scan_candidates=scan_candidates,
+            last_scan_time=last_scan_time,
+            mid_refreshed=mid_refreshed,
+            telegram=MagicMock(),
+            context_aggregator=MagicMock(),
+            daily_reviewer=MagicMock(),
+            evolution_optimizer=MagicMock(),
+        )
+
+    assert market_states == {}
+    assert playbooks == {}
+    assert pre_refresh_playbooks == {}
+    assert active_stocks == {}
+    assert scan_candidates == {}
+    assert last_scan_time == {}
+    assert mid_refreshed == set()
 
 
 def test_run_context_scheduler_invokes_scheduler() -> None:
@@ -12949,6 +13057,7 @@ async def test_run_closes_removed_market_while_other_market_stays_open() -> None
     assert close_handler.await_args.kwargs["market_code"] == "KR"
     telegram.return_value.notify_market_open.assert_any_await(MARKETS["KR"].name)
     telegram.return_value.notify_market_open.assert_any_await(MARKETS["US_NASDAQ"].name)
+    assert telegram.return_value.notify_market_open.await_count == 2
 
 
 @pytest.mark.asyncio

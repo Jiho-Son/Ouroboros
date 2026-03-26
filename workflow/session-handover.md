@@ -871,3 +871,11 @@
 - next_ticket: OOR-858
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: `open_markets` 전체 비움 조건에 묶인 개별 마켓 close 누락을 먼저 재현하고, 마켓별 open/close diff 기반 처리와 상태 정리 타이밍을 TDD로 고정한다.
+
+### 2026-03-26 | session=codex-pr875-review-followup
+- branch: feature/issue-858-market-close-detection
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-858, PR #875
+- next_ticket: OOR-858
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #875 review thread를 코드/테스트와 대조해 타당한 지적만 반영하고, 수정 사항 검증 후 push 및 GitHub review thread reply/top-level comment까지 같은 세션에서 마무리한다.
