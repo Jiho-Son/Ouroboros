@@ -15,6 +15,7 @@ from src.broker.kis_api import KISBroker
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CUSTOMER_TYPE = "P"
+_MAX_RETRY_BACKOFF_SECONDS = 300.0
 _DOMESTIC_PRICE_TR_ID = "H0STCNT0"
 _OVERSEAS_PRICE_TR_ID = "HDFSCNT0"
 _SUPPORTED_MARKETS = {"KR", "US_NASDAQ", "US_NYSE", "US_AMEX"}
@@ -131,7 +132,12 @@ def parse_price_event(raw: str) -> KISWebSocketPriceEvent | None:
     try:
         price = int(last_price_raw) / (10**decimals)
     except ValueError:
-        return None
+        try:
+            # Live KIS endpoint sends pre-scaled float strings (e.g. "15.07");
+            # decimals does not apply in this path.
+            price = float(last_price_raw)
+        except ValueError:
+            return None
 
     return KISWebSocketPriceEvent(
         market_code=market_code,
@@ -182,7 +188,10 @@ def classify_price_event_parse_failure(raw: str) -> str | None:
     try:
         int(last_price_raw)
     except ValueError:
-        return "invalid overseas last price"
+        try:
+            float(last_price_raw)
+        except ValueError:
+            return "invalid overseas last price"
     return None
 
 
@@ -273,6 +282,11 @@ class KISWebSocketClient:
                     self._ws = ws
                     logger.info("Realtime websocket action=connect url=%s", self._ws_url)
                     await self._resubscribe_all(ws)
+                    logger.info(
+                        "Realtime websocket action=connected url=%s subscriptions=%d",
+                        self._ws_url,
+                        len(self._subscriptions),
+                    )
                     async for raw in ws:
                         if self._stop_requested:
                             break
@@ -310,7 +324,7 @@ class KISWebSocketClient:
                                 event.price,
                                 event.tr_id,
                             )
-                        if event is not None and self._on_price is not None:
+                        if self._on_price is not None:
                             await self._on_price(event)
                 if self._stop_requested:
                     break
@@ -323,7 +337,11 @@ class KISWebSocketClient:
 
             if self._stop_requested or retries >= self._max_retries:
                 break
-            await asyncio.sleep(self._retry_delay_seconds)
+            delay = min(
+                self._retry_delay_seconds * (2 ** (retries - 1)),
+                _MAX_RETRY_BACKOFF_SECONDS,
+            )
+            await asyncio.sleep(delay)
 
         if self._ws is not None and hasattr(self._ws, "close"):
             await self._ws.close()

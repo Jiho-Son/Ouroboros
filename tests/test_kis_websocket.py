@@ -11,6 +11,7 @@ from src.broker.kis_websocket import (
     KISWebSocketClient,
     KISWebSocketPriceEvent,
     build_subscription_message,
+    classify_price_event_parse_failure,
     parse_price_event,
 )
 
@@ -501,3 +502,123 @@ async def test_run_can_restart_with_same_client_instance() -> None:
         "ws://example.test/custom-path",
         "ws://example.test/custom-path",
     ]
+
+
+def test_parse_price_event_handles_float_format_overseas_price() -> None:
+    """Live KIS endpoint sends price as float string (e.g. '15.07') rather than
+    the integer-with-decimal-shift format used in the test/VTS environment."""
+    float_raw = (
+        "0|HDFSCNT0|001|"
+        "DNYSCHWY^CHWY^0^20260326^20260326^093000^20260326^223000^"
+        "2650^2660^2640^26.01^5^0050^00136^"
+        "2600^2601^10^12^100^200^100000^30^70^120.0^1"
+    )
+
+    event = parse_price_event(float_raw)
+
+    assert event is not None
+    assert event.market_code == "US_NYSE"
+    assert event.stock_code == "CHWY"
+    assert event.price == pytest.approx(26.01)
+
+
+def test_classify_price_event_no_failure_for_float_format_overseas_price() -> None:
+    float_raw = (
+        "0|HDFSCNT0|001|"
+        "DNASULY^ULY^0^20260326^20260326^093000^20260326^223000^"
+        "530^540^520^5.28^5^0050^00136^"
+        "520^521^10^12^100^200^100000^30^70^120.0^1"
+    )
+
+    reason = classify_price_event_parse_failure(float_raw)
+
+    assert reason is None
+
+
+@pytest.mark.asyncio
+async def test_run_applies_exponential_backoff_on_repeated_fast_failures() -> None:
+    """Retry delay should grow with each consecutive failure to avoid hammering
+    the server during off-hours when the connection is closed immediately."""
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="key"))
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    connect_count = 0
+
+    def connect(_url: str) -> _FakeConnect:
+        nonlocal connect_count
+        connect_count += 1
+        # Each connection immediately closes (empty messages → StopAsyncIteration)
+        return _FakeConnect(_FakeWebSocket(messages=[]))
+
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=connect,
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=1.0,
+        max_retries=4,
+    )
+
+    import unittest.mock as mock
+    with mock.patch("asyncio.sleep", side_effect=fake_sleep):
+        await client.run()
+
+    # With exponential backoff: delays should be non-decreasing
+    assert len(sleep_calls) == 3  # 4 connections → 3 sleeps (no sleep after last)
+    assert sleep_calls[0] <= sleep_calls[1] <= sleep_calls[2]
+    assert sleep_calls[1] > sleep_calls[0]  # actually growing
+
+
+@pytest.mark.asyncio
+async def test_run_caps_backoff_at_max_backoff_seconds() -> None:
+    """Backoff delay must not exceed _MAX_RETRY_BACKOFF_SECONDS (300s).
+    With retry_delay=1.0 and 15 retries, delay grows past 256s and should cap at
+    300s — not at 256s (which would happen if the exponent were clamped to 8)."""
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="key"))
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    def connect(_url: str) -> _FakeConnect:
+        return _FakeConnect(_FakeWebSocket(messages=[]))
+
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=connect,
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=1.0,
+        max_retries=15,
+    )
+
+    import unittest.mock as mock
+    with mock.patch("asyncio.sleep", side_effect=fake_sleep):
+        await client.run()
+
+    assert max(sleep_calls) == pytest.approx(300.0)
+
+
+@pytest.mark.asyncio
+async def test_run_logs_connected_after_resubscription(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """action=connected must be logged after successful resubscription so operators
+    can confirm the connection is ready, not just attempted."""
+    broker = SimpleNamespace(get_websocket_approval_key=AsyncMock(return_value="key"))
+    ws = _FakeWebSocket(messages=[])
+    client = KISWebSocketClient(
+        broker=broker,
+        connect=lambda _url: _FakeConnect(ws),
+        ws_url="ws://example.test/tryitout",
+        retry_delay_seconds=0.0,
+        max_retries=1,
+    )
+    await client.subscribe("US_NYSE", "CHWY")
+    caplog.set_level(logging.INFO)
+
+    await client.run()
+
+    assert "action=connected" in caplog.text
+    assert "subscriptions=1" in caplog.text
