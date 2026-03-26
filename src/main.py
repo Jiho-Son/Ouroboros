@@ -3930,6 +3930,83 @@ async def _handle_market_close(
         )
 
 
+def _clear_realtime_market_runtime_state(
+    *,
+    market_code: str,
+    market_states: dict[str, str],
+    playbooks: dict[str, DayPlaybook],
+    pre_refresh_playbooks: dict[str, DayPlaybook | None],
+    active_stocks: dict[str, list[str]],
+    scan_candidates: dict[str, dict[str, ScanCandidate]],
+    last_scan_time: dict[str, float],
+) -> None:
+    """Drop per-market realtime state after the market fully closes."""
+    market_states.pop(market_code, None)
+    playbooks.pop(market_code, None)
+    pre_refresh_playbooks.pop(market_code, None)
+    active_stocks.pop(market_code, None)
+    scan_candidates.pop(market_code, None)
+    last_scan_time.pop(market_code, None)
+
+
+async def _handle_realtime_market_closures(
+    *,
+    current_open_markets: list[MarketInfo],
+    market_states: dict[str, str],
+    playbooks: dict[str, DayPlaybook],
+    pre_refresh_playbooks: dict[str, DayPlaybook | None],
+    active_stocks: dict[str, list[str]],
+    scan_candidates: dict[str, dict[str, ScanCandidate]],
+    last_scan_time: dict[str, float],
+    telegram: TelegramClient,
+    context_aggregator: ContextAggregator,
+    daily_reviewer: DailyReviewer,
+    evolution_optimizer: EvolutionOptimizer | None = None,
+) -> None:
+    """Handle markets that were previously open but are absent from the current open set."""
+    open_market_codes = {market.code for market in current_open_markets}
+    for market_code in list(market_states):
+        if market_code in open_market_codes:
+            continue
+
+        market_info = MARKETS.get(market_code)
+        if market_info is None:
+            logger.warning("Missing market metadata for closed market: %s", market_code)
+            _clear_realtime_market_runtime_state(
+                market_code=market_code,
+                market_states=market_states,
+                playbooks=playbooks,
+                pre_refresh_playbooks=pre_refresh_playbooks,
+                active_stocks=active_stocks,
+                scan_candidates=scan_candidates,
+                last_scan_time=last_scan_time,
+            )
+            continue
+
+        try:
+            await _handle_market_close(
+                market_code=market_code,
+                market_name=market_info.name,
+                market_timezone=market_info.timezone,
+                telegram=telegram,
+                context_aggregator=context_aggregator,
+                daily_reviewer=daily_reviewer,
+                evolution_optimizer=evolution_optimizer,
+            )
+        except Exception as exc:
+            logger.warning("Market close notification failed: %s", exc)
+
+        _clear_realtime_market_runtime_state(
+            market_code=market_code,
+            market_states=market_states,
+            playbooks=playbooks,
+            pre_refresh_playbooks=pre_refresh_playbooks,
+            active_stocks=active_stocks,
+            scan_candidates=scan_candidates,
+            last_scan_time=last_scan_time,
+        )
+
+
 def _run_context_scheduler(
     scheduler: ContextScheduler,
     now: datetime | None = None,
@@ -4812,31 +4889,21 @@ async def run(settings: Settings) -> None:
                     settings.enabled_market_list,
                     include_extended_sessions=True,
                 )
+                await _handle_realtime_market_closures(
+                    current_open_markets=open_markets,
+                    market_states=_market_states,
+                    playbooks=playbooks,
+                    pre_refresh_playbooks=_pre_refresh_playbooks,
+                    active_stocks=active_stocks,
+                    scan_candidates=scan_candidates,
+                    last_scan_time=last_scan_time,
+                    telegram=telegram,
+                    context_aggregator=context_aggregator,
+                    daily_reviewer=daily_reviewer,
+                    evolution_optimizer=evolution_optimizer,
+                )
 
                 if not open_markets:
-                    # Notify market close for any markets that were open
-                    for market_code, session_id in list(_market_states.items()):
-                        if session_id:
-                            try:
-                                from src.markets.schedule import MARKETS
-
-                                market_info = MARKETS.get(market_code)
-                                if market_info:
-                                    await _handle_market_close(
-                                        market_code=market_code,
-                                        market_name=market_info.name,
-                                        market_timezone=market_info.timezone,
-                                        telegram=telegram,
-                                        context_aggregator=context_aggregator,
-                                        daily_reviewer=daily_reviewer,
-                                        evolution_optimizer=evolution_optimizer,
-                                    )
-                            except Exception as exc:
-                                logger.warning("Market close notification failed: %s", exc)
-                            _market_states.pop(market_code, None)
-                            # Clear playbook for closed market (new one generated next open)
-                            playbooks.pop(market_code, None)
-
                     # No markets open — wait until next market opens
                     try:
                         next_market, next_open_time = get_next_market_open(
