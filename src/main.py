@@ -4141,7 +4141,7 @@ def _load_stored_playbook_for_session(
         market_code,
         session_id=session_id,
     )
-    if (
+    if stored_playbook is not None and (
         playbook_store.load(
             market_today,
             market_code,

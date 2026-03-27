@@ -1888,6 +1888,31 @@ class TestRealtimeSessionStateHelpers:
         playbook_store.load_latest.assert_not_called()
         playbook_store.load.assert_not_called()
 
+    def test_load_stored_playbook_for_session_skips_mid_lookup_when_latest_missing(
+        self,
+    ) -> None:
+        playbook_store = MagicMock()
+        playbook_store.load_latest = MagicMock(return_value=None)
+        playbook_store.load = MagicMock()
+        mid_refreshed: set[str] = set()
+
+        restored = main_module._load_stored_playbook_for_session(
+            playbook_store=playbook_store,
+            market_today=date(2026, 2, 8),
+            market_code="US_NASDAQ",
+            session_id="US_PRE",
+            mid_refreshed=mid_refreshed,
+        )
+
+        assert restored is None
+        playbook_store.load_latest.assert_called_once_with(
+            date(2026, 2, 8),
+            "US_NASDAQ",
+            session_id="US_PRE",
+        )
+        playbook_store.load.assert_not_called()
+        assert mid_refreshed == set()
+
     def test_refresh_cached_playbook_on_session_transition_false_when_session_unchanged(
         self,
     ) -> None:
