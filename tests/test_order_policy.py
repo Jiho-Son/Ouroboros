@@ -27,11 +27,13 @@ def test_classify_us_pre() -> None:
 @pytest.mark.parametrize(
     ("now", "expected"),
     [
+        (datetime(2026, 3, 10, 0, 30, tzinfo=UTC), "US_DAY"),
         (datetime(2026, 3, 9, 13, 30, tzinfo=UTC), "US_REG"),
         (datetime(2026, 3, 9, 20, 0, tzinfo=UTC), "US_AFTER"),
         (datetime(2026, 11, 2, 14, 30, tzinfo=UTC), "US_REG"),
     ],
     ids=[
+        "dst_start_overnight_day_session",
         "dst_start_regular_open",
         "dst_start_after_hours_open",
         "dst_end_regular_open",

@@ -1,7 +1,5 @@
 # OOR-859 US Session DST Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** US session classification 이 `America/New_York` 현지 시각 기준으로 동작해 DST 전환 전후에도 `US_PRE`/`US_REG`/`US_AFTER` 경계와 extended-session 판정이 일관되게 유지되도록 한다.
 
 **Architecture:** `src/core/order_policy.py` 에서 US 세션 분류를 고정 KST 윈도우 비교에서 market-local 시각 비교로 바꾼다. regular session 경계는 `MarketInfo.open_time`/`close_time` 를 그대로 재사용하고, extended-session regression 은 `tests/test_order_policy.py` 와 `tests/test_market_schedule.py` 로 고정한다.
