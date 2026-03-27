@@ -18,6 +18,7 @@ import threading
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -134,13 +135,36 @@ from src.strategy.models import (
     StockPlaybook,
     StockScenario,
 )
-from src.strategy.playbook_store import PlaybookStore
+from src.strategy.playbook_store import PlaybookStore, StoredPlaybookEntry
 from src.strategy.pre_market_planner import PreMarketPlanner
 from src.strategy.scenario_engine import ScenarioEngine
 
 logger = logging.getLogger(__name__)
 _SESSION_CLOSE_WINDOWS = {"NXT_AFTER", "US_AFTER"}
 _TERMINAL_SELL_FALLBACK_MULTIPLIER = 0.996
+
+
+class PlaybookSelectionIntent(StrEnum):
+    """Runtime intent for current-session playbook selection."""
+
+    RESUME_CURRENT_SESSION = "resume_current_session"
+    FORCE_FRESH = "force_fresh"
+
+
+class PlaybookSelectionAction(StrEnum):
+    """How runtime should resolve the current-session playbook."""
+
+    REUSE_STORED = "reuse_stored"
+    GENERATE_FRESH = "generate_fresh"
+
+
+@dataclass(frozen=True)
+class PlaybookSelectionDecision:
+    """Explicit decision between stored reuse and fresh generation."""
+
+    action: PlaybookSelectionAction
+    reason: str
+    stored_entry: StoredPlaybookEntry | None = None
 
 
 async def _resolve_settlement_fx_rate(
@@ -2820,9 +2844,15 @@ async def _load_or_generate_daily_playbook(
     telegram: TelegramClient,
 ) -> DayPlaybook:
     """Load the market playbook or generate it for the current trading day."""
-    playbook = playbook_store.load(market_today, market.code, session_id=session_id)
-    if playbook is not None:
-        return _with_playbook_session_id(playbook, session_id)
+    selection = _decide_playbook_selection(
+        playbook_store=playbook_store,
+        market_today=market_today,
+        market_code=market.code,
+        session_id=session_id,
+        selection_intent=PlaybookSelectionIntent.RESUME_CURRENT_SESSION,
+    )
+    if selection.stored_entry is not None:
+        return _with_playbook_session_id(selection.stored_entry.playbook, session_id)
 
     if not candidates_list and current_holdings:
         playbook = _build_daily_exit_only_playbook(
@@ -4318,17 +4348,37 @@ def _should_mid_session_refresh(
     return local_now.hour >= 12
 
 
-def _should_reuse_stored_playbook(*, market_code: str, session_id: str) -> bool:
-    """Return whether DB-stored playbook can be reused for realtime loop bootstrap.
+def _decide_playbook_selection(
+    *,
+    playbook_store: PlaybookStore,
+    market_today: date,
+    market_code: str,
+    session_id: str,
+    selection_intent: PlaybookSelectionIntent,
+    force_reason: str | None = None,
+) -> PlaybookSelectionDecision:
+    """Decide whether runtime should reuse the current-session playbook or regenerate it."""
+    if selection_intent is PlaybookSelectionIntent.FORCE_FRESH:
+        return PlaybookSelectionDecision(
+            action=PlaybookSelectionAction.GENERATE_FRESH,
+            reason=force_reason or "fresh generation explicitly required",
+        )
 
-    For KR regular session (`KRX_REG`), always generate a fresh playbook instead of
-    reusing an earlier session's stored playbook (issue #419). For US regular
-    session (`US_REG`), also generate a fresh playbook on session transition so
-    pre-market assumptions do not leak into regular session.
-    """
-    return not (
-        (market_code == "KR" and session_id == "KRX_REG")
-        or (market_code.startswith("US") and session_id == "US_REG")
+    stored_entry = playbook_store.load_latest_entry(
+        market_today,
+        market_code,
+        session_id=session_id,
+    )
+    if stored_entry is None:
+        return PlaybookSelectionDecision(
+            action=PlaybookSelectionAction.GENERATE_FRESH,
+            reason="no stored current-session playbook",
+        )
+
+    return PlaybookSelectionDecision(
+        action=PlaybookSelectionAction.REUSE_STORED,
+        reason=f"reusing stored current-session playbook (slot={stored_entry.slot})",
+        stored_entry=stored_entry,
     )
 
 
@@ -4338,26 +4388,24 @@ def _load_stored_playbook_for_session(
     market_today: date,
     market_code: str,
     session_id: str,
+    selection_intent: PlaybookSelectionIntent,
     mid_refreshed: set[str],
+    force_reason: str | None = None,
 ) -> DayPlaybook | None:
     """Load the latest stored playbook that matches the active runtime session."""
-    if not _should_reuse_stored_playbook(market_code=market_code, session_id=session_id):
+    decision = _decide_playbook_selection(
+        playbook_store=playbook_store,
+        market_today=market_today,
+        market_code=market_code,
+        session_id=session_id,
+        selection_intent=selection_intent,
+        force_reason=force_reason,
+    )
+    if decision.stored_entry is None:
         return None
 
-    stored_playbook = playbook_store.load_latest(
-        market_today,
-        market_code,
-        session_id=session_id,
-    )
-    if stored_playbook is not None and (
-        playbook_store.load(
-            market_today,
-            market_code,
-            session_id=session_id,
-            slot="mid",
-        )
-        is not None
-    ):
+    stored_entry = decision.stored_entry
+    if stored_entry.slot == "mid":
         mid_refreshed.add(market_code)
         logger.debug(
             "Resumed with mid-session playbook for %s session=%s"
@@ -4365,17 +4413,16 @@ def _load_stored_playbook_for_session(
             market_code,
             session_id,
         )
-    return stored_playbook
+    return stored_entry.playbook
 
 
 def _should_refresh_cached_playbook_on_session_transition(
     *, session_changed: bool, market_code: str, session_id: str
 ) -> bool:
     """Return True when session transition requires dropping cached playbook."""
-    return session_changed and not _should_reuse_stored_playbook(
-        market_code=market_code,
-        session_id=session_id,
-    )
+    # Retained for call-site compatibility; policy now keys only off transition.
+    del market_code, session_id
+    return session_changed
 
 
 def _refresh_cached_playbook_on_session_transition(
@@ -5247,12 +5294,14 @@ async def run(settings: Settings) -> None:
 
                     # Mid-session playbook refresh (12:00 현지 시각)
                     now_utc = datetime.now(UTC)
+                    mid_session_refresh_triggered = False
                     if _should_mid_session_refresh(
                         market_code=market.code,
                         session_id=session_info.session_id,
                         now=now_utc,
                         mid_refreshed=mid_refreshed,
                     ):
+                        mid_session_refresh_triggered = True
                         logger.info(
                             "Mid-session refresh triggered for %s (session=%s)",
                             market.code,
@@ -5355,16 +5404,28 @@ async def run(settings: Settings) -> None:
 
                                 market_today = datetime.now(market.timezone).date()
                                 if market.code not in playbooks:
-                                    reuse_stored_pb = _should_reuse_stored_playbook(
-                                        market_code=market.code,
-                                        session_id=session_info.session_id,
+                                    selection_intent = (
+                                        PlaybookSelectionIntent.FORCE_FRESH
+                                        if session_changed or mid_session_refresh_triggered
+                                        else PlaybookSelectionIntent.RESUME_CURRENT_SESSION
                                     )
+                                    selection_reason: str | None = None
+                                    if session_changed:
+                                        selection_reason = (
+                                            "live session transition requires fresh generation"
+                                        )
+                                    elif mid_session_refresh_triggered:
+                                        selection_reason = (
+                                            "mid-session refresh requires fresh generation"
+                                        )
                                     stored_pb = _load_stored_playbook_for_session(
                                         playbook_store=playbook_store,
                                         market_today=market_today,
                                         market_code=market.code,
                                         session_id=session_info.session_id,
+                                        selection_intent=selection_intent,
                                         mid_refreshed=mid_refreshed,
+                                        force_reason=selection_reason,
                                     )
                                     if stored_pb is not None:
                                         playbooks[market.code] = _with_playbook_session_id(
@@ -5379,12 +5440,13 @@ async def run(settings: Settings) -> None:
                                             stored_pb.scenario_count,
                                         )
                                     else:
-                                        if not reuse_stored_pb:
+                                        if selection_intent is PlaybookSelectionIntent.FORCE_FRESH:
                                             logger.info(
                                                 "Skipping stored playbook for %s session=%s;"
-                                                " generating fresh playbook",
+                                                " %s",
                                                 market.code,
                                                 session_info.session_id,
+                                                selection_reason or "fresh generation required",
                                             )
                                         try:
                                             pb = await pre_market_planner.generate_playbook(

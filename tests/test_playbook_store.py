@@ -603,6 +603,52 @@ class TestPlaybookStoreSlot:
         assert regular_latest is not None
         assert regular_latest.stock_playbooks[0].stock_code == "GOOG"
 
+    def test_load_latest_entry_returns_current_session_metadata(self, store) -> None:
+        pre_open = _make_playbook(
+            market="US_NASDAQ",
+            session_id="US_PRE",
+            stock_codes=["AAPL"],
+        )
+        pre_mid = _make_playbook(
+            market="US_NASDAQ",
+            session_id="US_PRE",
+            stock_codes=["MSFT"],
+        )
+        regular_open = _make_playbook(
+            market="US_NASDAQ",
+            session_id="US_REG",
+            stock_codes=["GOOG"],
+        )
+        store.save(pre_open, slot="open")
+        store.save(pre_mid, slot="mid")
+        store.save(regular_open, slot="open")
+
+        latest_entry = store.load_latest_entry(
+            pre_open.date,
+            pre_open.market,
+            session_id="US_PRE",
+        )
+
+        assert latest_entry is not None
+        assert latest_entry.slot == "mid"
+        assert latest_entry.playbook.stock_playbooks[0].stock_code == "MSFT"
+        assert latest_entry.generated_at == latest_entry.playbook.generated_at
+
+    def test_load_latest_wrapper_returns_playbook_from_entry_api(self, store) -> None:
+        pb = _make_playbook(
+            market="US_NASDAQ",
+            session_id="US_REG",
+            stock_codes=["NVDA"],
+        )
+        store.save(pb, slot="open")
+
+        latest = store.load_latest(pb.date, pb.market, session_id="US_REG")
+        latest_entry = store.load_latest_entry(pb.date, pb.market, session_id="US_REG")
+
+        assert latest is not None
+        assert latest_entry is not None
+        assert latest.model_dump() == latest_entry.playbook.model_dump()
+
     def test_default_slot_is_open(self, store) -> None:
         """slot 파라미터 없이 save/load하면 open 슬롯을 사용한다."""
         pb = _make_playbook()

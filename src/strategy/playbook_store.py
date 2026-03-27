@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from dataclasses import dataclass
 from datetime import date
 
 from src.strategy.models import DayPlaybook, PlaybookStatus
@@ -21,6 +22,15 @@ def _normalize_session_id(session_id: str | None) -> str:
         return resolved
     logger.warning("playbook store session_id missing; defaulting to UNKNOWN")
     return "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class StoredPlaybookEntry:
+    """Stored playbook plus refresh-timing metadata."""
+
+    playbook: DayPlaybook
+    slot: str
+    generated_at: str
 
 
 class PlaybookStore:
@@ -85,10 +95,28 @@ class PlaybookStore:
         Returns:
             DayPlaybook if found, None otherwise.
         """
+        entry = self.load_entry(
+            target_date,
+            market,
+            session_id=session_id,
+            slot=slot,
+        )
+        if entry is None:
+            return None
+        return entry.playbook
+
+    def load_entry(
+        self,
+        target_date: date,
+        market: str,
+        session_id: str = "UNKNOWN",
+        slot: str = "open",
+    ) -> StoredPlaybookEntry | None:
+        """Load a stored playbook row with refresh-timing metadata."""
         resolved_session_id = _normalize_session_id(session_id)
         row = self._conn.execute(
             """
-            SELECT playbook_json
+            SELECT playbook_json, slot, generated_at
             FROM playbooks
             WHERE date = ? AND market = ? AND session_id = ? AND slot = ?
             """,
@@ -96,7 +124,11 @@ class PlaybookStore:
         ).fetchone()
         if row is None:
             return None
-        return DayPlaybook.model_validate_json(row[0])
+        return StoredPlaybookEntry(
+            playbook=DayPlaybook.model_validate_json(row[0]),
+            slot=row[1],
+            generated_at=row[2],
+        )
 
     def load_latest(
         self,
@@ -108,10 +140,26 @@ class PlaybookStore:
 
         Within a session, mid is preferred over open for restart/resume.
         """
+        entry = self.load_latest_entry(
+            target_date,
+            market,
+            session_id=session_id,
+        )
+        if entry is None:
+            return None
+        return entry.playbook
+
+    def load_latest_entry(
+        self,
+        target_date: date,
+        market: str,
+        session_id: str = "UNKNOWN",
+    ) -> StoredPlaybookEntry | None:
+        """Load the latest current-session playbook with refresh metadata."""
         resolved_session_id = _normalize_session_id(session_id)
         row = self._conn.execute(
             """
-            SELECT playbook_json FROM playbooks
+            SELECT playbook_json, slot, generated_at FROM playbooks
             WHERE date = ? AND market = ? AND session_id = ?
             ORDER BY CASE slot WHEN 'mid' THEN 0 ELSE 1 END, generated_at DESC
             LIMIT 1
@@ -120,7 +168,11 @@ class PlaybookStore:
         ).fetchone()
         if row is None:
             return None
-        return DayPlaybook.model_validate_json(row[0])
+        return StoredPlaybookEntry(
+            playbook=DayPlaybook.model_validate_json(row[0]),
+            slot=row[1],
+            generated_at=row[2],
+        )
 
     def get_status(
         self,
