@@ -983,3 +983,11 @@
 - next_ticket: OOR-864
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: 기존 구현/검증/PR #881 상태를 재점검하고, Linear workpad 와 PR 피드백/체크를 현재 HEAD 00832e1 기준으로 정리해 Human Review 진입 가능 여부를 판단한다.
+
+### 2026-03-27 | session=codex-oor-868-start
+- branch: feature/issue-868-hard-stop-entry-price-comment
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-868, PR #873
+- next_ticket: OOR-868
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #873 후속으로 KR BUY entry_price 근사치 주석 문구만 구체화한다. 기존 workpad/attachment 없음.
