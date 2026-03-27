@@ -81,7 +81,6 @@ from src.main import (
     _refresh_cached_playbook_on_session_transition,
     _register_post_buy_for_hard_stop,
     _release_live_runtime_lock,
-    _reset_tracking_cache_on_session_transition,
     _restart_realtime_hard_stop_task_if_needed,
     _retry_connection,
     _rollback_pending_order_position,
@@ -2024,43 +2023,8 @@ class TestRealtimeSessionStateHelpers:
         assert removed
         assert "US_NASDAQ" not in playbooks
 
-    def test_reset_tracking_cache_on_session_transition_clears_existing_market_entries(
-        self,
-    ) -> None:
-        active_stocks = {"US_NASDAQ": ["AAPL"]}
-        scan_candidates = {"US_NASDAQ": {"AAPL": MagicMock()}}
-        last_scan_time = {"US_NASDAQ": 2.0}
-
-        removed = _reset_tracking_cache_on_session_transition(
-            market_code="US_NASDAQ",
-            session_changed=True,
-            active_stocks=active_stocks,
-            scan_candidates=scan_candidates,
-            last_scan_time=last_scan_time,
-        )
-
-        assert removed
-        assert active_stocks == {}
-        assert scan_candidates == {}
-        assert last_scan_time == {}
-
-    def test_reset_tracking_cache_on_session_transition_false_without_change(self) -> None:
-        active_stocks = {"US_NASDAQ": ["AAPL"]}
-        scan_candidates = {"US_NASDAQ": {"AAPL": MagicMock()}}
-        last_scan_time = {"US_NASDAQ": 2.0}
-
-        removed = _reset_tracking_cache_on_session_transition(
-            market_code="US_NASDAQ",
-            session_changed=False,
-            active_stocks=active_stocks,
-            scan_candidates=scan_candidates,
-            last_scan_time=last_scan_time,
-        )
-
-        assert not removed
-        assert active_stocks == {"US_NASDAQ": ["AAPL"]}
-        assert "US_NASDAQ" in scan_candidates
-        assert last_scan_time == {"US_NASDAQ": 2.0}
+    def test_reset_tracking_cache_on_session_transition_helper_removed(self) -> None:
+        assert not hasattr(main_module, "_reset_tracking_cache_on_session_transition")
 
 
 class TestMarketParallelRunner:

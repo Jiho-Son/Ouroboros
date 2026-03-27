@@ -4081,33 +4081,6 @@ def _reconcile_market_lifecycle(
         session_changed=session_changed,
     )
 
-
-def _reset_tracking_cache_on_session_transition(
-    *,
-    market_code: str,
-    session_changed: bool,
-    active_stocks: dict[str, list[str]],
-    scan_candidates: dict[str, dict[str, ScanCandidate]],
-    last_scan_time: dict[str, float],
-) -> bool:
-    """Drop stale tracking cache when the market session identity changes."""
-    if not session_changed:
-        return False
-
-    had_cache = any(
-        market_code in cache
-        for cache in (
-            active_stocks,
-            scan_candidates,
-            last_scan_time,
-        )
-    )
-    active_stocks.pop(market_code, None)
-    scan_candidates.pop(market_code, None)
-    last_scan_time.pop(market_code, None)
-    return had_cache
-
-
 async def _handle_realtime_market_closures(
     *,
     current_open_markets: list[MarketInfo],
