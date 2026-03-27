@@ -224,11 +224,12 @@ class PlaybookStore:
         """List recent playbooks with summary info.
 
         Returns one row per (date, market, session_id). Within each session,
-        'mid' is preferred over 'open'.
+        'mid' is preferred over 'open'. The `limit` applies to these
+        session-scoped rows, not to distinct trading days.
 
         Args:
             market: Filter by market code. None for all markets.
-            limit: Max number of results.
+            limit: Max number of session-scoped results.
 
         Returns:
             List of dicts with date, market, session_id, slot, status,
