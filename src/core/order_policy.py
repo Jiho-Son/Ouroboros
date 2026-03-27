@@ -61,6 +61,8 @@ def classify_session_id(market: MarketInfo, now: datetime | None = None) -> str:
         return "KR_OFF"
 
     if market.code.startswith("US"):
+        if local_now.weekday() >= 5:
+            return "US_OFF"
         market_open_time = (
             market.open_time
             if isinstance(getattr(market, "open_time", None), time)
@@ -71,8 +73,6 @@ def classify_session_id(market: MarketInfo, now: datetime | None = None) -> str:
             if isinstance(getattr(market, "close_time", None), time)
             else _US_REGULAR_CLOSE
         )
-        if local_now.weekday() >= 5:
-            return "US_OFF"
         if local_time >= _US_DAY_START or local_time < _US_PRE_OPEN:
             return "US_DAY"
         if _US_PRE_OPEN <= local_time < market_open_time:
