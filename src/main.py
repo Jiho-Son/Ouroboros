@@ -2302,7 +2302,9 @@ async def _execute_trading_cycle_action(
             market=market,
             stock_code=stock_code,
             stock_name=stock_name,
-            entry_price=current_price,  # approximation: actual fill price not yet available
+            # approximate: KIS KR market-buy price cap may fill at
+            # kr_round_down(current_price * 1.002), not the pre-order snapshot
+            entry_price=current_price,
             quantity=quantity,
             market_data=market_data,
             decision_id=str(decision_data.get("decision_id") or ""),

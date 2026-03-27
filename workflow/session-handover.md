@@ -983,3 +983,43 @@
 - next_ticket: OOR-864
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: 기존 구현/검증/PR #881 상태를 재점검하고, Linear workpad 와 PR 피드백/체크를 현재 HEAD 00832e1 기준으로 정리해 Human Review 진입 가능 여부를 판단한다.
+
+### 2026-03-27 | session=codex-oor-868-start
+- branch: feature/issue-868-hard-stop-entry-price-comment
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-868, PR #873
+- next_ticket: OOR-868
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #873 후속으로 KR BUY entry_price 근사치 주석 문구만 구체화한다. 기존 workpad/attachment 없음.
+
+### 2026-03-27 | session=codex-oor-868-finalize
+- branch: feature/issue-868-hard-stop-entry-price-comment
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-868, PR #882
+- next_ticket: OOR-868
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 기존 브랜치/PR/workpad 상태를 이어받아 주석 반영 내용, 추가된 테스트 격리 보정, PR 메타데이터와 Human Review 진입 조건을 현재 HEAD 기준으로 재검증한다.
+
+### 2026-03-27 | session=codex-oor-868-workpad-refresh
+- branch: feature/issue-868-hard-stop-entry-price-comment
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-868, PR #882
+- next_ticket: OOR-868
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 기존 HEAD 37564d5에 주석 변경과 테스트 격리 보정이 이미 포함되어 있으므로, 이번 세션은 handover gate 재통과, workpad 현실화, 검증 재실행, PR 피드백/라벨 상태 정리 후 Human Review 진입 가능 여부를 확정한다.
+
+### 2026-03-27 | session=codex-pr882-review-followup
+- branch: feature/issue-868-hard-stop-entry-price-comment
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-868, PR #882
+- next_ticket: OOR-868
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: unresolved review thread 2건을 thread-aware 로 재확인한 뒤, `src/main.py` 주석 근거 보강과 `tests/test_main.py` blackout reset 기본값 위임을 반영하고 재검증·PR 코멘트까지 같은 세션에서 마무리한다.
+
+### 2026-03-27 | session=codex-oor-868-land
+- branch: feature/issue-868-hard-stop-entry-price-comment
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-868, PR #882
+- next_ticket: OOR-868
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Linear 상태가 `Merging` 이므로 기존 산출물 재사용 없이 merge 가능 상태, 잔여 리뷰 코멘트, checks, merge 후 `Done` 전이만 확인해 land loop를 끝까지 수행한다.
