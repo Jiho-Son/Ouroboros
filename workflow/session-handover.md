@@ -1007,3 +1007,11 @@
 - next_ticket: OOR-868
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: 기존 HEAD 37564d5에 주석 변경과 테스트 격리 보정이 이미 포함되어 있으므로, 이번 세션은 handover gate 재통과, workpad 현실화, 검증 재실행, PR 피드백/라벨 상태 정리 후 Human Review 진입 가능 여부를 확정한다.
+
+### 2026-03-27 | session=codex-pr882-review-followup
+- branch: feature/issue-868-hard-stop-entry-price-comment
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-868, PR #882
+- next_ticket: OOR-868
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: unresolved review thread 2건을 thread-aware 로 재확인한 뒤, `src/main.py` 주석 근거 보강과 `tests/test_main.py` blackout reset 기본값 위임을 반영하고 재검증·PR 코멘트까지 같은 세션에서 마무리한다.

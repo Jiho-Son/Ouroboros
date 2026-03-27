@@ -1665,7 +1665,6 @@ def _reset_kill_switch_state() -> None:
         blackout_runtime.BLACKOUT_ORDER_MANAGER = BlackoutOrderManager(
             enabled=False,
             windows=[],
-            max_queue_size=500,
         )
 
     def _reset_session_risk_globals() -> None:
