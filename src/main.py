@@ -3962,10 +3962,55 @@ def _clear_realtime_market_runtime_state(
     market_states.pop(market_code, None)
     playbooks.pop(market_code, None)
     pre_refresh_playbooks.pop(market_code, None)
+    _clear_market_tracking_cache(
+        market_code=market_code,
+        active_stocks=active_stocks,
+        scan_candidates=scan_candidates,
+        last_scan_time=last_scan_time,
+    )
+    mid_refreshed.discard(market_code)
+
+
+def _clear_market_tracking_cache(
+    *,
+    market_code: str,
+    active_stocks: dict[str, list[str]],
+    scan_candidates: dict[str, dict[str, ScanCandidate]],
+    last_scan_time: dict[str, float],
+) -> None:
+    """Drop scanner/runtime tracking cache for a single market."""
     active_stocks.pop(market_code, None)
     scan_candidates.pop(market_code, None)
     last_scan_time.pop(market_code, None)
-    mid_refreshed.discard(market_code)
+
+
+def _reset_tracking_cache_on_session_transition(
+    *,
+    market_code: str,
+    session_changed: bool,
+    active_stocks: dict[str, list[str]],
+    scan_candidates: dict[str, dict[str, ScanCandidate]],
+    last_scan_time: dict[str, float],
+) -> bool:
+    """Drop stale tracking cache when the market session identity changes."""
+    if not session_changed:
+        return False
+
+    had_cache = any(
+        market_code in cache
+        for cache in (
+            active_stocks,
+            scan_candidates,
+            last_scan_time,
+        )
+    )
+    _clear_market_tracking_cache(
+        market_code=market_code,
+        active_stocks=active_stocks,
+        scan_candidates=scan_candidates,
+        last_scan_time=last_scan_time,
+    )
+    return had_cache
 
 
 async def _handle_realtime_market_closures(
@@ -5023,6 +5068,18 @@ async def run(settings: Settings) -> None:
                     ):
                         logger.info(
                             "Session transition requires fresh playbook for %s session=%s",
+                            market.code,
+                            session_info.session_id,
+                        )
+                    if _reset_tracking_cache_on_session_transition(
+                        market_code=market.code,
+                        session_changed=session_changed,
+                        active_stocks=active_stocks,
+                        scan_candidates=scan_candidates,
+                        last_scan_time=last_scan_time,
+                    ):
+                        logger.info(
+                            "Session transition cleared tracking cache for %s session=%s",
                             market.code,
                             session_info.session_id,
                         )
