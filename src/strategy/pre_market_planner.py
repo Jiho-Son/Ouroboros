@@ -122,6 +122,7 @@ class PreMarketPlanner:
         candidates: list[ScanCandidate],
         today: date | None = None,
         current_holdings: list[dict] | None = None,
+        session_id: str = "UNKNOWN",
     ) -> DayPlaybook:
         """Generate a DayPlaybook for a market using the decision engine.
 
@@ -142,7 +143,7 @@ class PreMarketPlanner:
 
         if not candidates:
             logger.info("No candidates for %s — returning empty playbook", market)
-            return self._empty_playbook(today, market)
+            return self._empty_playbook(today, market, session_id=session_id)
 
         recent_self_market_guard: RecentSelfMarketGuard | None = None
 
@@ -189,6 +190,7 @@ class PreMarketPlanner:
                 candidates,
                 cross_market,
                 current_holdings=current_holdings,
+                session_id=session_id,
             )
             playbook = self._apply_recent_self_market_guard(playbook, recent_self_market_guard)
             playbook_with_tokens = playbook.model_copy(update={"token_count": decision.token_count})
@@ -209,12 +211,13 @@ class PreMarketPlanner:
                     market,
                     candidates,
                     self._settings,
+                    session_id=session_id,
                 )
                 return self._apply_recent_self_market_guard(
                     fallback_playbook,
                     recent_self_market_guard,
                 )
-            return self._empty_playbook(today, market)
+            return self._empty_playbook(today, market, session_id=session_id)
 
     def build_cross_market_context(
         self,
@@ -612,6 +615,7 @@ class PreMarketPlanner:
         candidates: list[ScanCandidate],
         cross_market: CrossMarketContext | None,
         current_holdings: list[dict] | None = None,
+        session_id: str = "UNKNOWN",
     ) -> DayPlaybook:
         """Parse Gemini's JSON response into a validated DayPlaybook."""
         cleaned = self._extract_json(response_text)
@@ -668,6 +672,7 @@ class PreMarketPlanner:
         return DayPlaybook(
             date=today,
             market=market,
+            session_id=session_id,
             market_outlook=market_outlook,
             global_rules=global_rules,
             stock_playbooks=stock_playbooks,
@@ -727,11 +732,16 @@ class PreMarketPlanner:
         return stripped.strip()
 
     @staticmethod
-    def _empty_playbook(today: date, market: str) -> DayPlaybook:
+    def _empty_playbook(
+        today: date,
+        market: str,
+        session_id: str = "UNKNOWN",
+    ) -> DayPlaybook:
         """Return an empty playbook (no stocks, no scenarios)."""
         return DayPlaybook(
             date=today,
             market=market,
+            session_id=session_id,
             market_outlook=MarketOutlook.NEUTRAL,
             stock_playbooks=[],
         )
@@ -741,6 +751,7 @@ class PreMarketPlanner:
         today: date,
         market: str,
         candidates: list[ScanCandidate],
+        session_id: str = "UNKNOWN",
     ) -> DayPlaybook:
         """Return a defensive playbook — HOLD everything with stop-loss ready."""
         stock_playbooks = [
@@ -761,6 +772,7 @@ class PreMarketPlanner:
         return DayPlaybook(
             date=today,
             market=market,
+            session_id=session_id,
             market_outlook=MarketOutlook.NEUTRAL_TO_BEARISH,
             default_action=ScenarioAction.HOLD,
             stock_playbooks=stock_playbooks,
@@ -779,6 +791,7 @@ class PreMarketPlanner:
         market: str,
         candidates: list[ScanCandidate],
         settings: Settings,
+        session_id: str = "UNKNOWN",
     ) -> DayPlaybook:
         """Rule-based fallback playbook when Gemini is unavailable.
 
@@ -856,6 +869,7 @@ class PreMarketPlanner:
         return DayPlaybook(
             date=today,
             market=market,
+            session_id=session_id,
             market_outlook=MarketOutlook.NEUTRAL,
             default_action=ScenarioAction.HOLD,
             stock_playbooks=stock_playbooks,

@@ -262,6 +262,13 @@ class TestDayPlaybook:
         pb = _make_playbook(generated_at="2026-02-07T08:30:00")
         assert pb.generated_at == "2026-02-07T08:30:00"
 
+    def test_session_id_roundtrip(self) -> None:
+        pb = _make_playbook(session_id="US_PRE")
+        assert pb.session_id == "US_PRE"
+
+        restored = DayPlaybook.model_validate_json(pb.model_dump_json())
+        assert restored.session_id == "US_PRE"
+
     def test_duplicate_stocks_rejected(self) -> None:
         with pytest.raises(ValidationError):
             DayPlaybook(

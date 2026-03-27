@@ -2764,6 +2764,7 @@ def _build_daily_exit_only_playbook(
     current_holdings: list[dict[str, Any]],
     market: MarketInfo,
     market_today: date,
+    session_id: str,
 ) -> DayPlaybook:
     """Build a minimal playbook that keeps held-position exit checks active."""
     stock_playbooks: list[StockPlaybook] = []
@@ -2793,9 +2794,17 @@ def _build_daily_exit_only_playbook(
     return DayPlaybook(
         date=market_today,
         market=market.code,
+        session_id=session_id,
         market_outlook=MarketOutlook.NEUTRAL,
         stock_playbooks=stock_playbooks,
     )
+
+
+def _with_playbook_session_id(playbook: DayPlaybook, session_id: str) -> DayPlaybook:
+    """Force a playbook to advertise the runtime session that produced or loaded it."""
+    if playbook.session_id == session_id:
+        return playbook
+    return playbook.model_copy(update={"session_id": session_id})
 
 
 async def _load_or_generate_daily_playbook(
@@ -2804,20 +2813,22 @@ async def _load_or_generate_daily_playbook(
     current_holdings: list[dict[str, Any]],
     market: MarketInfo,
     market_today: date,
+    session_id: str,
     playbook_store: PlaybookStore,
     pre_market_planner: PreMarketPlanner,
     telegram: TelegramClient,
 ) -> DayPlaybook:
     """Load the market playbook or generate it for the current trading day."""
-    playbook = playbook_store.load(market_today, market.code)
+    playbook = playbook_store.load(market_today, market.code, session_id=session_id)
     if playbook is not None:
-        return playbook
+        return _with_playbook_session_id(playbook, session_id)
 
     if not candidates_list and current_holdings:
         playbook = _build_daily_exit_only_playbook(
             current_holdings=current_holdings,
             market=market,
             market_today=market_today,
+            session_id=session_id,
         )
         playbook_store.save(playbook)
         try:
@@ -2844,7 +2855,9 @@ async def _load_or_generate_daily_playbook(
             candidates=candidates_list,
             today=market_today,
             current_holdings=current_holdings,
+            session_id=session_id,
         )
+        playbook = _with_playbook_session_id(playbook, session_id)
         playbook_store.save(playbook)
         try:
             await telegram.notify_playbook_generated(
@@ -2872,7 +2885,11 @@ async def _load_or_generate_daily_playbook(
             )
         except Exception as notify_exc:
             logger.warning("Playbook failed notification error: %s", notify_exc)
-        return PreMarketPlanner._empty_playbook(market_today, market.code)
+        return PreMarketPlanner._empty_playbook(
+            market_today,
+            market.code,
+            session_id=session_id,
+        )
 
 
 async def _collect_daily_session_market_data(
@@ -3726,6 +3743,7 @@ async def _run_daily_session_market(
         current_holdings=current_holdings,
         market=market,
         market_today=market_today,
+        session_id=runtime_session_id,
         playbook_store=playbook_store,
         pre_market_planner=pre_market_planner,
         telegram=telegram,
@@ -4104,6 +4122,42 @@ def _should_reuse_stored_playbook(*, market_code: str, session_id: str) -> bool:
         (market_code == "KR" and session_id == "KRX_REG")
         or (market_code.startswith("US") and session_id == "US_REG")
     )
+
+
+def _load_stored_playbook_for_session(
+    *,
+    playbook_store: PlaybookStore,
+    market_today: date,
+    market_code: str,
+    session_id: str,
+    mid_refreshed: set[str],
+) -> DayPlaybook | None:
+    """Load the latest stored playbook that matches the active runtime session."""
+    if not _should_reuse_stored_playbook(market_code=market_code, session_id=session_id):
+        return None
+
+    stored_playbook = playbook_store.load_latest(
+        market_today,
+        market_code,
+        session_id=session_id,
+    )
+    if stored_playbook is not None and (
+        playbook_store.load(
+            market_today,
+            market_code,
+            session_id=session_id,
+            slot="mid",
+        )
+        is not None
+    ):
+        mid_refreshed.add(market_code)
+        logger.debug(
+            "Resumed with mid-session playbook for %s session=%s"
+            " — suppressing refresh trigger",
+            market_code,
+            session_id,
+        )
+    return stored_playbook
 
 
 def _should_refresh_cached_playbook_on_session_transition(
@@ -5093,25 +5147,18 @@ async def run(settings: Settings) -> None:
                                         market_code=market.code,
                                         session_id=session_info.session_id,
                                     )
-                                    stored_pb = (
-                                        playbook_store.load_latest(market_today, market.code)
-                                        if reuse_stored_pb
-                                        else None
+                                    stored_pb = _load_stored_playbook_for_session(
+                                        playbook_store=playbook_store,
+                                        market_today=market_today,
+                                        market_code=market.code,
+                                        session_id=session_info.session_id,
+                                        mid_refreshed=mid_refreshed,
                                     )
-                                    # If a mid-session playbook exists in the DB, mark this
-                                    # market as already refreshed to avoid re-triggering the
-                                    # 12:00 mid-session refresh on restart.
-                                    if reuse_stored_pb and playbook_store.load(
-                                        market_today, market.code, slot="mid"
-                                    ) is not None:
-                                        mid_refreshed.add(market.code)
-                                        logger.debug(
-                                            "Resumed with mid-session playbook for %s"
-                                            " — suppressing refresh trigger",
-                                            market.code,
-                                        )
                                     if stored_pb is not None:
-                                        playbooks[market.code] = stored_pb
+                                        playbooks[market.code] = _with_playbook_session_id(
+                                            stored_pb,
+                                            session_info.session_id,
+                                        )
                                         logger.info(
                                             "Loaded existing playbook for %s from DB"
                                             " (%d stocks, %d scenarios)",
@@ -5132,6 +5179,11 @@ async def run(settings: Settings) -> None:
                                                 market=market.code,
                                                 candidates=candidates,
                                                 today=market_today,
+                                                session_id=session_info.session_id,
+                                            )
+                                            pb = _with_playbook_session_id(
+                                                pb,
+                                                session_info.session_id,
                                             )
                                             save_slot = (
                                                 "mid"
@@ -5181,7 +5233,9 @@ async def run(settings: Settings) -> None:
                                             else:
                                                 playbooks[market.code] = (
                                                     PreMarketPlanner._empty_playbook(
-                                                        market_today, market.code
+                                                        market_today,
+                                                        market.code,
+                                                        session_id=session_info.session_id,
                                                     )
                                                 )
                             else:
@@ -5238,7 +5292,9 @@ async def run(settings: Settings) -> None:
                         market_playbook = playbooks.get(
                             market.code,
                             PreMarketPlanner._empty_playbook(
-                                datetime.now(market.timezone).date(), market.code
+                                datetime.now(market.timezone).date(),
+                                market.code,
+                                session_id=session_info.session_id,
                             ),
                         )
 

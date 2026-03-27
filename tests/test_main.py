@@ -132,6 +132,16 @@ def _make_settings(**overrides: Any) -> Settings:
     return Settings(**base)
 
 
+def test_with_playbook_session_id_returns_copy_without_mutating_input() -> None:
+    playbook = _make_playbook("US_NASDAQ")
+
+    updated = main_module._with_playbook_session_id(playbook, "US_PRE")
+
+    assert updated is not playbook
+    assert updated.session_id == "US_PRE"
+    assert playbook.session_id == "UNKNOWN"
+
+
 def test_log_realtime_hard_stop_monitor_start_includes_enabled_market_coverage(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1833,6 +1843,75 @@ class TestRealtimeSessionStateHelpers:
         )
         assert not removed
         assert "KR" in playbooks
+
+    def test_load_stored_playbook_for_session_uses_current_session_identity(self) -> None:
+        playbook_store = MagicMock()
+        stored_playbook = _make_playbook("US_NASDAQ")
+        playbook_store.load_latest = MagicMock(return_value=stored_playbook)
+        playbook_store.load = MagicMock(return_value=stored_playbook)
+        mid_refreshed: set[str] = set()
+
+        restored = main_module._load_stored_playbook_for_session(
+            playbook_store=playbook_store,
+            market_today=date(2026, 2, 8),
+            market_code="US_NASDAQ",
+            session_id="US_PRE",
+            mid_refreshed=mid_refreshed,
+        )
+
+        assert restored is stored_playbook
+        playbook_store.load_latest.assert_called_once_with(
+            date(2026, 2, 8),
+            "US_NASDAQ",
+            session_id="US_PRE",
+        )
+        playbook_store.load.assert_called_once_with(
+            date(2026, 2, 8),
+            "US_NASDAQ",
+            session_id="US_PRE",
+            slot="mid",
+        )
+        assert "US_NASDAQ" in mid_refreshed
+
+    def test_load_stored_playbook_for_session_skips_regular_session_reuse(self) -> None:
+        playbook_store = MagicMock()
+
+        restored = main_module._load_stored_playbook_for_session(
+            playbook_store=playbook_store,
+            market_today=date(2026, 2, 8),
+            market_code="US_NASDAQ",
+            session_id="US_REG",
+            mid_refreshed=set(),
+        )
+
+        assert restored is None
+        playbook_store.load_latest.assert_not_called()
+        playbook_store.load.assert_not_called()
+
+    def test_load_stored_playbook_for_session_skips_mid_lookup_when_latest_missing(
+        self,
+    ) -> None:
+        playbook_store = MagicMock()
+        playbook_store.load_latest = MagicMock(return_value=None)
+        playbook_store.load = MagicMock()
+        mid_refreshed: set[str] = set()
+
+        restored = main_module._load_stored_playbook_for_session(
+            playbook_store=playbook_store,
+            market_today=date(2026, 2, 8),
+            market_code="US_NASDAQ",
+            session_id="US_PRE",
+            mid_refreshed=mid_refreshed,
+        )
+
+        assert restored is None
+        playbook_store.load_latest.assert_called_once_with(
+            date(2026, 2, 8),
+            "US_NASDAQ",
+            session_id="US_PRE",
+        )
+        playbook_store.load.assert_not_called()
+        assert mid_refreshed == set()
 
     def test_refresh_cached_playbook_on_session_transition_false_when_session_unchanged(
         self,
@@ -8776,6 +8855,7 @@ async def test_load_or_generate_daily_playbook_creates_exit_fallback_for_held_on
         current_holdings=[holding],
         market=market,
         market_today=date(2026, 3, 25),
+        session_id="US_PRE",
         playbook_store=playbook_store,
         pre_market_planner=pre_market_planner,
         telegram=telegram,
@@ -8787,6 +8867,12 @@ async def test_load_or_generate_daily_playbook_creates_exit_fallback_for_held_on
     assert stock_playbook.scenarios[0].action is ScenarioAction.HOLD
     assert stock_playbook.scenarios[0].condition.holding_days_above == -1
     assert stock_playbook.scenarios[0].stop_loss_pct == pytest.approx(-2.0)
+    assert playbook.session_id == "US_PRE"
+    playbook_store.load.assert_called_once_with(
+        date(2026, 3, 25),
+        "US_AMEX",
+        session_id="US_PRE",
+    )
     pre_market_planner.generate_playbook.assert_not_awaited()
     playbook_store.save.assert_called_once_with(playbook)
     telegram.notify_playbook_generated.assert_awaited_once()
@@ -12741,8 +12827,13 @@ async def test_run_restores_pre_refresh_playbook_when_mid_session_refresh_genera
         await main_module.run(settings)
 
     assert mock_trading_cycle.await_count == 2
-    assert mock_trading_cycle.await_args_list[0].args[3] is original_playbook
-    assert mock_trading_cycle.await_args_list[1].args[3] is original_playbook
+    first_playbook = mock_trading_cycle.await_args_list[0].args[3]
+    second_playbook = mock_trading_cycle.await_args_list[1].args[3]
+    assert first_playbook is not original_playbook
+    assert second_playbook is not original_playbook
+    assert first_playbook.session_id == "US_REG"
+    assert second_playbook.session_id == "US_REG"
+    assert original_playbook.session_id == "UNKNOWN"
     assert pre_market_planner.generate_playbook.await_count == 2
     playbook_store.load_latest.assert_not_called()
     telegram.notify_playbook_failed.assert_awaited_once()
@@ -12914,8 +13005,14 @@ async def test_run_regenerates_playbook_on_us_regular_session_transition() -> No
         await main_module.run(settings)
 
     assert mock_trading_cycle.await_count == 2
-    assert mock_trading_cycle.await_args_list[0].args[3] is premarket_playbook
-    assert mock_trading_cycle.await_args_list[1].args[3] is regular_playbook
+    first_playbook = mock_trading_cycle.await_args_list[0].args[3]
+    second_playbook = mock_trading_cycle.await_args_list[1].args[3]
+    assert first_playbook is not premarket_playbook
+    assert second_playbook is not regular_playbook
+    assert first_playbook.session_id == "US_PRE"
+    assert second_playbook.session_id == "US_REG"
+    assert premarket_playbook.session_id == "UNKNOWN"
+    assert regular_playbook.session_id == "UNKNOWN"
     assert pre_market_planner.generate_playbook.await_count == 2
     assert telegram.notify_playbook_failed.await_count == 0
 

@@ -170,6 +170,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL,
             market TEXT NOT NULL,
+            session_id TEXT NOT NULL DEFAULT 'UNKNOWN',
             slot TEXT NOT NULL DEFAULT 'open',
             status TEXT NOT NULL DEFAULT 'pending',
             playbook_json TEXT NOT NULL,
@@ -177,7 +178,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
             token_count INTEGER DEFAULT 0,
             scenario_count INTEGER DEFAULT 0,
             match_count INTEGER DEFAULT 0,
-            UNIQUE(date, market, slot)
+            UNIQUE(date, market, session_id, slot)
         )
         """
     )
@@ -225,19 +226,30 @@ def init_db(db_path: str) -> sqlite3.Connection:
         conn.execute("ALTER TABLE playbooks ADD COLUMN slot TEXT NOT NULL DEFAULT 'open'")
         conn.commit()
         logger.info("DB migration: added slot column to playbooks table")
+    if "session_id" not in cols:
+        conn.execute(
+            "ALTER TABLE playbooks ADD COLUMN session_id TEXT NOT NULL DEFAULT 'UNKNOWN'"
+        )
+        conn.commit()
+        logger.info("DB migration: added session_id column to playbooks table")
+    conn.execute(
+        """
+        UPDATE playbooks
+        SET session_id = 'UNKNOWN'
+        WHERE session_id IS NULL OR session_id = ''
+        """
+    )
+    conn.commit()
 
-    # Migration: rebuild playbooks table with UNIQUE(date, market, slot) if the old
-    # UNIQUE(date, market) constraint is still in place (issue #435).
+    # Migration: rebuild playbooks table when the unique constraint does not yet
+    # encode session identity.
     # ALTER TABLE cannot modify constraints in SQLite — full table rebuild required.
     ddl_row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='playbooks'"
     ).fetchone()
     if ddl_row is not None:
-        ddl_compact = ddl_row[0].replace(" ", "").replace("\n", "")
-        needs_rebuild = (
-            "UNIQUE(date,market)" in ddl_compact
-            and "UNIQUE(date,market,slot)" not in ddl_compact
-        )
+        ddl_compact = "".join(ddl_row[0].split())
+        needs_rebuild = "UNIQUE(date,market,session_id,slot)" not in ddl_compact
         if needs_rebuild:
             conn.execute(
                 """
@@ -245,6 +257,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     date TEXT NOT NULL,
                     market TEXT NOT NULL,
+                    session_id TEXT NOT NULL DEFAULT 'UNKNOWN',
                     slot TEXT NOT NULL DEFAULT 'open',
                     status TEXT NOT NULL DEFAULT 'pending',
                     playbook_json TEXT NOT NULL,
@@ -252,16 +265,16 @@ def init_db(db_path: str) -> sqlite3.Connection:
                     token_count INTEGER DEFAULT 0,
                     scenario_count INTEGER DEFAULT 0,
                     match_count INTEGER DEFAULT 0,
-                    UNIQUE(date, market, slot)
+                    UNIQUE(date, market, session_id, slot)
                 )
                 """
             )
             conn.execute(
                 """
                 INSERT INTO playbooks_v2
-                    (id, date, market, slot, status, playbook_json, generated_at,
+                    (id, date, market, session_id, slot, status, playbook_json, generated_at,
                      token_count, scenario_count, match_count)
-                SELECT id, date, market, slot, status, playbook_json, generated_at,
+                SELECT id, date, market, session_id, slot, status, playbook_json, generated_at,
                        token_count, scenario_count, match_count
                 FROM playbooks
                 """
@@ -277,8 +290,14 @@ def init_db(db_path: str) -> sqlite3.Connection:
             )
             conn.commit()
             logger.info(
-                "DB migration: rebuilt playbooks table with UNIQUE(date, market, slot)"
+                "DB migration: rebuilt playbooks table with"
+                " UNIQUE(date, market, session_id, slot)"
             )
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_playbooks_market_session ON playbooks(market, session_id)"
+    )
+    conn.commit()
 
     return conn
 
