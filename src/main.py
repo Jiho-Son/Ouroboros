@@ -3984,11 +3984,6 @@ def _clear_market_tracking_cache(
     last_scan_time.pop(market_code, None)
 
 
-def _should_reset_tracking_cache_on_session_transition(*, session_changed: bool) -> bool:
-    """Return whether scanner/runtime tracking cache should reset for a new session."""
-    return session_changed
-
-
 def _reset_tracking_cache_on_session_transition(
     *,
     market_code: str,
@@ -3998,7 +3993,7 @@ def _reset_tracking_cache_on_session_transition(
     last_scan_time: dict[str, float],
 ) -> bool:
     """Drop stale tracking cache when the market session identity changes."""
-    if not _should_reset_tracking_cache_on_session_transition(session_changed=session_changed):
+    if not session_changed:
         return False
 
     had_cache = any(

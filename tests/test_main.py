@@ -90,7 +90,6 @@ from src.main import (
     _should_mid_session_refresh,
     _should_refresh_cached_playbook_on_session_transition,
     _should_rescan_market,
-    _should_reset_tracking_cache_on_session_transition,
     _should_reuse_stored_playbook,
     _start_dashboard_server,
     _sync_realtime_hard_stop_monitor,
@@ -1952,16 +1951,6 @@ class TestRealtimeSessionStateHelpers:
         )
         assert removed
         assert "US_NASDAQ" not in playbooks
-
-    def test_should_reset_tracking_cache_on_session_transition_true_for_session_change(
-        self,
-    ) -> None:
-        assert _should_reset_tracking_cache_on_session_transition(session_changed=True)
-
-    def test_should_reset_tracking_cache_on_session_transition_false_without_change(
-        self,
-    ) -> None:
-        assert not _should_reset_tracking_cache_on_session_transition(session_changed=False)
 
     def test_clear_market_tracking_cache_drops_only_target_market(self) -> None:
         active_stocks = {"KR": ["005930"], "US_NASDAQ": ["AAPL"]}
@@ -13267,7 +13256,11 @@ async def test_run_session_transition_clears_tracking_cache_before_building_over
 
         await main_module.run(settings)
 
-    assert universe_active_stock_snapshots == [{}, {}]
+    assert len(universe_active_stock_snapshots) == 2
+    # Baseline: the first cycle builds the overseas universe before scan results populate cache.
+    assert universe_active_stock_snapshots[0] == {}
+    # Regression target: the second cycle must not inherit the previous session cache.
+    assert universe_active_stock_snapshots[1] == {}
 
 
 @pytest.mark.asyncio

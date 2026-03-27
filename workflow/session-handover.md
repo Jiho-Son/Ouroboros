@@ -919,3 +919,11 @@
 - next_ticket: OOR-861
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: runtime tracking cache session 종료 정리 누락을 재현 기준으로 고정하고, session transition에서 `active_stocks`/`scan_candidates`/`last_scan_time` carry-over 여부를 테스트 우선으로 검증한다.
+
+### 2026-03-27 | session=codex-pr878-review-followup
+- branch: feature/issue-861-runtime-tracking-cache-cleanup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-861, PR #878
+- next_ticket: OOR-861
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #878 review 지적을 코드/테스트/문서와 대조해 불필요한 helper 제거 여부와 회귀 테스트 신호를 재평가하고, 타당한 항목만 반영한 뒤 검증·push·PR 코멘트까지 같은 세션에서 마무리한다.

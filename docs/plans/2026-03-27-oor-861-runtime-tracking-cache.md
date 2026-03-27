@@ -1,7 +1,5 @@
 # OOR-861 Runtime Tracking Cache Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** session transition 이후 stale runtime tracking cache가 다음 scanner universe에 누수되지 않도록 막는다.
 
 **Architecture:** realtime loop에 playbook session transition 처리와 동일한 수준의 tracking cache reset helper를 추가한다. market close cleanup은 유지하고, session transition 경로에서만 `active_stocks`, `scan_candidates`, `last_scan_time`을 비운 뒤 다음 rescan이 DB/holdings 기반 fallback만 사용하도록 만든다.
