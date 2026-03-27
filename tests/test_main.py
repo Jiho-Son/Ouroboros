@@ -1834,6 +1834,50 @@ class TestRealtimeSessionStateHelpers:
         assert not removed
         assert "KR" in playbooks
 
+    def test_load_stored_playbook_for_session_uses_current_session_identity(self) -> None:
+        playbook_store = MagicMock()
+        stored_playbook = _make_playbook("US_NASDAQ")
+        playbook_store.load_latest = MagicMock(return_value=stored_playbook)
+        playbook_store.load = MagicMock(return_value=stored_playbook)
+        mid_refreshed: set[str] = set()
+
+        restored = main_module._load_stored_playbook_for_session(
+            playbook_store=playbook_store,
+            market_today=date(2026, 2, 8),
+            market_code="US_NASDAQ",
+            session_id="US_PRE",
+            mid_refreshed=mid_refreshed,
+        )
+
+        assert restored is stored_playbook
+        playbook_store.load_latest.assert_called_once_with(
+            date(2026, 2, 8),
+            "US_NASDAQ",
+            session_id="US_PRE",
+        )
+        playbook_store.load.assert_called_once_with(
+            date(2026, 2, 8),
+            "US_NASDAQ",
+            session_id="US_PRE",
+            slot="mid",
+        )
+        assert "US_NASDAQ" in mid_refreshed
+
+    def test_load_stored_playbook_for_session_skips_regular_session_reuse(self) -> None:
+        playbook_store = MagicMock()
+
+        restored = main_module._load_stored_playbook_for_session(
+            playbook_store=playbook_store,
+            market_today=date(2026, 2, 8),
+            market_code="US_NASDAQ",
+            session_id="US_REG",
+            mid_refreshed=set(),
+        )
+
+        assert restored is None
+        playbook_store.load_latest.assert_not_called()
+        playbook_store.load.assert_not_called()
+
     def test_refresh_cached_playbook_on_session_transition_false_when_session_unchanged(
         self,
     ) -> None:
@@ -8776,6 +8820,7 @@ async def test_load_or_generate_daily_playbook_creates_exit_fallback_for_held_on
         current_holdings=[holding],
         market=market,
         market_today=date(2026, 3, 25),
+        session_id="US_PRE",
         playbook_store=playbook_store,
         pre_market_planner=pre_market_planner,
         telegram=telegram,
@@ -8787,6 +8832,12 @@ async def test_load_or_generate_daily_playbook_creates_exit_fallback_for_held_on
     assert stock_playbook.scenarios[0].action is ScenarioAction.HOLD
     assert stock_playbook.scenarios[0].condition.holding_days_above == -1
     assert stock_playbook.scenarios[0].stop_loss_pct == pytest.approx(-2.0)
+    assert playbook.session_id == "US_PRE"
+    playbook_store.load.assert_called_once_with(
+        date(2026, 3, 25),
+        "US_AMEX",
+        session_id="US_PRE",
+    )
     pre_market_planner.generate_playbook.assert_not_awaited()
     playbook_store.save.assert_called_once_with(playbook)
     telegram.notify_playbook_generated.assert_awaited_once()

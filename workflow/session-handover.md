@@ -895,3 +895,11 @@
 - next_ticket: OOR-859
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #876 review thread를 코드/테스트와 대조해 타당한 지적만 반영하고, 수정 사항을 TDD로 검증한 뒤 push 및 GitHub review thread reply/top-level comment까지 같은 세션에서 마무리한다.
+
+### 2026-03-27 | session=codex-oor-860-start
+- branch: feature/issue-860-playbook-session-identity
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-860
+- next_ticket: OOR-860
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: playbook 저장 identity가 `date + market + slot`에 묶여 있어 session-aware persistence와 resume selection 규칙을 모델/DB/테스트로 함께 정합화해야 한다.

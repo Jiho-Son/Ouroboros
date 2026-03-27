@@ -143,6 +143,7 @@ class DayPlaybook(BaseModel):
 
     date: date
     market: str  # "KR" or "US"
+    session_id: str = "UNKNOWN"
     market_outlook: MarketOutlook = MarketOutlook.NEUTRAL
     generated_at: str = ""  # ISO timestamp
     gemini_model: str = ""
