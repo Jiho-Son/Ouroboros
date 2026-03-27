@@ -28,9 +28,11 @@ def test_ensure_market_session_reuses_same_session_state() -> None:
         scanned_at=100.0,
     )
 
-    store.ensure_market_session("US_NASDAQ", "US_PRE")
+    result = store.ensure_market_session("US_NASDAQ", "US_PRE")
     snapshot = store.get_snapshot("US_NASDAQ", now_monotonic=112.0)
 
+    assert result.action == "reused"
+    assert result.previous_session_id is None
     assert snapshot is not None
     assert snapshot.session_id == "US_PRE"
     assert snapshot.active_stocks == ("AAPL", "MSFT")
@@ -96,4 +98,3 @@ def test_runtime_fallback_stocks_blocks_session_mismatch() -> None:
 
     assert store.runtime_fallback_stocks("US_NASDAQ", "US_PRE") == ["AAPL"]
     assert store.runtime_fallback_stocks("US_NASDAQ", "US_REG") == []
-

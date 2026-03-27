@@ -4004,19 +4004,6 @@ def _clear_realtime_market_runtime_state(
         )
 
 
-def _clear_market_tracking_cache(
-    *,
-    market_code: str,
-    active_stocks: dict[str, list[str]],
-    scan_candidates: dict[str, dict[str, ScanCandidate]],
-    last_scan_time: dict[str, float],
-) -> None:
-    """Drop scanner/runtime tracking cache for a single market."""
-    active_stocks.pop(market_code, None)
-    scan_candidates.pop(market_code, None)
-    last_scan_time.pop(market_code, None)
-
-
 def _log_market_tracking_snapshot(prefix: str, snapshot: MarketTrackingSnapshot) -> None:
     """Emit a concise per-market tracking summary for diagnostics."""
     logger.info(
@@ -4115,12 +4102,9 @@ def _reset_tracking_cache_on_session_transition(
             last_scan_time,
         )
     )
-    _clear_market_tracking_cache(
-        market_code=market_code,
-        active_stocks=active_stocks,
-        scan_candidates=scan_candidates,
-        last_scan_time=last_scan_time,
-    )
+    active_stocks.pop(market_code, None)
+    scan_candidates.pop(market_code, None)
+    last_scan_time.pop(market_code, None)
     return had_cache
 
 
@@ -5423,19 +5407,6 @@ async def run(settings: Settings) -> None:
                                     "Market tracking summary",
                                     tracking_snapshot,
                                 )
-
-                                active_codes = smart_scanner.get_stock_codes(
-                                    candidates
-                                )
-                                if tuple(active_codes) != tracking_snapshot.active_stocks:
-                                    logger.warning(
-                                        "Tracking store active universe mismatch for %s;"
-                                        " scanner=%s store=%s",
-                                        market.code,
-                                        active_codes,
-                                        list(tracking_snapshot.active_stocks),
-                                    )
-
                                 market_today = datetime.now(market.timezone).date()
                                 if market.code not in playbooks:
                                     selection_intent = (

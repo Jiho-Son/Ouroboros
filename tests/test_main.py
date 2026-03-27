@@ -71,7 +71,6 @@ from src.evolution.scorecard import DailyScorecard
 from src.main import (
     _acquire_live_runtime_lock,
     _apply_dashboard_flag,
-    _clear_market_tracking_cache,
     _execute_trading_cycle_action,
     _handle_market_close,
     _handle_realtime_hard_stop_trigger,
@@ -2024,25 +2023,6 @@ class TestRealtimeSessionStateHelpers:
         )
         assert removed
         assert "US_NASDAQ" not in playbooks
-
-    def test_clear_market_tracking_cache_drops_only_target_market(self) -> None:
-        active_stocks = {"KR": ["005930"], "US_NASDAQ": ["AAPL"]}
-        scan_candidates = {"KR": {"005930": MagicMock()}, "US_NASDAQ": {"AAPL": MagicMock()}}
-        last_scan_time = {"KR": 1.0, "US_NASDAQ": 2.0}
-
-        _clear_market_tracking_cache(
-            market_code="KR",
-            active_stocks=active_stocks,
-            scan_candidates=scan_candidates,
-            last_scan_time=last_scan_time,
-        )
-
-        assert "KR" not in active_stocks
-        assert "KR" not in scan_candidates
-        assert "KR" not in last_scan_time
-        assert active_stocks["US_NASDAQ"] == ["AAPL"]
-        assert "US_NASDAQ" in scan_candidates
-        assert last_scan_time["US_NASDAQ"] == 2.0
 
     def test_reset_tracking_cache_on_session_transition_clears_existing_market_entries(
         self,

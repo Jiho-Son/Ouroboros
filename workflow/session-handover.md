@@ -975,3 +975,11 @@
 - next_ticket: OOR-864
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: main HEAD 1e27f01 already includes recent session/lifecycle fixes; 이번 세션은 per-market runtime tracking store 분리와 carry-over reset 정책을 TDD로 고정한다.
+
+### 2026-03-27 | session=codex-oor-864-publish
+- branch: feature/issue-864-session-scoped-tracking-store
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-864, PR #881
+- next_ticket: OOR-864
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 기존 구현/검증/PR #881 상태를 재점검하고, Linear workpad 와 PR 피드백/체크를 현재 HEAD 00832e1 기준으로 정리해 Human Review 진입 가능 여부를 판단한다.

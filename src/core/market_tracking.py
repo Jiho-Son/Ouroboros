@@ -82,7 +82,7 @@ class MarketTrackingStore:
                 return MarketSessionEnsureResult(
                     market_code=market_code,
                     session_id=session_id,
-                    previous_session_id=state.session_id,
+                    previous_session_id=None,
                     action="reused",
                 )
 
@@ -116,7 +116,7 @@ class MarketTrackingStore:
     ) -> MarketTrackingSnapshot:
         """Atomically store scanner candidates and the active universe."""
         with self._lock:
-            state = self._ensure_state_locked(market_code, session_id)
+            state = self._get_or_create_state_locked(market_code, session_id)
             state.active_stocks = [candidate.stock_code for candidate in candidates]
             state.scan_candidates = {candidate.stock_code: candidate for candidate in candidates}
             state.last_scan_monotonic = scanned_at
@@ -131,7 +131,7 @@ class MarketTrackingStore:
     ) -> MarketTrackingSnapshot:
         """Store an empty same-session scan result."""
         with self._lock:
-            state = self._ensure_state_locked(market_code, session_id)
+            state = self._get_or_create_state_locked(market_code, session_id)
             state.active_stocks = []
             state.scan_candidates = {}
             state.last_scan_monotonic = scanned_at
@@ -189,11 +189,12 @@ class MarketTrackingStore:
                 for market_code, state in self._states.items()
             }
 
-    def _ensure_state_locked(
+    def _get_or_create_state_locked(
         self,
         market_code: str,
         session_id: str,
     ) -> MarketTrackingSessionState:
+        """Return current state for the requested session, rolling over silently if needed."""
         state = self._states.get(market_code)
         if state is None or state.session_id != session_id:
             state = MarketTrackingSessionState(
