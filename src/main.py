@@ -16,6 +16,7 @@ import signal
 import sys
 import threading
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -3984,6 +3985,70 @@ def _clear_market_tracking_cache(
     last_scan_time.pop(market_code, None)
 
 
+@dataclass(frozen=True)
+class MarketLifecycleEvent:
+    """A per-market lifecycle transition derived from snapshot diffing."""
+
+    market_code: str
+    market: MarketInfo | None
+    previous_session_id: str | None
+    current_session_id: str | None
+
+
+@dataclass(frozen=True)
+class MarketLifecycleDiff:
+    """Grouped lifecycle transitions for the current realtime loop iteration."""
+
+    opened: tuple[MarketLifecycleEvent, ...]
+    closed: tuple[MarketLifecycleEvent, ...]
+    session_changed: tuple[MarketLifecycleEvent, ...]
+
+
+def _reconcile_market_lifecycle(
+    *,
+    previous_market_states: dict[str, str],
+    current_market_sessions: dict[str, str],
+    current_markets: dict[str, MarketInfo],
+) -> MarketLifecycleDiff:
+    """Return per-market lifecycle transitions between previous and current snapshots."""
+    previous_codes = set(previous_market_states)
+    current_codes = set(current_market_sessions)
+
+    opened = tuple(
+        MarketLifecycleEvent(
+            market_code=market_code,
+            market=current_markets.get(market_code),
+            previous_session_id=None,
+            current_session_id=current_market_sessions[market_code],
+        )
+        for market_code in sorted(current_codes - previous_codes)
+    )
+    closed = tuple(
+        MarketLifecycleEvent(
+            market_code=market_code,
+            market=MARKETS.get(market_code),
+            previous_session_id=previous_market_states[market_code],
+            current_session_id=None,
+        )
+        for market_code in sorted(previous_codes - current_codes)
+    )
+    session_changed = tuple(
+        MarketLifecycleEvent(
+            market_code=market_code,
+            market=current_markets.get(market_code, MARKETS.get(market_code)),
+            previous_session_id=previous_market_states[market_code],
+            current_session_id=current_market_sessions[market_code],
+        )
+        for market_code in sorted(previous_codes & current_codes)
+        if previous_market_states[market_code] != current_market_sessions[market_code]
+    )
+    return MarketLifecycleDiff(
+        opened=opened,
+        closed=closed,
+        session_changed=session_changed,
+    )
+
+
 def _reset_tracking_cache_on_session_transition(
     *,
     market_code: str,
@@ -4027,14 +4092,32 @@ async def _handle_realtime_market_closures(
     context_aggregator: ContextAggregator,
     daily_reviewer: DailyReviewer,
     evolution_optimizer: EvolutionOptimizer | None = None,
+    closed_events: tuple[MarketLifecycleEvent, ...] | None = None,
 ) -> None:
     """Handle markets that were previously open but are absent from the current open set."""
-    open_market_codes = {market.code for market in current_open_markets}
-    for market_code in list(market_states):
-        if market_code in open_market_codes:
-            continue
+    if closed_events is None:
+        # Keep the legacy diff fallback for direct helper callers and focused tests that
+        # only provide the current open-market snapshot.
+        current_open_codes = {market.code for market in current_open_markets}
+        closed_events = tuple(
+            MarketLifecycleEvent(
+                market_code=market_code,
+                market=MARKETS.get(market_code),
+                previous_session_id=market_states.get(market_code),
+                current_session_id=None,
+            )
+            for market_code in sorted(market_states)
+            if market_code not in current_open_codes
+        )
 
-        market_info = MARKETS.get(market_code)
+    for event in closed_events:
+        market_code = event.market_code
+        logger.info(
+            "Market lifecycle closed: market=%s previous_session=%s",
+            market_code,
+            event.previous_session_id,
+        )
+        market_info = event.market or MARKETS.get(market_code)
         if market_info is None:
             logger.warning("Missing market metadata for closed market: %s", market_code)
             _clear_realtime_market_runtime_state(
@@ -4107,8 +4190,88 @@ def _run_context_scheduler(
 def _has_market_session_transition(
     market_states: dict[str, str], market_code: str, session_id: str
 ) -> bool:
-    """Return True when market session changed (or market has no prior state)."""
-    return market_states.get(market_code) != session_id
+    """Return True only when an already-open market changes session identity."""
+    previous_session_id = market_states.get(market_code)
+    return previous_session_id is not None and previous_session_id != session_id
+
+
+async def _handle_realtime_market_open(
+    *,
+    event: MarketLifecycleEvent,
+    market_states: dict[str, str],
+    telegram: TelegramClient,
+) -> None:
+    """Emit open-side effects for a market newly entering the active open set."""
+    if event.current_session_id is None:
+        return
+
+    logger.info(
+        "Market lifecycle opened: market=%s session=%s",
+        event.market_code,
+        event.current_session_id,
+    )
+    if event.market is not None:
+        try:
+            await telegram.notify_market_open(event.market.name)
+        except Exception as exc:
+            logger.warning("Market open notification failed: %s", exc)
+    market_states[event.market_code] = event.current_session_id
+
+
+async def _handle_realtime_market_session_transition(
+    *,
+    event: MarketLifecycleEvent,
+    market_states: dict[str, str],
+    playbooks: dict[str, DayPlaybook],
+    active_stocks: dict[str, list[str]],
+    scan_candidates: dict[str, dict[str, ScanCandidate]],
+    last_scan_time: dict[str, float],
+    telegram: TelegramClient,
+) -> None:
+    """Emit session-transition side effects for an already-open market."""
+    if event.previous_session_id is None or event.current_session_id is None:
+        return
+
+    logger.info(
+        "Market lifecycle session_changed: market=%s previous=%s current=%s",
+        event.market_code,
+        event.previous_session_id,
+        event.current_session_id,
+    )
+    if _refresh_cached_playbook_on_session_transition(
+        playbooks=playbooks,
+        session_changed=True,
+        market_code=event.market_code,
+        session_id=event.current_session_id,
+    ):
+        logger.info(
+            "Session transition requires fresh playbook for %s session=%s",
+            event.market_code,
+            event.current_session_id,
+        )
+    if _reset_tracking_cache_on_session_transition(
+        market_code=event.market_code,
+        session_changed=True,
+        active_stocks=active_stocks,
+        scan_candidates=scan_candidates,
+        last_scan_time=last_scan_time,
+    ):
+        logger.info(
+            "Session transition cleared tracking cache for %s session=%s",
+            event.market_code,
+            event.current_session_id,
+        )
+    market_name = event.market.name if event.market is not None else event.market_code
+    try:
+        await telegram.notify_market_session_transition(
+            market_name=market_name,
+            market_code=event.market_code,
+            previous_session_id=event.previous_session_id,
+            current_session_id=event.current_session_id,
+        )
+    except Exception as exc:
+        logger.warning("Market session transition notification failed: %s", exc)
+    market_states[event.market_code] = event.current_session_id
 
 
 def _should_rescan_market(
@@ -4992,6 +5155,17 @@ async def run(settings: Settings) -> None:
                     settings.enabled_market_list,
                     include_extended_sessions=True,
                 )
+                current_market_session_info = {
+                    market.code: get_session_info(market) for market in open_markets
+                }
+                lifecycle_diff = _reconcile_market_lifecycle(
+                    previous_market_states=_market_states,
+                    current_market_sessions={
+                        market_code: session_info.session_id
+                        for market_code, session_info in current_market_session_info.items()
+                    },
+                    current_markets={market.code: market for market in open_markets},
+                )
                 await _handle_realtime_market_closures(
                     current_open_markets=open_markets,
                     market_states=_market_states,
@@ -5005,7 +5179,27 @@ async def run(settings: Settings) -> None:
                     context_aggregator=context_aggregator,
                     daily_reviewer=daily_reviewer,
                     evolution_optimizer=evolution_optimizer,
+                    closed_events=lifecycle_diff.closed,
                 )
+                for event in lifecycle_diff.opened:
+                    await _handle_realtime_market_open(
+                        event=event,
+                        market_states=_market_states,
+                        telegram=telegram,
+                    )
+                for event in lifecycle_diff.session_changed:
+                    await _handle_realtime_market_session_transition(
+                        event=event,
+                        market_states=_market_states,
+                        playbooks=playbooks,
+                        active_stocks=active_stocks,
+                        scan_candidates=scan_candidates,
+                        last_scan_time=last_scan_time,
+                        telegram=telegram,
+                    )
+                session_transition_markets = {
+                    event.market_code for event in lifecycle_diff.session_changed
+                }
 
                 if not open_markets:
                     # No markets open — wait until next market opens
@@ -5033,7 +5227,7 @@ async def run(settings: Settings) -> None:
                     if shutdown.is_set():
                         return
 
-                    session_info = get_session_info(market)
+                    session_info = current_market_session_info[market.code]
                     _session_risk_overrides(market=market, settings=settings)
                     logger.info(
                         "Market session active: %s (%s) session=%s",
@@ -5049,46 +5243,7 @@ async def run(settings: Settings) -> None:
                         settings=settings,
                     )
 
-                    # get_session_info() wraps classify_session_id(), which always returns
-                    # a concrete non-empty session ID for supported markets, so session
-                    # transition checks can compare the raw string without extra truthy guards.
-                    # Notify on market/session transition (e.g., US_PRE -> US_REG)
-                    session_changed = _has_market_session_transition(
-                        _market_states, market.code, session_info.session_id
-                    )
-                    # Force KR/US regular-session playbook regeneration on session transition.
-                    # Without this, an in-memory playbook created in pre-market sessions
-                    # (e.g., NXT_PRE, US_PRE) can persist into regular sessions
-                    # (KRX_REG, US_REG) and bypass the stored-playbook reuse gate.
-                    if _refresh_cached_playbook_on_session_transition(
-                        playbooks=playbooks,
-                        session_changed=session_changed,
-                        market_code=market.code,
-                        session_id=session_info.session_id,
-                    ):
-                        logger.info(
-                            "Session transition requires fresh playbook for %s session=%s",
-                            market.code,
-                            session_info.session_id,
-                        )
-                    if _reset_tracking_cache_on_session_transition(
-                        market_code=market.code,
-                        session_changed=session_changed,
-                        active_stocks=active_stocks,
-                        scan_candidates=scan_candidates,
-                        last_scan_time=last_scan_time,
-                    ):
-                        logger.info(
-                            "Session transition cleared tracking cache for %s session=%s",
-                            market.code,
-                            session_info.session_id,
-                        )
-                    if session_changed:
-                        try:
-                            await telegram.notify_market_open(market.name)
-                        except Exception as exc:
-                            logger.warning("Market open notification failed: %s", exc)
-                        _market_states[market.code] = session_info.session_id
+                    session_changed = market.code in session_transition_markets
 
                     # Mid-session playbook refresh (12:00 현지 시각)
                     now_utc = datetime.now(UTC)
