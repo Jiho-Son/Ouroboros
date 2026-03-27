@@ -2023,10 +2023,6 @@ class TestRealtimeSessionStateHelpers:
         assert removed
         assert "US_NASDAQ" not in playbooks
 
-    def test_reset_tracking_cache_on_session_transition_helper_removed(self) -> None:
-        assert not hasattr(main_module, "_reset_tracking_cache_on_session_transition")
-
-
 class TestMarketParallelRunner:
     """Tests for market-level parallel processing helper."""
 

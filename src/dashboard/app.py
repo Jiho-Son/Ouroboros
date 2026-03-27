@@ -32,7 +32,8 @@ def create_dashboard_app(
     @app.get("/api/status")
     def get_status() -> dict[str, Any]:
         today = datetime.now(UTC).date().isoformat()
-        runtime_status = runtime_status_provider() if runtime_status_provider is not None else {}
+        provider = app.state.runtime_status_provider
+        runtime_status = provider() if provider is not None else {}
         with _connect(db_path) as conn:
             trade_rows = {
                 row["market"]: row

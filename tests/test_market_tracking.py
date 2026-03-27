@@ -98,3 +98,75 @@ def test_runtime_fallback_stocks_blocks_session_mismatch() -> None:
 
     assert store.runtime_fallback_stocks("US_NASDAQ", "US_PRE") == ["AAPL"]
     assert store.runtime_fallback_stocks("US_NASDAQ", "US_REG") == []
+
+
+def test_record_empty_scan_records_empty_universe_and_timestamp() -> None:
+    store = MarketTrackingStore()
+    store.record_scan_result(
+        market_code="US_NASDAQ",
+        session_id="US_PRE",
+        candidates=[_candidate("AAPL")],
+        scanned_at=50.0,
+    )
+
+    snapshot = store.record_empty_scan(
+        market_code="US_NASDAQ",
+        session_id="US_PRE",
+        scanned_at=75.0,
+    )
+
+    assert snapshot.session_id == "US_PRE"
+    assert snapshot.active_stocks == ()
+    assert snapshot.candidate_codes == ()
+    assert snapshot.active_count == 0
+    assert snapshot.candidate_count == 0
+    assert snapshot.last_scan_monotonic == 75.0
+    assert snapshot.last_scan_age_seconds == 0.0
+
+
+def test_last_scan_monotonic_returns_none_for_session_mismatch() -> None:
+    store = MarketTrackingStore()
+    store.record_scan_result(
+        market_code="US_NASDAQ",
+        session_id="US_PRE",
+        candidates=[_candidate("AAPL")],
+        scanned_at=100.0,
+    )
+
+    assert store.last_scan_monotonic("US_NASDAQ", "US_PRE") == 100.0
+    assert store.last_scan_monotonic("US_NASDAQ", "US_REG") is None
+
+
+def test_scan_candidates_snapshot_returns_shallow_copy() -> None:
+    store = MarketTrackingStore()
+    store.record_scan_result(
+        market_code="US_NASDAQ",
+        session_id="US_PRE",
+        candidates=[_candidate("AAPL"), _candidate("MSFT")],
+        scanned_at=100.0,
+    )
+
+    snapshot = store.scan_candidates_snapshot()
+    snapshot["US_NASDAQ"].pop("AAPL")
+
+    fresh_snapshot = store.scan_candidates_snapshot()
+    assert tuple(fresh_snapshot["US_NASDAQ"]) == ("AAPL", "MSFT")
+
+
+def test_dashboard_status_payload_uses_dashboard_dict_contract() -> None:
+    store = MarketTrackingStore()
+    store.record_scan_result(
+        market_code="KR",
+        session_id="KRX_REG",
+        candidates=[_candidate("005930"), _candidate("000660")],
+        scanned_at=100.0,
+    )
+
+    payload = store.dashboard_status_payload()
+
+    assert payload["KR"]["session_id"] == "KRX_REG"
+    assert payload["KR"]["active_count"] == 2
+    assert payload["KR"]["active_stocks"] == ["005930", "000660"]
+    assert payload["KR"]["candidate_count"] == 2
+    assert payload["KR"]["candidate_codes"] == ["005930", "000660"]
+    assert isinstance(payload["KR"]["last_scan_age_seconds"], float)

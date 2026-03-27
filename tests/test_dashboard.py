@@ -406,6 +406,39 @@ def test_status_endpoint_includes_runtime_tracking_diagnostics_when_provider_is_
     }
 
 
+def test_status_endpoint_reads_runtime_tracking_provider_from_app_state(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "dashboard_runtime_tracking_state.db"
+    conn = init_db(str(db_path))
+    _seed_db(conn)
+    conn.close()
+
+    app = create_dashboard_app(str(db_path))
+    app.state.runtime_status_provider = lambda: {
+        "KR": {
+            "session_id": "KRX_REG",
+            "active_count": 1,
+            "active_stocks": ["005930"],
+            "candidate_count": 1,
+            "candidate_codes": ["005930"],
+            "last_scan_age_seconds": 3.0,
+        }
+    }
+
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+
+    assert body["markets"]["KR"]["runtime_tracking"] == {
+        "session_id": "KRX_REG",
+        "active_count": 1,
+        "active_stocks": ["005930"],
+        "candidate_count": 1,
+        "candidate_codes": ["005930"],
+        "last_scan_age_seconds": 3.0,
+    }
+
+
 def test_status_endpoint_excludes_stale_markets_without_today_activity_or_positions(
     tmp_path: Path,
 ) -> None:
