@@ -1023,3 +1023,11 @@
 - next_ticket: OOR-868
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: Linear 상태가 `Merging` 이므로 기존 산출물 재사용 없이 merge 가능 상태, 잔여 리뷰 코멘트, checks, merge 후 `Done` 전이만 확인해 land loop를 끝까지 수행한다.
+
+### 2026-03-27 | session=codex-oor-869-start
+- branch: feature/issue-869-hard-stop-threshold-boundary
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-869
+- next_ticket: OOR-869
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `tests/test_main.py` 에 `_register_post_buy_for_hard_stop` 의 `stop_loss_threshold` 양수/0 입력 fallback 경계를 TDD로 고정하고, PR #873 리뷰 제안(comment ID 2993097892)을 재현 신호와 함께 검증한다.

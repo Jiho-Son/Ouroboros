@@ -14644,6 +14644,46 @@ async def test_register_post_buy_for_hard_stop_falls_back_to_default_stop_loss()
 
 
 @pytest.mark.asyncio
+async def test_register_post_buy_for_hard_stop_ignores_positive_stop_loss_threshold() -> None:
+    monitor = RealtimeHardStopMonitor()
+
+    await _register_post_buy_for_hard_stop(
+        monitor=monitor,
+        websocket_client=None,
+        market=MARKETS["KR"],
+        stock_code="005930",
+        stock_name=None,
+        entry_price=100.0,
+        quantity=5,
+        market_data={"_staged_exit_evidence": {"stop_loss_threshold": 1.5}},
+    )
+
+    tracked = monitor.get("KR", "005930")
+    assert tracked is not None
+    assert tracked.hard_stop_price == pytest.approx(98.0)  # default -2.0%
+
+
+@pytest.mark.asyncio
+async def test_register_post_buy_for_hard_stop_ignores_zero_stop_loss_threshold() -> None:
+    monitor = RealtimeHardStopMonitor()
+
+    await _register_post_buy_for_hard_stop(
+        monitor=monitor,
+        websocket_client=None,
+        market=MARKETS["KR"],
+        stock_code="005930",
+        stock_name=None,
+        entry_price=100.0,
+        quantity=5,
+        market_data={"_staged_exit_evidence": {"stop_loss_threshold": 0}},
+    )
+
+    tracked = monitor.get("KR", "005930")
+    assert tracked is not None
+    assert tracked.hard_stop_price == pytest.approx(98.0)  # default -2.0%
+
+
+@pytest.mark.asyncio
 async def test_execute_trading_cycle_action_registers_hard_stop_after_successful_buy() -> None:
     db_conn = init_db(":memory:")
     broker = MagicMock()
