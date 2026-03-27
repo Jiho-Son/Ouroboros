@@ -1015,3 +1015,11 @@
 - next_ticket: OOR-868
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: unresolved review thread 2건을 thread-aware 로 재확인한 뒤, `src/main.py` 주석 근거 보강과 `tests/test_main.py` blackout reset 기본값 위임을 반영하고 재검증·PR 코멘트까지 같은 세션에서 마무리한다.
+
+### 2026-03-27 | session=codex-oor-868-land
+- branch: feature/issue-868-hard-stop-entry-price-comment
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-868, PR #882
+- next_ticket: OOR-868
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Linear 상태가 `Merging` 이므로 기존 산출물 재사용 없이 merge 가능 상태, 잔여 리뷰 코멘트, checks, merge 후 `Done` 전이만 확인해 land loop를 끝까지 수행한다.
