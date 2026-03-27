@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-03-27 | session=codex-issue860-review-followup
+- branch: feature/issue-860-playbook-session-identity
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #860, PR #877
+- next_ticket: #860
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #877 리뷰 스레드를 검토해 타당한 지적만 반영하고, 변경 시 테스트와 PR 코멘트/답글까지 함께 정리한다.
+
 ### 2026-03-23 | session=codex-oor-844-start
 - branch: feature/issue-844-pnl-usd-settlement
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md

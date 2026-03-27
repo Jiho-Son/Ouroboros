@@ -288,10 +288,6 @@ def init_db(db_path: str) -> sqlite3.Connection:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_playbooks_market ON playbooks(market)"
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_playbooks_market_session"
-                " ON playbooks(market, session_id)"
-            )
             conn.commit()
             logger.info(
                 "DB migration: rebuilt playbooks table with"

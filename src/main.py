@@ -2804,8 +2804,7 @@ def _with_playbook_session_id(playbook: DayPlaybook, session_id: str) -> DayPlay
     """Force a playbook to advertise the runtime session that produced or loaded it."""
     if playbook.session_id == session_id:
         return playbook
-    playbook.session_id = session_id
-    return playbook
+    return playbook.model_copy(update={"session_id": session_id})
 
 
 async def _load_or_generate_daily_playbook(

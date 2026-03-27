@@ -17,7 +17,7 @@ from src.strategy.models import (
     StockPlaybook,
     StockScenario,
 )
-from src.strategy.playbook_store import PlaybookStore
+from src.strategy.playbook_store import PlaybookStore, _normalize_session_id
 
 
 @pytest.fixture
@@ -393,6 +393,24 @@ class TestStatus:
         updated = store.update_status(date(2026, 1, 1), "KR", PlaybookStatus.FAILED)
         assert updated is False
 
+    def test_update_status_requires_matching_session_id_for_session_rows(
+        self, store: PlaybookStore
+    ) -> None:
+        store.save(_make_playbook(market="US_NASDAQ", session_id="US_PRE"))
+
+        updated = store.update_status(
+            date(2026, 2, 8),
+            "US_NASDAQ",
+            PlaybookStatus.EXPIRED,
+            session_id="US_PRE",
+        )
+
+        assert updated is True
+        assert (
+            store.get_status(date(2026, 2, 8), "US_NASDAQ", session_id="US_PRE")
+            == PlaybookStatus.EXPIRED
+        )
+
 
 # ---------------------------------------------------------------------------
 # Match count
@@ -413,6 +431,24 @@ class TestMatchCount:
         result = store.increment_match_count(date(2026, 1, 1), "KR")
         assert result is False
 
+    def test_increment_match_count_tracks_session_scoped_rows(
+        self, store: PlaybookStore
+    ) -> None:
+        store.save(_make_playbook(market="US_NASDAQ", session_id="US_PRE"))
+
+        assert (
+            store.increment_match_count(
+                date(2026, 2, 8),
+                "US_NASDAQ",
+                session_id="US_PRE",
+            )
+            is True
+        )
+
+        stats = store.get_stats(date(2026, 2, 8), "US_NASDAQ", session_id="US_PRE")
+        assert stats is not None
+        assert stats["match_count"] == 1
+
 
 # ---------------------------------------------------------------------------
 # Stats
@@ -432,6 +468,24 @@ class TestStats:
 
     def test_get_stats_not_found(self, store: PlaybookStore) -> None:
         assert store.get_stats(date(2026, 1, 1), "KR") is None
+
+    def test_get_stats_uses_matching_session_scope(self, store: PlaybookStore) -> None:
+        store.save(_make_playbook(market="US_NASDAQ", session_id="US_PRE"))
+
+        stats = store.get_stats(date(2026, 2, 8), "US_NASDAQ", session_id="US_PRE")
+
+        assert stats is not None
+        assert store.get_stats(date(2026, 2, 8), "US_NASDAQ", session_id="US_REG") is None
+
+
+def test_normalize_session_id_logs_when_input_missing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level("WARNING"):
+        resolved = _normalize_session_id("  ")
+
+    assert resolved == "UNKNOWN"
+    assert "session_id missing" in caplog.text
 
 
 # ---------------------------------------------------------------------------

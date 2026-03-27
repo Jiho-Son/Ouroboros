@@ -132,6 +132,16 @@ def _make_settings(**overrides: Any) -> Settings:
     return Settings(**base)
 
 
+def test_with_playbook_session_id_returns_copy_without_mutating_input() -> None:
+    playbook = _make_playbook("US_NASDAQ")
+
+    updated = main_module._with_playbook_session_id(playbook, "US_PRE")
+
+    assert updated is not playbook
+    assert updated.session_id == "US_PRE"
+    assert playbook.session_id == "UNKNOWN"
+
+
 def test_log_realtime_hard_stop_monitor_start_includes_enabled_market_coverage(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -12792,8 +12802,13 @@ async def test_run_restores_pre_refresh_playbook_when_mid_session_refresh_genera
         await main_module.run(settings)
 
     assert mock_trading_cycle.await_count == 2
-    assert mock_trading_cycle.await_args_list[0].args[3] is original_playbook
-    assert mock_trading_cycle.await_args_list[1].args[3] is original_playbook
+    first_playbook = mock_trading_cycle.await_args_list[0].args[3]
+    second_playbook = mock_trading_cycle.await_args_list[1].args[3]
+    assert first_playbook is not original_playbook
+    assert second_playbook is not original_playbook
+    assert first_playbook.session_id == "US_REG"
+    assert second_playbook.session_id == "US_REG"
+    assert original_playbook.session_id == "UNKNOWN"
     assert pre_market_planner.generate_playbook.await_count == 2
     playbook_store.load_latest.assert_not_called()
     telegram.notify_playbook_failed.assert_awaited_once()
@@ -12965,8 +12980,14 @@ async def test_run_regenerates_playbook_on_us_regular_session_transition() -> No
         await main_module.run(settings)
 
     assert mock_trading_cycle.await_count == 2
-    assert mock_trading_cycle.await_args_list[0].args[3] is premarket_playbook
-    assert mock_trading_cycle.await_args_list[1].args[3] is regular_playbook
+    first_playbook = mock_trading_cycle.await_args_list[0].args[3]
+    second_playbook = mock_trading_cycle.await_args_list[1].args[3]
+    assert first_playbook is not premarket_playbook
+    assert second_playbook is not regular_playbook
+    assert first_playbook.session_id == "US_PRE"
+    assert second_playbook.session_id == "US_REG"
+    assert premarket_playbook.session_id == "UNKNOWN"
+    assert regular_playbook.session_id == "UNKNOWN"
     assert pre_market_planner.generate_playbook.await_count == 2
     assert telegram.notify_playbook_failed.await_count == 0
 

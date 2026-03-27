@@ -17,7 +17,10 @@ logger = logging.getLogger(__name__)
 
 def _normalize_session_id(session_id: str | None) -> str:
     resolved = (session_id or "").strip()
-    return resolved or "UNKNOWN"
+    if resolved:
+        return resolved
+    logger.warning("playbook store session_id missing; defaulting to UNKNOWN")
+    return "UNKNOWN"
 
 
 class PlaybookStore:
