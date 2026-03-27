@@ -24,6 +24,25 @@ def test_classify_us_pre() -> None:
     assert classify_session_id(MARKETS["US_NASDAQ"], now) == "US_PRE"
 
 
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        (datetime(2026, 3, 10, 0, 30, tzinfo=UTC), "US_DAY"),
+        (datetime(2026, 3, 9, 13, 30, tzinfo=UTC), "US_REG"),
+        (datetime(2026, 3, 9, 20, 0, tzinfo=UTC), "US_AFTER"),
+        (datetime(2026, 11, 2, 14, 30, tzinfo=UTC), "US_REG"),
+    ],
+    ids=[
+        "dst_start_overnight_day_session",
+        "dst_start_regular_open",
+        "dst_start_after_hours_open",
+        "dst_end_regular_open",
+    ],
+)
+def test_classify_us_dst_boundaries(now: datetime, expected: str) -> None:
+    assert classify_session_id(MARKETS["US_NASDAQ"], now) == expected
+
+
 def test_classify_us_weekend_is_off_even_during_kst_session_window() -> None:
     # 2026-03-08 00:30 KST == 2026-03-07 15:30 UTC, still Saturday in New York.
     now = datetime(2026, 3, 7, 15, 30, tzinfo=UTC)

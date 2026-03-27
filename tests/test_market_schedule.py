@@ -198,6 +198,23 @@ class TestGetOpenMarkets:
         )
         assert extended == []
 
+    def test_get_open_markets_excludes_us_post_close_gap_after_dst_start(self) -> None:
+        """17:30 EDT should already be outside US extended trading."""
+        # 2026-03-09 21:30 UTC = 2026-03-09 17:30 EDT
+        test_time = datetime(2026, 3, 9, 21, 30, tzinfo=ZoneInfo("UTC"))
+        regular = get_open_markets(
+            enabled_markets=["US_NASDAQ"],
+            now=test_time,
+        )
+        assert regular == []
+
+        extended = get_open_markets(
+            enabled_markets=["US_NASDAQ"],
+            now=test_time,
+            include_extended_sessions=True,
+        )
+        assert extended == []
+
 
 class TestGetNextMarketOpen:
     """Test get_next_market_open function."""
@@ -257,6 +274,18 @@ class TestGetNextMarketOpen:
         )
         assert market.code == "US_NASDAQ"
         assert next_open == datetime(2026, 2, 3, 9, 0, tzinfo=ZoneInfo("UTC"))
+
+    def test_get_next_market_open_prefers_dst_adjusted_us_pre_after_post_close(self) -> None:
+        """DST-start week should reopen premarket at 04:00 EDT, not 05:00 EDT."""
+        # 2026-03-09 21:30 UTC = 2026-03-09 17:30 EDT (already closed)
+        test_time = datetime(2026, 3, 9, 21, 30, tzinfo=ZoneInfo("UTC"))
+        market, next_open = get_next_market_open(
+            enabled_markets=["US_NASDAQ"],
+            now=test_time,
+            include_extended_sessions=True,
+        )
+        assert market.code == "US_NASDAQ"
+        assert next_open == datetime(2026, 3, 10, 8, 0, tzinfo=ZoneInfo("UTC"))
 
 
 class TestExpandMarketCodes:

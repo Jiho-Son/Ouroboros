@@ -195,9 +195,9 @@ High-frequency trading with individual stock analysis:
 
 **OrderPolicy** (`order_policy.py`) — Session classification and order type enforcement (v3)
 
-- `classify_session_id()`: Classifies current KR/US session from KST clock
-  - KR: `NXT_PRE` (08:00-08:50), `KRX_REG` (09:00-15:30), `NXT_AFTER` (15:30-20:00)
-  - US: `US_DAY` (10:00-18:00), `US_PRE` (18:00-23:30), `US_REG` (23:30-06:00), `US_AFTER` (06:00-07:00)
+- `classify_session_id()`: Classifies current KR/US session from each market's local clock
+  - KR (`Asia/Seoul`): `NXT_PRE` (08:00-08:50), `KRX_REG` (09:00-15:30), `NXT_AFTER` (15:30-20:00)
+  - US (`America/New_York`, DST-aware): `US_DAY` (20:00-04:00), `US_PRE` (04:00-09:30), `US_REG` (09:30-16:00), `US_AFTER` (16:00-17:00), `US_OFF` (17:00-20:00 and weekends)
 - Low-liquidity session detection: `NXT_AFTER`, `US_PRE`, `US_DAY`, `US_AFTER`
 - Market order forbidden in low-liquidity sessions (`OrderPolicyRejected` raised)
 - Limit/IOC/FOK orders always allowed
