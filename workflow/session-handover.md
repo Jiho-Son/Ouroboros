@@ -951,3 +951,11 @@
 - next_ticket: OOR-862
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #879 follow-up nit를 코드 분기와 대조해 실제 리스크가 없음을 확인하고, 새 회귀 테스트가 rescan 플래그 전파만 검증한다는 의도를 주석으로 명시한 뒤 재검증·push·PR 코멘트까지 같은 세션에서 마무리한다.
+
+### 2026-03-27 | session=codex-oor-863-start
+- branch: feature/issue-863-session-playbook-policy
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-863
+- next_ticket: OOR-863
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `DayPlaybook` identity가 session-aware 하지 않아 restart 시 잘못된 playbook 재사용 가능성을 먼저 재현하고, persistence schema/API/selection policy를 migration 포함 TDD로 정합화한다.
