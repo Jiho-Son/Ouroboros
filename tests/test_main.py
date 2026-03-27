@@ -13174,6 +13174,8 @@ async def test_run_forces_rescan_on_market_session_transition_even_after_state_u
     ) -> bool:
         del last_scan, now_timestamp, rescan_interval
         rescan_session_flags.append(session_changed)
+        # This test only verifies the propagated session_changed flag, so keep
+        # the scanner/rescan branch disabled and avoid unrelated universe mocks.
         return False
 
     with ExitStack() as stack:

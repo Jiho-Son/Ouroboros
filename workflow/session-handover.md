@@ -943,3 +943,11 @@
 - next_ticket: OOR-862
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: market lifecycle를 전역 open_markets 존재 여부 대신 per-market diff로 재구성하며, close/session transition/stale runtime cleanup 트리거를 분리 검증한다.
+
+### 2026-03-27 | session=codex-pr879-review-followup-2
+- branch: feature/issue-862-market-lifecycle-reconciler
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-862, PR #879
+- next_ticket: OOR-862
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #879 follow-up nit를 코드 분기와 대조해 실제 리스크가 없음을 확인하고, 새 회귀 테스트가 rescan 플래그 전파만 검증한다는 의도를 주석으로 명시한 뒤 재검증·push·PR 코멘트까지 같은 세션에서 마무리한다.
