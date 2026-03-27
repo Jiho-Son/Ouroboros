@@ -18,6 +18,7 @@ from src.analysis.atr_helpers import (
     _estimate_pred_down_prob_from_rsi,
     _split_trade_pnl_components,
 )
+from src.analysis.smart_scanner import ScanCandidate
 from src.broker.balance_utils import (
     _extract_avg_price_from_balance,
     _extract_buy_fx_rate,
@@ -42,6 +43,7 @@ from src.core.kill_switch_runtime import (
     KILL_SWITCH,
     _trigger_emergency_kill_switch,
 )
+from src.core.market_tracking import MarketTrackingStore
 from src.core.order_helpers import (
     _determine_order_quantity,
     _resolve_recent_sell_guard_window_seconds,
@@ -69,7 +71,6 @@ from src.evolution.scorecard import DailyScorecard
 from src.main import (
     _acquire_live_runtime_lock,
     _apply_dashboard_flag,
-    _clear_market_tracking_cache,
     _execute_trading_cycle_action,
     _handle_market_close,
     _handle_realtime_hard_stop_trigger,
@@ -80,7 +81,6 @@ from src.main import (
     _refresh_cached_playbook_on_session_transition,
     _register_post_buy_for_hard_stop,
     _release_live_runtime_lock,
-    _reset_tracking_cache_on_session_transition,
     _restart_realtime_hard_stop_task_if_needed,
     _retry_connection,
     _rollback_pending_order_position,
@@ -2022,64 +2022,6 @@ class TestRealtimeSessionStateHelpers:
         )
         assert removed
         assert "US_NASDAQ" not in playbooks
-
-    def test_clear_market_tracking_cache_drops_only_target_market(self) -> None:
-        active_stocks = {"KR": ["005930"], "US_NASDAQ": ["AAPL"]}
-        scan_candidates = {"KR": {"005930": MagicMock()}, "US_NASDAQ": {"AAPL": MagicMock()}}
-        last_scan_time = {"KR": 1.0, "US_NASDAQ": 2.0}
-
-        _clear_market_tracking_cache(
-            market_code="KR",
-            active_stocks=active_stocks,
-            scan_candidates=scan_candidates,
-            last_scan_time=last_scan_time,
-        )
-
-        assert "KR" not in active_stocks
-        assert "KR" not in scan_candidates
-        assert "KR" not in last_scan_time
-        assert active_stocks["US_NASDAQ"] == ["AAPL"]
-        assert "US_NASDAQ" in scan_candidates
-        assert last_scan_time["US_NASDAQ"] == 2.0
-
-    def test_reset_tracking_cache_on_session_transition_clears_existing_market_entries(
-        self,
-    ) -> None:
-        active_stocks = {"US_NASDAQ": ["AAPL"]}
-        scan_candidates = {"US_NASDAQ": {"AAPL": MagicMock()}}
-        last_scan_time = {"US_NASDAQ": 2.0}
-
-        removed = _reset_tracking_cache_on_session_transition(
-            market_code="US_NASDAQ",
-            session_changed=True,
-            active_stocks=active_stocks,
-            scan_candidates=scan_candidates,
-            last_scan_time=last_scan_time,
-        )
-
-        assert removed
-        assert active_stocks == {}
-        assert scan_candidates == {}
-        assert last_scan_time == {}
-
-    def test_reset_tracking_cache_on_session_transition_false_without_change(self) -> None:
-        active_stocks = {"US_NASDAQ": ["AAPL"]}
-        scan_candidates = {"US_NASDAQ": {"AAPL": MagicMock()}}
-        last_scan_time = {"US_NASDAQ": 2.0}
-
-        removed = _reset_tracking_cache_on_session_transition(
-            market_code="US_NASDAQ",
-            session_changed=False,
-            active_stocks=active_stocks,
-            scan_candidates=scan_candidates,
-            last_scan_time=last_scan_time,
-        )
-
-        assert not removed
-        assert active_stocks == {"US_NASDAQ": ["AAPL"]}
-        assert "US_NASDAQ" in scan_candidates
-        assert last_scan_time == {"US_NASDAQ": 2.0}
-
 
 class TestMarketParallelRunner:
     """Tests for market-level parallel processing helper."""
@@ -5862,9 +5804,21 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
         "KR": _make_playbook("KR"),
         "US_NASDAQ": _make_playbook("US_NASDAQ"),
     }
-    active_stocks = {"KR": ["005930"], "US_NASDAQ": ["AAPL"]}
-    scan_candidates = {"KR": {"005930": MagicMock()}, "US_NASDAQ": {"AAPL": MagicMock()}}
-    last_scan_time = {"KR": 1.0, "US_NASDAQ": 2.0}
+    tracking_store = MarketTrackingStore()
+    tracking_store.record_scan_result(
+        market_code="KR",
+        session_id="KRX_REG",
+        candidates=[
+            ScanCandidate("005930", "Samsung", 70000.0, 1.0, 1.0, 50.0, "momentum", 80.0)
+        ],
+        scanned_at=1.0,
+    )
+    tracking_store.record_scan_result(
+        market_code="US_NASDAQ",
+        session_id="US_REG",
+        candidates=[ScanCandidate("AAPL", "Apple", 190.0, 1.0, 1.0, 50.0, "momentum", 80.0)],
+        scanned_at=2.0,
+    )
     mid_refreshed = {"KR", "US_NASDAQ"}
     close_handler = AsyncMock()
 
@@ -5874,9 +5828,7 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
             market_states=market_states,
             playbooks=playbooks,
             pre_refresh_playbooks=pre_refresh_playbooks,
-            active_stocks=active_stocks,
-            scan_candidates=scan_candidates,
-            last_scan_time=last_scan_time,
+            tracking_store=tracking_store,
             mid_refreshed=mid_refreshed,
             telegram=MagicMock(),
             context_aggregator=MagicMock(),
@@ -5888,9 +5840,7 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
             market_states=market_states,
             playbooks=playbooks,
             pre_refresh_playbooks=pre_refresh_playbooks,
-            active_stocks=active_stocks,
-            scan_candidates=scan_candidates,
-            last_scan_time=last_scan_time,
+            tracking_store=tracking_store,
             mid_refreshed=mid_refreshed,
             telegram=MagicMock(),
             context_aggregator=MagicMock(),
@@ -5903,13 +5853,12 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
     assert "KR" not in market_states
     assert "KR" not in playbooks
     assert "KR" not in pre_refresh_playbooks
-    assert "KR" not in active_stocks
-    assert "KR" not in scan_candidates
-    assert "KR" not in last_scan_time
+    assert tracking_store.get_snapshot("KR", now_monotonic=3.0) is None
     assert "KR" not in mid_refreshed
     assert "US_NASDAQ" in market_states
     assert "US_NASDAQ" in playbooks
     assert "US_NASDAQ" in mid_refreshed
+    assert tracking_store.get_snapshot("US_NASDAQ", now_monotonic=3.0) is not None
 
 
 @pytest.mark.asyncio
@@ -5917,9 +5866,15 @@ async def test_handle_realtime_market_closures_discards_mid_refreshed_for_closed
     market_states = {"KR": "KRX_REG", "US_NASDAQ": "US_REG"}
     playbooks = {"KR": _make_playbook("KR"), "US_NASDAQ": _make_playbook("US_NASDAQ")}
     pre_refresh_playbooks = {"KR": _make_playbook("KR")}
-    active_stocks = {"KR": ["005930"]}
-    scan_candidates = {"KR": {"005930": MagicMock()}}
-    last_scan_time = {"KR": 1.0}
+    tracking_store = MarketTrackingStore()
+    tracking_store.record_scan_result(
+        market_code="KR",
+        session_id="KRX_REG",
+        candidates=[
+            ScanCandidate("005930", "Samsung", 70000.0, 1.0, 1.0, 50.0, "momentum", 80.0)
+        ],
+        scanned_at=1.0,
+    )
     mid_refreshed = {"KR", "US_NASDAQ"}
 
     with patch("src.main._handle_market_close", new=AsyncMock()):
@@ -5928,9 +5883,7 @@ async def test_handle_realtime_market_closures_discards_mid_refreshed_for_closed
             market_states=market_states,
             playbooks=playbooks,
             pre_refresh_playbooks=pre_refresh_playbooks,
-            active_stocks=active_stocks,
-            scan_candidates=scan_candidates,
-            last_scan_time=last_scan_time,
+            tracking_store=tracking_store,
             mid_refreshed=mid_refreshed,
             telegram=MagicMock(),
             context_aggregator=MagicMock(),
@@ -5949,9 +5902,15 @@ async def test_handle_realtime_market_closures_unknown_market_logs_warning_and_c
     market_states = {"MISSING": "CUSTOM_SESSION"}
     playbooks = {"MISSING": _make_playbook("KR")}
     pre_refresh_playbooks = {"MISSING": _make_playbook("KR")}
-    active_stocks = {"MISSING": ["005930"]}
-    scan_candidates = {"MISSING": {"005930": MagicMock()}}
-    last_scan_time = {"MISSING": 1.0}
+    tracking_store = MarketTrackingStore()
+    tracking_store.record_scan_result(
+        market_code="MISSING",
+        session_id="CUSTOM_SESSION",
+        candidates=[
+            ScanCandidate("005930", "Samsung", 70000.0, 1.0, 1.0, 50.0, "momentum", 80.0)
+        ],
+        scanned_at=1.0,
+    )
     mid_refreshed = {"MISSING"}
 
     with caplog.at_level(logging.WARNING):
@@ -5960,9 +5919,7 @@ async def test_handle_realtime_market_closures_unknown_market_logs_warning_and_c
             market_states=market_states,
             playbooks=playbooks,
             pre_refresh_playbooks=pre_refresh_playbooks,
-            active_stocks=active_stocks,
-            scan_candidates=scan_candidates,
-            last_scan_time=last_scan_time,
+            tracking_store=tracking_store,
             mid_refreshed=mid_refreshed,
             telegram=MagicMock(),
             context_aggregator=MagicMock(),
@@ -5974,9 +5931,7 @@ async def test_handle_realtime_market_closures_unknown_market_logs_warning_and_c
     assert market_states == {}
     assert playbooks == {}
     assert pre_refresh_playbooks == {}
-    assert active_stocks == {}
-    assert scan_candidates == {}
-    assert last_scan_time == {}
+    assert tracking_store.get_snapshot("MISSING", now_monotonic=2.0) is None
     assert mid_refreshed == set()
 
 
@@ -5985,9 +5940,15 @@ async def test_handle_realtime_market_closures_cleans_runtime_state_after_close_
     market_states = {"KR": "KRX_REG"}
     playbooks = {"KR": _make_playbook("KR")}
     pre_refresh_playbooks = {"KR": _make_playbook("KR")}
-    active_stocks = {"KR": ["005930"]}
-    scan_candidates = {"KR": {"005930": MagicMock()}}
-    last_scan_time = {"KR": 1.0}
+    tracking_store = MarketTrackingStore()
+    tracking_store.record_scan_result(
+        market_code="KR",
+        session_id="KRX_REG",
+        candidates=[
+            ScanCandidate("005930", "Samsung", 70000.0, 1.0, 1.0, 50.0, "momentum", 80.0)
+        ],
+        scanned_at=1.0,
+    )
     mid_refreshed = {"KR"}
 
     with patch("src.main._handle_market_close", new=AsyncMock(side_effect=RuntimeError("boom"))):
@@ -5996,9 +5957,7 @@ async def test_handle_realtime_market_closures_cleans_runtime_state_after_close_
             market_states=market_states,
             playbooks=playbooks,
             pre_refresh_playbooks=pre_refresh_playbooks,
-            active_stocks=active_stocks,
-            scan_candidates=scan_candidates,
-            last_scan_time=last_scan_time,
+            tracking_store=tracking_store,
             mid_refreshed=mid_refreshed,
             telegram=MagicMock(),
             context_aggregator=MagicMock(),
@@ -6009,9 +5968,7 @@ async def test_handle_realtime_market_closures_cleans_runtime_state_after_close_
     assert market_states == {}
     assert playbooks == {}
     assert pre_refresh_playbooks == {}
-    assert active_stocks == {}
-    assert scan_candidates == {}
-    assert last_scan_time == {}
+    assert tracking_store.get_snapshot("KR", now_monotonic=2.0) is None
     assert mid_refreshed == set()
 
 
@@ -12907,6 +12864,7 @@ async def test_run_restores_pre_refresh_playbook_when_mid_session_refresh_genera
     telegram.notify_system_start = AsyncMock()
     telegram.notify_system_shutdown = AsyncMock()
     telegram.notify_market_open = AsyncMock()
+    telegram.notify_market_session_transition = AsyncMock()
     telegram.notify_playbook_failed = AsyncMock()
     telegram.notify_playbook_generated = AsyncMock()
     telegram.close = AsyncMock()
@@ -13519,8 +13477,6 @@ async def test_run_forces_rescan_on_market_session_transition_even_after_state_u
 @pytest.mark.asyncio
 async def test_run_session_transition_clears_tracking_cache_before_building_overseas_universe(
 ) -> None:
-    from src.analysis.smart_scanner import ScanCandidate
-
     class _FakeEvent:
         def __init__(self) -> None:
             self._flag = False
@@ -13595,19 +13551,17 @@ async def test_run_session_transition_clears_tracking_cache_before_building_over
     command_handler.start_polling = AsyncMock()
     command_handler.stop_polling = AsyncMock()
 
-    universe_active_stock_snapshots: list[dict[str, list[str]]] = []
+    runtime_fallback_snapshots: list[list[str]] = []
 
     async def _record_universe(
         *,
         db_conn: Any,
         overseas_broker: Any,
         market: Any,
-        active_stocks: dict[str, list[str]],
+        runtime_fallback_stocks: list[str] | None,
     ) -> list[str]:
         del db_conn, overseas_broker, market
-        universe_active_stock_snapshots.append(
-            {code: list(symbols) for code, symbols in active_stocks.items()}
-        )
+        runtime_fallback_snapshots.append(list(runtime_fallback_stocks or []))
         return []
 
     async def _run_once(markets: list[Any], processor: Any) -> None:
@@ -13697,11 +13651,7 @@ async def test_run_session_transition_clears_tracking_cache_before_building_over
 
         await main_module.run(settings)
 
-    assert len(universe_active_stock_snapshots) == 2
-    # Baseline: the first cycle builds the overseas universe before scan results populate cache.
-    assert universe_active_stock_snapshots[0] == {}
-    # Regression target: the second cycle must not inherit the previous session cache.
-    assert universe_active_stock_snapshots[1] == {}
+    assert runtime_fallback_snapshots == [[], []]
 
 
 @pytest.mark.asyncio

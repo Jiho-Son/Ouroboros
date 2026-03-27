@@ -70,6 +70,7 @@ from src.core.kill_switch_runtime import (
     KILL_SWITCH,
     _trigger_emergency_kill_switch,
 )
+from src.core.market_tracking import MarketTrackingSnapshot, MarketTrackingStore
 from src.core.order_helpers import (
     _determine_order_quantity,
     _resolve_buy_suppression_position,
@@ -1294,13 +1295,13 @@ async def build_overseas_symbol_universe(
     db_conn: Any,
     overseas_broker: OverseasBroker,
     market: MarketInfo,
-    active_stocks: dict[str, list[str]],
+    runtime_fallback_stocks: list[str] | None = None,
 ) -> list[str]:
-    """Build dynamic overseas symbol universe from runtime, DB, and holdings."""
+    """Build dynamic overseas symbol universe from same-session runtime, DB, and holdings."""
     symbols: list[str] = []
 
-    # 1) Keep current active stocks first to avoid sudden churn between cycles.
-    symbols.extend(active_stocks.get(market.code, []))
+    # 1) Keep current same-session active stocks first to avoid sudden churn.
+    symbols.extend(runtime_fallback_stocks or [])
 
     # 2) Add recent symbols from own trading history (no fixed list).
     symbols.extend(get_recent_symbols(db_conn, market.code, limit=30))
@@ -2553,7 +2554,7 @@ async def _load_daily_session_market_candidates(
             db_conn=db_conn,
             overseas_broker=overseas_broker,
             market=market,
-            active_stocks={},
+            runtime_fallback_stocks=None,
         )
         if not fallback_stocks:
             logger.debug(
@@ -3984,35 +3985,37 @@ def _clear_realtime_market_runtime_state(
     market_states: dict[str, str],
     playbooks: dict[str, DayPlaybook],
     pre_refresh_playbooks: dict[str, DayPlaybook | None],
-    active_stocks: dict[str, list[str]],
-    scan_candidates: dict[str, dict[str, ScanCandidate]],
-    last_scan_time: dict[str, float],
+    tracking_store: MarketTrackingStore,
     mid_refreshed: set[str],
 ) -> None:
     """Drop per-market realtime state after the market fully closes."""
     market_states.pop(market_code, None)
     playbooks.pop(market_code, None)
     pre_refresh_playbooks.pop(market_code, None)
-    _clear_market_tracking_cache(
-        market_code=market_code,
-        active_stocks=active_stocks,
-        scan_candidates=scan_candidates,
-        last_scan_time=last_scan_time,
-    )
+    cleared_snapshot = tracking_store.clear_market(market_code)
     mid_refreshed.discard(market_code)
+    if cleared_snapshot is not None:
+        logger.info(
+            "Market tracking cleared: market=%s session=%s active=%d candidates=%d",
+            cleared_snapshot.market_code,
+            cleared_snapshot.session_id,
+            cleared_snapshot.active_count,
+            cleared_snapshot.candidate_count,
+        )
 
 
-def _clear_market_tracking_cache(
-    *,
-    market_code: str,
-    active_stocks: dict[str, list[str]],
-    scan_candidates: dict[str, dict[str, ScanCandidate]],
-    last_scan_time: dict[str, float],
-) -> None:
-    """Drop scanner/runtime tracking cache for a single market."""
-    active_stocks.pop(market_code, None)
-    scan_candidates.pop(market_code, None)
-    last_scan_time.pop(market_code, None)
+def _log_market_tracking_snapshot(prefix: str, snapshot: MarketTrackingSnapshot) -> None:
+    """Emit a concise per-market tracking summary for diagnostics."""
+    logger.info(
+        "%s: market=%s session=%s active=%d candidates=%d active_stocks=%s last_scan_age=%.1fs",
+        prefix,
+        snapshot.market_code,
+        snapshot.session_id,
+        snapshot.active_count,
+        snapshot.candidate_count,
+        list(snapshot.active_stocks),
+        snapshot.last_scan_age_seconds or 0.0,
+    )
 
 
 @dataclass(frozen=True)
@@ -4078,45 +4081,13 @@ def _reconcile_market_lifecycle(
         session_changed=session_changed,
     )
 
-
-def _reset_tracking_cache_on_session_transition(
-    *,
-    market_code: str,
-    session_changed: bool,
-    active_stocks: dict[str, list[str]],
-    scan_candidates: dict[str, dict[str, ScanCandidate]],
-    last_scan_time: dict[str, float],
-) -> bool:
-    """Drop stale tracking cache when the market session identity changes."""
-    if not session_changed:
-        return False
-
-    had_cache = any(
-        market_code in cache
-        for cache in (
-            active_stocks,
-            scan_candidates,
-            last_scan_time,
-        )
-    )
-    _clear_market_tracking_cache(
-        market_code=market_code,
-        active_stocks=active_stocks,
-        scan_candidates=scan_candidates,
-        last_scan_time=last_scan_time,
-    )
-    return had_cache
-
-
 async def _handle_realtime_market_closures(
     *,
     current_open_markets: list[MarketInfo],
     market_states: dict[str, str],
     playbooks: dict[str, DayPlaybook],
     pre_refresh_playbooks: dict[str, DayPlaybook | None],
-    active_stocks: dict[str, list[str]],
-    scan_candidates: dict[str, dict[str, ScanCandidate]],
-    last_scan_time: dict[str, float],
+    tracking_store: MarketTrackingStore,
     mid_refreshed: set[str],
     telegram: TelegramClient,
     context_aggregator: ContextAggregator,
@@ -4155,9 +4126,7 @@ async def _handle_realtime_market_closures(
                 market_states=market_states,
                 playbooks=playbooks,
                 pre_refresh_playbooks=pre_refresh_playbooks,
-                active_stocks=active_stocks,
-                scan_candidates=scan_candidates,
-                last_scan_time=last_scan_time,
+                tracking_store=tracking_store,
                 mid_refreshed=mid_refreshed,
             )
             continue
@@ -4180,9 +4149,7 @@ async def _handle_realtime_market_closures(
             market_states=market_states,
             playbooks=playbooks,
             pre_refresh_playbooks=pre_refresh_playbooks,
-            active_stocks=active_stocks,
-            scan_candidates=scan_candidates,
-            last_scan_time=last_scan_time,
+            tracking_store=tracking_store,
             mid_refreshed=mid_refreshed,
         )
 
@@ -4253,9 +4220,7 @@ async def _handle_realtime_market_session_transition(
     event: MarketLifecycleEvent,
     market_states: dict[str, str],
     playbooks: dict[str, DayPlaybook],
-    active_stocks: dict[str, list[str]],
-    scan_candidates: dict[str, dict[str, ScanCandidate]],
-    last_scan_time: dict[str, float],
+    tracking_store: MarketTrackingStore,
     telegram: TelegramClient,
 ) -> None:
     """Emit session-transition side effects for an already-open market."""
@@ -4279,16 +4244,15 @@ async def _handle_realtime_market_session_transition(
             event.market_code,
             event.current_session_id,
         )
-    if _reset_tracking_cache_on_session_transition(
-        market_code=event.market_code,
-        session_changed=True,
-        active_stocks=active_stocks,
-        scan_candidates=scan_candidates,
-        last_scan_time=last_scan_time,
-    ):
+    tracking_result = tracking_store.ensure_market_session(
+        event.market_code,
+        event.current_session_id,
+    )
+    if tracking_result.action == "rolled_over":
         logger.info(
-            "Session transition cleared tracking cache for %s session=%s",
+            "Session transition rolled tracking store for %s previous=%s current=%s",
             event.market_code,
+            tracking_result.previous_session_id,
             event.current_session_id,
         )
     market_name = event.market.name if event.market is not None else event.market_code
@@ -4507,7 +4471,10 @@ async def _run_evolution_loop(
         logger.warning("Evolution notification failed on %s: %s", market_date, exc)
 
 
-def _start_dashboard_server(settings: Settings) -> threading.Thread | None:
+def _start_dashboard_server(
+    settings: Settings,
+    runtime_status_provider: Callable[[], dict[str, dict[str, Any]]] | None = None,
+) -> threading.Thread | None:
     """Start FastAPI dashboard in a daemon thread when enabled."""
     if not settings.DASHBOARD_ENABLED:
         return None
@@ -4528,7 +4495,11 @@ def _start_dashboard_server(settings: Settings) -> threading.Thread | None:
 
             from src.dashboard import create_dashboard_app
 
-            app = create_dashboard_app(settings.DB_PATH, mode=settings.MODE)
+            app = create_dashboard_app(
+                settings.DB_PATH,
+                mode=settings.MODE,
+                runtime_status_provider=runtime_status_provider,
+            )
             uvicorn.run(
                 app,
                 host=settings.DASHBOARD_HOST,
@@ -4995,11 +4966,7 @@ async def run(settings: Settings) -> None:
         settings=settings,
     )
 
-    # Track scan candidates per market for selection context logging
-    scan_candidates: dict[str, dict[str, ScanCandidate]] = {}  # market -> {stock_code -> candidate}
-
-    # Active stocks per market (dynamically discovered by scanner)
-    active_stocks: dict[str, list[str]] = {}  # market_code -> [stock_codes]
+    tracking_store = MarketTrackingStore()
 
     # BUY cooldown: prevents retrying a stock rejected for insufficient balance
     buy_cooldown: dict[str, float] = {}  # "{market_code}:{stock_code}" -> expiry timestamp
@@ -5017,10 +4984,10 @@ async def run(settings: Settings) -> None:
         low_volatility_threshold=30.0,
     )
     priority_queue = PriorityTaskQueue(max_size=1000)
-    _start_dashboard_server(settings)
-
-    # Track last scan time for each market
-    last_scan_time: dict[str, float] = {}
+    _start_dashboard_server(
+        settings,
+        runtime_status_provider=tracking_store.dashboard_status_payload,
+    )
 
     # Track market open/close state for notifications
     _market_states: dict[str, str] = {}  # market_code -> session_id
@@ -5218,9 +5185,7 @@ async def run(settings: Settings) -> None:
                     market_states=_market_states,
                     playbooks=playbooks,
                     pre_refresh_playbooks=_pre_refresh_playbooks,
-                    active_stocks=active_stocks,
-                    scan_candidates=scan_candidates,
-                    last_scan_time=last_scan_time,
+                    tracking_store=tracking_store,
                     mid_refreshed=mid_refreshed,
                     telegram=telegram,
                     context_aggregator=context_aggregator,
@@ -5239,9 +5204,7 @@ async def run(settings: Settings) -> None:
                         event=event,
                         market_states=_market_states,
                         playbooks=playbooks,
-                        active_stocks=active_stocks,
-                        scan_candidates=scan_candidates,
-                        last_scan_time=last_scan_time,
+                        tracking_store=tracking_store,
                         telegram=telegram,
                     )
                 session_transition_markets = {
@@ -5275,6 +5238,7 @@ async def run(settings: Settings) -> None:
                         return
 
                     session_info = current_market_session_info[market.code]
+                    tracking_store.ensure_market_session(market.code, session_info.session_id)
                     _session_risk_overrides(market=market, settings=settings)
                     logger.info(
                         "Market session active: %s (%s) session=%s",
@@ -5358,7 +5322,13 @@ async def run(settings: Settings) -> None:
 
                     # Smart Scanner: dynamic stock discovery (no static watchlists)
                     now_timestamp = asyncio.get_event_loop().time()
-                    last_scan = last_scan_time.get(market.code, 0.0)
+                    last_scan = (
+                        tracking_store.last_scan_monotonic(
+                            market.code,
+                            session_info.session_id,
+                        )
+                        or 0.0
+                    )
                     rescan_interval = settings.RESCAN_INTERVAL_SECONDS
                     if _should_rescan_market(
                         last_scan=last_scan,
@@ -5375,7 +5345,10 @@ async def run(settings: Settings) -> None:
                                     db_conn=db_conn,
                                     overseas_broker=overseas_broker,
                                     market=market,
-                                    active_stocks=active_stocks,
+                                    runtime_fallback_stocks=tracking_store.runtime_fallback_stocks(
+                                        market.code,
+                                        session_info.session_id,
+                                    ),
                                 )
                                 if not fallback_stocks:
                                     logger.debug(
@@ -5390,10 +5363,12 @@ async def run(settings: Settings) -> None:
                             )
 
                             if candidates:
-                                active_stocks[market.code] = smart_scanner.get_stock_codes(
-                                    candidates
+                                tracking_snapshot = tracking_store.record_scan_result(
+                                    market_code=market.code,
+                                    session_id=session_info.session_id,
+                                    candidates=candidates,
+                                    scanned_at=now_timestamp,
                                 )
-                                scan_candidates[market.code] = {c.stock_code: c for c in candidates}
 
                                 logger.info(
                                     "Smart Scanner: Found %d candidates for %s: %s",
@@ -5401,7 +5376,10 @@ async def run(settings: Settings) -> None:
                                     market.name,
                                     [f"{c.stock_code}(RSI={c.rsi:.0f})" for c in candidates],
                                 )
-
+                                _log_market_tracking_snapshot(
+                                    "Market tracking summary",
+                                    tracking_snapshot,
+                                )
                                 market_today = datetime.now(market.timezone).date()
                                 if market.code not in playbooks:
                                     selection_intent = (
@@ -5516,14 +5494,22 @@ async def run(settings: Settings) -> None:
                                 logger.info(
                                     "Smart Scanner: No candidates for %s — no trades", market.name
                                 )
-                                active_stocks[market.code] = []
-
-                            last_scan_time[market.code] = now_timestamp
+                                _log_market_tracking_snapshot(
+                                    "Market tracking summary",
+                                    tracking_store.record_empty_scan(
+                                        market_code=market.code,
+                                        session_id=session_info.session_id,
+                                        scanned_at=now_timestamp,
+                                    ),
+                                )
 
                         except Exception as exc:
                             logger.error("Smart Scanner failed for %s: %s", market.name, exc)
 
-                    scanner_codes = active_stocks.get(market.code, [])
+                    scanner_codes = tracking_store.runtime_fallback_stocks(
+                        market.code,
+                        session_info.session_id,
+                    )
                     try:
                         if market.is_domestic:
                             held_balance = await broker.get_balance()
@@ -5558,6 +5544,7 @@ async def run(settings: Settings) -> None:
                         return
 
                     logger.info("Processing market: %s (%d stocks)", market.name, len(stock_codes))
+                    scan_candidates = tracking_store.scan_candidates_snapshot()
 
                     for stock_code in stock_codes:
                         if shutdown.is_set():

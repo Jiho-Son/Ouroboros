@@ -13,11 +13,16 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 
 
-def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
+def create_dashboard_app(
+    db_path: str,
+    mode: str = "paper",
+    runtime_status_provider: Any | None = None,
+) -> FastAPI:
     """Create dashboard FastAPI app bound to a SQLite database path."""
     app = FastAPI(title="The Ouroboros Dashboard", version="1.0.0")
     app.state.db_path = db_path
     app.state.mode = mode
+    app.state.runtime_status_provider = runtime_status_provider
 
     @app.get("/")
     def index() -> FileResponse:
@@ -27,6 +32,8 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
     @app.get("/api/status")
     def get_status() -> dict[str, Any]:
         today = datetime.now(UTC).date().isoformat()
+        provider = app.state.runtime_status_provider
+        runtime_status = provider() if provider is not None else {}
         with _connect(db_path) as conn:
             trade_rows = {
                 row["market"]: row
@@ -174,6 +181,7 @@ def create_dashboard_app(db_path: str, mode: str = "paper") -> FastAPI:
                         decision_count=decision_count,
                         playbook_status=playbook_rows.get(market),
                     ),
+                    "runtime_tracking": runtime_status.get(market),
                 }
                 total_trades += market_status[market]["trade_count"]
                 total_pnl += market_status[market]["total_pnl"]
