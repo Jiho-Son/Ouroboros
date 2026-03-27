@@ -1031,3 +1031,11 @@
 - next_ticket: OOR-869
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: `tests/test_main.py` 에 `_register_post_buy_for_hard_stop` 의 `stop_loss_threshold` 양수/0 입력 fallback 경계를 TDD로 고정하고, PR #873 리뷰 제안(comment ID 2993097892)을 재현 신호와 함께 검증한다.
+
+### 2026-03-27 | session=codex-oor-869-finalize
+- branch: feature/issue-869-hard-stop-threshold-boundary
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-869, PR #883
+- next_ticket: OOR-869
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 현재 HEAD `e5d60f1` 에 테스트 추가와 PR #883 가 이미 존재하므로, 이번 세션은 strict gate 재통과, 로컬 검증 fresh run, workpad/PR 메타데이터 현실화, Human Review 전이 조건 충족 여부 확정에 집중한다.
