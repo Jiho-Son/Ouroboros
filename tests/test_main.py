@@ -13245,7 +13245,6 @@ async def test_run_reuses_stored_regular_session_playbook_after_restart() -> Non
     overseas_broker.get_overseas_balance = AsyncMock(return_value={"output1": []})
 
     playbook_store = MagicMock()
-    playbook_store.load_latest = MagicMock(return_value=None)
     playbook_store.load_latest_entry = MagicMock(
         return_value=StoredPlaybookEntry(
             playbook=stored_playbook,

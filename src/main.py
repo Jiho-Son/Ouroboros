@@ -4420,6 +4420,7 @@ def _should_refresh_cached_playbook_on_session_transition(
     *, session_changed: bool, market_code: str, session_id: str
 ) -> bool:
     """Return True when session transition requires dropping cached playbook."""
+    # Retained for call-site compatibility; policy now keys only off transition.
     del market_code, session_id
     return session_changed
 

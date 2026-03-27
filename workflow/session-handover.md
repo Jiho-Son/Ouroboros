@@ -959,3 +959,11 @@
 - next_ticket: OOR-863
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: `DayPlaybook` identity가 session-aware 하지 않아 restart 시 잘못된 playbook 재사용 가능성을 먼저 재현하고, persistence schema/API/selection policy를 migration 포함 TDD로 정합화한다.
+
+### 2026-03-27 | session=codex-pr880-review-followup
+- branch: feature/issue-863-session-playbook-policy
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-863, PR #880
+- next_ticket: OOR-863
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #880 리뷰 코멘트를 코드/테스트/PR 본문과 대조해 실제 정책 확장 여부를 확인하고, 설명-구현 불일치를 정리한 뒤 불필요한 테스트 mock 과 unused parameter 의도를 함께 정리한다.
