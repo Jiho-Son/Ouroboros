@@ -12891,7 +12891,6 @@ async def test_run_restores_pre_refresh_playbook_when_mid_session_refresh_genera
     overseas_broker.get_overseas_balance = AsyncMock(return_value={"output1": []})
 
     playbook_store = MagicMock()
-    playbook_store.load_latest = MagicMock(return_value=None)
     playbook_store.load_latest_entry = MagicMock(return_value=None)
     playbook_store.load = MagicMock(return_value=None)
 
@@ -13068,7 +13067,6 @@ async def test_run_regenerates_playbook_on_us_regular_session_transition() -> No
     overseas_broker.get_overseas_balance = AsyncMock(return_value={"output1": []})
 
     playbook_store = MagicMock()
-    playbook_store.load_latest = MagicMock(return_value=None)
     playbook_store.load_latest_entry = MagicMock(return_value=None)
     playbook_store.load = MagicMock(return_value=None)
 
