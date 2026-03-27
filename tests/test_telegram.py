@@ -155,6 +155,30 @@ class TestNotificationSending:
             assert "92%" in payload["text"]
 
     @pytest.mark.asyncio
+    async def test_market_session_transition_format(self) -> None:
+        """Session transition notification has expected fields."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("aiohttp.ClientSession.post", return_value=mock_resp) as mock_post:
+            await client.notify_market_session_transition(
+                market_name="NASDAQ",
+                market_code="US_NASDAQ",
+                previous_session_id="US_PRE",
+                current_session_id="US_REG",
+            )
+
+            payload = mock_post.call_args.kwargs["json"]
+            assert "Market Session Transition" in payload["text"]
+            assert "NASDAQ" in payload["text"]
+            assert "US_NASDAQ" in payload["text"]
+            assert "US_PRE -> US_REG" in payload["text"]
+
+    @pytest.mark.asyncio
     async def test_playbook_generated_format(self) -> None:
         """Playbook generated notification has expected fields."""
         client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
@@ -556,7 +580,7 @@ class TestNotificationFilter:
 
     @pytest.mark.asyncio
     async def test_market_open_close_filtered_does_not_send(self) -> None:
-        """notify_market_open/close skip send when market_open_close=False."""
+        """Market lifecycle notifications skip send when market_open_close=False."""
         nf = NotificationFilter(market_open_close=False)
         client = TelegramClient(
             bot_token="123:abc", chat_id="456", enabled=True, notification_filter=nf
@@ -564,6 +588,12 @@ class TestNotificationFilter:
         with patch("aiohttp.ClientSession.post") as mock_post:
             await client.notify_market_open("Korea")
             await client.notify_market_close("Korea", pnl_pct=1.5)
+            await client.notify_market_session_transition(
+                market_name="NASDAQ",
+                market_code="US_NASDAQ",
+                previous_session_id="US_PRE",
+                current_session_id="US_REG",
+            )
             mock_post.assert_not_called()
 
     @pytest.mark.asyncio

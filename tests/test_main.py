@@ -1753,7 +1753,7 @@ class TestRealtimeSessionStateHelpers:
 
     def test_has_market_session_transition_when_state_missing(self) -> None:
         states: dict[str, str] = {}
-        assert _has_market_session_transition(states, "US_NASDAQ", "US_REG")
+        assert not _has_market_session_transition(states, "US_NASDAQ", "US_REG")
 
     def test_has_market_session_transition_when_session_changes(self) -> None:
         states = {"US_NASDAQ": "US_PRE"}
@@ -1778,6 +1778,30 @@ class TestRealtimeSessionStateHelpers:
             rescan_interval=300.0,
             session_changed=False,
         )
+
+    def test_reconcile_market_lifecycle_separates_open_close_and_session_transition(
+        self,
+    ) -> None:
+        diff = main_module._reconcile_market_lifecycle(
+            previous_market_states={
+                "KR": "KRX_REG",
+                "US_NASDAQ": "US_PRE",
+            },
+            current_market_sessions={
+                "US_NASDAQ": "US_REG",
+                "US_NYSE": "US_PRE",
+            },
+            current_markets={
+                "US_NASDAQ": MARKETS["US_NASDAQ"],
+                "US_NYSE": MARKETS["US_NYSE"],
+            },
+        )
+
+        assert [event.market_code for event in diff.opened] == ["US_NYSE"]
+        assert [event.market_code for event in diff.closed] == ["KR"]
+        assert [event.market_code for event in diff.session_changed] == ["US_NASDAQ"]
+        assert diff.session_changed[0].previous_session_id == "US_PRE"
+        assert diff.session_changed[0].current_session_id == "US_REG"
 
     def test_should_reuse_stored_playbook_false_for_kr_regular_session(self) -> None:
         assert not _should_reuse_stored_playbook(market_code="KR", session_id="KRX_REG")
@@ -13402,6 +13426,163 @@ async def test_run_closes_removed_market_while_other_market_stays_open() -> None
     telegram.return_value.notify_market_open.assert_any_await(MARKETS["KR"].name)
     telegram.return_value.notify_market_open.assert_any_await(MARKETS["US_NASDAQ"].name)
     assert telegram.return_value.notify_market_open.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_run_realtime_mode_reconciles_close_and_session_transition_independently() -> None:
+    class _FakeEvent:
+        def __init__(self) -> None:
+            self._flag = False
+
+        def is_set(self) -> bool:
+            return self._flag
+
+        def set(self) -> None:
+            self._flag = True
+
+        def clear(self) -> None:
+            self._flag = False
+
+        async def wait(self) -> None:
+            return None
+
+    settings = _make_settings(TRADE_MODE="realtime", ENABLED_MARKETS="KR,US_NASDAQ")
+    shutdown_event = _FakeEvent()
+    pause_event = _FakeEvent()
+    pause_event.set()
+    cycle_count = {"count": 0}
+
+    broker = MagicMock()
+    broker.close = AsyncMock()
+    broker.get_balance = AsyncMock(return_value={"output1": [], "output2": []})
+    overseas_broker = MagicMock()
+    overseas_broker.close = AsyncMock()
+    overseas_broker.get_overseas_balance = AsyncMock(return_value={"output1": []})
+
+    lifecycle_inputs = iter(
+        [
+            (
+                [MARKETS["KR"], MARKETS["US_NASDAQ"]],
+                {"KR": "KRX_REG", "US_NASDAQ": "US_PRE"},
+            ),
+            (
+                [MARKETS["US_NASDAQ"]],
+                {"US_NASDAQ": "US_REG"},
+            ),
+            (
+                [MARKETS["US_NASDAQ"]],
+                {"US_NASDAQ": "US_REG"},
+            ),
+        ]
+    )
+    current_sessions: dict[str, str] = {}
+
+    def _next_open_markets(*args: Any, **kwargs: Any) -> list[Any]:
+        markets, sessions = next(lifecycle_inputs)
+        current_sessions.clear()
+        current_sessions.update(sessions)
+        return markets
+
+    def _current_session_info(market: Any) -> Any:
+        return MagicMock(session_id=current_sessions[market.code])
+
+    async def _run_once(markets: list[Any], processor: Any) -> None:
+        for item in markets:
+            await processor(item)
+        cycle_count["count"] += 1
+        if cycle_count["count"] >= 3:
+            shutdown_event.set()
+
+    close_handler = AsyncMock()
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("src.main.asyncio.Event", side_effect=[shutdown_event, pause_event])
+        )
+        stack.enter_context(
+            patch(
+                "src.main.asyncio.get_running_loop",
+                return_value=MagicMock(add_signal_handler=MagicMock()),
+            )
+        )
+        stack.enter_context(patch("src.main.KISBroker", return_value=broker))
+        stack.enter_context(patch("src.main.OverseasBroker", return_value=overseas_broker))
+        stack.enter_context(patch("src.main.DecisionEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.RiskManager", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.init_db", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DecisionLogger", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextAggregator", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextScheduler", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.EvolutionOptimizer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextSelector", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ScenarioEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PlaybookStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DailyReviewer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PreMarketPlanner", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.NotificationFilter", return_value=MagicMock()))
+        telegram = stack.enter_context(
+            patch(
+                "src.main.TelegramClient",
+                return_value=MagicMock(
+                    notify_system_start=AsyncMock(),
+                    notify_system_shutdown=AsyncMock(),
+                    notify_market_open=AsyncMock(),
+                    notify_market_session_transition=AsyncMock(),
+                    close=AsyncMock(),
+                ),
+            )
+        )
+        command_handler = MagicMock(
+            register_command=MagicMock(),
+            register_command_with_args=MagicMock(),
+            start_polling=AsyncMock(),
+            stop_polling=AsyncMock(),
+        )
+        stack.enter_context(patch("src.main.TelegramCommandHandler", return_value=command_handler))
+        smart_scanner = MagicMock()
+        smart_scanner.get_stock_codes = MagicMock(return_value=[])
+        smart_scanner.scan = AsyncMock(return_value=[])
+        stack.enter_context(patch("src.main.SmartVolatilityScanner", return_value=smart_scanner))
+        stack.enter_context(patch("src.main.CriticalityAssessor", return_value=MagicMock()))
+        stack.enter_context(
+            patch(
+                "src.main.PriorityTaskQueue",
+                return_value=MagicMock(
+                    get_metrics=AsyncMock(return_value=MagicMock(total_enqueued=0))
+                ),
+            )
+        )
+        stack.enter_context(patch("src.main._start_dashboard_server"))
+        stack.enter_context(patch("src.main.sync_positions_from_broker", new=AsyncMock()))
+        stack.enter_context(patch("src.main.process_blackout_recovery_orders", new=AsyncMock()))
+        stack.enter_context(patch("src.main.handle_domestic_pending_orders", new=AsyncMock()))
+        stack.enter_context(patch("src.main.handle_overseas_pending_orders", new=AsyncMock()))
+        stack.enter_context(
+            patch("src.main.build_overseas_symbol_universe", new=AsyncMock(return_value=[]))
+        )
+        stack.enter_context(patch("src.main.get_open_markets", side_effect=_next_open_markets))
+        stack.enter_context(patch("src.main._acquire_live_runtime_lock", return_value=None))
+        stack.enter_context(patch("src.main.get_session_info", side_effect=_current_session_info))
+        stack.enter_context(patch("src.main._should_mid_session_refresh", return_value=False))
+        stack.enter_context(patch("src.main._should_rescan_market", return_value=False))
+        stack.enter_context(patch("src.main._run_markets_in_parallel", side_effect=_run_once))
+        stack.enter_context(patch("src.main.trading_cycle", new=AsyncMock()))
+        stack.enter_context(patch("src.main._handle_market_close", new=close_handler))
+
+        await main_module.run(settings)
+
+    close_handler.assert_awaited_once()
+    assert close_handler.await_args.kwargs["market_code"] == "KR"
+    telegram.return_value.notify_market_open.assert_any_await(MARKETS["KR"].name)
+    telegram.return_value.notify_market_open.assert_any_await(MARKETS["US_NASDAQ"].name)
+    assert telegram.return_value.notify_market_open.await_count == 2
+    telegram.return_value.notify_market_session_transition.assert_awaited_once_with(
+        market_name=MARKETS["US_NASDAQ"].name,
+        market_code="US_NASDAQ",
+        previous_session_id="US_PRE",
+        current_session_id="US_REG",
+    )
 
 
 @pytest.mark.asyncio

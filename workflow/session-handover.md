@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-03-27 | session=codex-oor-862-start
+- branch: feature/issue-862-market-lifecycle-reconciler
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-858, OOR-861, OOR-862
+- next_ticket: OOR-862
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: market lifecycle를 전역 open_markets 존재 여부 대신 per-market diff로 재구성하며, close/session transition/stale runtime cleanup 트리거를 분리 검증한다.
+
 ### 2026-03-27 | session=codex-issue860-review-followup
 - branch: feature/issue-860-playbook-session-identity
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -927,3 +935,11 @@
 - next_ticket: OOR-861
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #878 review 지적을 코드/테스트/문서와 대조해 불필요한 helper 제거 여부와 회귀 테스트 신호를 재평가하고, 타당한 항목만 반영한 뒤 검증·push·PR 코멘트까지 같은 세션에서 마무리한다.
+
+### 2026-03-27 | session=codex-oor-862-start
+- branch: feature/issue-862-market-lifecycle-reconciler
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-858, OOR-861, OOR-862
+- next_ticket: OOR-862
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: market lifecycle를 전역 open_markets 존재 여부 대신 per-market diff로 재구성하며, close/session transition/stale runtime cleanup 트리거를 분리 검증한다.

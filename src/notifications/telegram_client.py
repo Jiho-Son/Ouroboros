@@ -293,6 +293,34 @@ class TelegramClient:
             NotificationMessage(priority=NotificationPriority.LOW, message=message)
         )
 
+    async def notify_market_session_transition(
+        self,
+        *,
+        market_name: str,
+        market_code: str,
+        previous_session_id: str,
+        current_session_id: str,
+    ) -> None:
+        """
+        Notify market session transition for an already-open market.
+
+        Args:
+            market_name: Human-readable market name
+            market_code: Internal market code
+            previous_session_id: Previous active session ID
+            current_session_id: Current active session ID
+        """
+        if not self._filter.market_open_close:
+            return
+        message = (
+            f"<b>Market Session Transition</b>\n"
+            f"{market_name} ({market_code})\n"
+            f"{previous_session_id} -> {current_session_id}"
+        )
+        await self._send_notification(
+            NotificationMessage(priority=NotificationPriority.LOW, message=message)
+        )
+
     async def notify_market_close(self, market_name: str, pnl_pct: float) -> None:
         """
         Notify market closing.
