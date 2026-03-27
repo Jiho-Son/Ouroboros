@@ -4096,6 +4096,8 @@ async def _handle_realtime_market_closures(
 ) -> None:
     """Handle markets that were previously open but are absent from the current open set."""
     if closed_events is None:
+        # Keep the legacy diff fallback for direct helper callers and focused tests that
+        # only provide the current open-market snapshot.
         current_open_codes = {market.code for market in current_open_markets}
         closed_events = tuple(
             MarketLifecycleEvent(
@@ -5195,6 +5197,9 @@ async def run(settings: Settings) -> None:
                         last_scan_time=last_scan_time,
                         telegram=telegram,
                     )
+                session_transition_markets = {
+                    event.market_code for event in lifecycle_diff.session_changed
+                }
 
                 if not open_markets:
                     # No markets open — wait until next market opens
@@ -5238,12 +5243,7 @@ async def run(settings: Settings) -> None:
                         settings=settings,
                     )
 
-                    # get_session_info() wraps classify_session_id(), which always returns
-                    # a concrete non-empty session ID for supported markets, so session
-                    # transition checks can compare the raw string without extra truthy guards.
-                    session_changed = _has_market_session_transition(
-                        _market_states, market.code, session_info.session_id
-                    )
+                    session_changed = market.code in session_transition_markets
 
                     # Mid-session playbook refresh (12:00 현지 시각)
                     now_utc = datetime.now(UTC)
