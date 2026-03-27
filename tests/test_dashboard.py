@@ -372,6 +372,40 @@ def test_status_endpoint_returns_market_operating_summary(tmp_path: Path) -> Non
     assert us["status_tone"] == "tripped"
 
 
+def test_status_endpoint_includes_runtime_tracking_diagnostics_when_provider_is_present(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "dashboard_runtime_tracking.db"
+    conn = init_db(str(db_path))
+    _seed_db(conn)
+    conn.close()
+
+    app = create_dashboard_app(
+        str(db_path),
+        runtime_status_provider=lambda: {
+            "KR": {
+                "session_id": "KRX_REG",
+                "active_count": 2,
+                "active_stocks": ["005930", "000660"],
+                "candidate_count": 2,
+                "candidate_codes": ["005930", "000660"],
+                "last_scan_age_seconds": 8.5,
+            }
+        },
+    )
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+
+    assert body["markets"]["KR"]["runtime_tracking"] == {
+        "session_id": "KRX_REG",
+        "active_count": 2,
+        "active_stocks": ["005930", "000660"],
+        "candidate_count": 2,
+        "candidate_codes": ["005930", "000660"],
+        "last_scan_age_seconds": 8.5,
+    }
+
+
 def test_status_endpoint_excludes_stale_markets_without_today_activity_or_positions(
     tmp_path: Path,
 ) -> None:
