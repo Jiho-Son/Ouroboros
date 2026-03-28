@@ -1111,3 +1111,11 @@
 - next_ticket: OOR-871
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: 기존 workpad와 PR #885가 있으므로, 현재 HEAD/PR 상태를 다시 동기화하고 composite-key cleanup 미구현 지점을 재확인한 뒤 TDD로 close/예외 경로 stale 엔트리 정리를 마무리한다.
+
+### 2026-03-28 | session=codex-oor-871-pr885-review-address
+- branch: feature/issue-871-market-close-composite-cache-cleanup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-871 In Progress 상태, PR #885 review 코멘트
+- next_ticket: OOR-871
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #885의 actionable review는 async test loop API 교체 1건이며, optional nit 2건은 현재 코드/테스트와 대조 후 필요 시 함께 반영하고 검증 증적과 함께 PR 코멘트로 남긴다.

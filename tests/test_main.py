@@ -5807,6 +5807,7 @@ async def test_handle_market_close_skips_evolution_for_kr() -> None:
 @pytest.mark.asyncio
 async def test_handle_realtime_market_closures_closes_removed_market_once_and_cleans_cache(
 ) -> None:
+    loop = asyncio.get_running_loop()
     market_states = {"KR": "KRX_REG", "US_NASDAQ": "US_REG"}
     playbooks = {"KR": _make_playbook("KR"), "US_NASDAQ": _make_playbook("US_NASDAQ")}
     pre_refresh_playbooks = {
@@ -5814,8 +5815,8 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
         "US_NASDAQ": _make_playbook("US_NASDAQ"),
     }
     buy_cooldown = {
-        "KR:005930": asyncio.get_event_loop().time() + 600,
-        "US_NASDAQ:AAPL": asyncio.get_event_loop().time() + 600,
+        "KR:005930": loop.time() + 600,
+        "US_NASDAQ:AAPL": loop.time() + 600,
     }
     sell_resubmit_counts = {
         "KR:005930": 2,
@@ -5928,10 +5929,11 @@ async def test_handle_realtime_market_closures_discards_mid_refreshed_for_closed
 async def test_handle_realtime_market_closures_unknown_market_logs_warning_and_cleans_runtime_state(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    loop = asyncio.get_running_loop()
     market_states = {"MISSING": "CUSTOM_SESSION"}
     playbooks = {"MISSING": _make_playbook("KR")}
     pre_refresh_playbooks = {"MISSING": _make_playbook("KR")}
-    buy_cooldown = {"MISSING:005930": asyncio.get_event_loop().time() + 600}
+    buy_cooldown = {"MISSING:005930": loop.time() + 600}
     sell_resubmit_counts = {"CUSTOM:005930": 2, "BUY:CUSTOM:005930": 1}
     tracking_store = MarketTrackingStore()
     tracking_store.record_scan_result(
@@ -5976,10 +5978,11 @@ async def test_handle_realtime_market_closures_unknown_market_logs_warning_and_c
 
 @pytest.mark.asyncio
 async def test_handle_realtime_market_closures_cleans_runtime_state_after_close_failure() -> None:
+    loop = asyncio.get_running_loop()
     market_states = {"KR": "KRX_REG"}
     playbooks = {"KR": _make_playbook("KR")}
     pre_refresh_playbooks = {"KR": _make_playbook("KR")}
-    buy_cooldown = {"KR:005930": asyncio.get_event_loop().time() + 600}
+    buy_cooldown = {"KR:005930": loop.time() + 600}
     sell_resubmit_counts = {"KR:005930": 2, "BUY:KR:005930": 1}
     tracking_store = MarketTrackingStore()
     tracking_store.record_scan_result(

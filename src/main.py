@@ -4001,8 +4001,9 @@ def _clear_realtime_market_runtime_state(
     mid_refreshed.discard(market_code)
     market_prefix = f"{market_code.strip().upper()}:"
     if buy_cooldown is not None:
-        for key in [key for key in buy_cooldown if key.upper().startswith(market_prefix)]:
-            buy_cooldown.pop(key, None)
+        stale_buy_keys = [key for key in buy_cooldown if key.upper().startswith(market_prefix)]
+        for key in stale_buy_keys:
+            del buy_cooldown[key]
 
     if sell_resubmit_counts is not None:
         if market_info is None:
@@ -4016,12 +4017,13 @@ def _clear_realtime_market_runtime_state(
                 market_code if market_info.is_domestic else market_info.exchange_code
             ).strip().upper()
             sell_prefixes = (f"{sell_market_key}:", f"BUY:{sell_market_key}:")
-            for key in [
+            stale_sell_keys = [
                 key
                 for key in sell_resubmit_counts
                 if any(key.upper().startswith(prefix) for prefix in sell_prefixes)
-            ]:
-                sell_resubmit_counts.pop(key, None)
+            ]
+            for key in stale_sell_keys:
+                del sell_resubmit_counts[key]
 
     if cleared_snapshot is not None:
         logger.info(
