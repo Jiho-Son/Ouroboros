@@ -1063,3 +1063,11 @@
 - next_ticket: OOR-869
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: Linear 상태가 `Merging` 이므로 기존 구현 변경 없이 PR #883 의 mergeability, 잔여 리뷰 코멘트, checks, squash merge, merge 후 `Done` 전이만 현재 HEAD 기준으로 끝까지 확인한다.
+
+### 2026-03-28 | session=codex-oor-870-start
+- branch: feature/issue-870-dashboard-country-grouping
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-870
+- next_ticket: OOR-870
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 미국 거래소 표시를 국가 단위 `US` 로 통합하는 티켓이므로, 먼저 대시보드의 현재 국가/거래소 집계 경로를 재현하고 테스트로 고정한 뒤 최소 수정으로 UI/데이터 표현을 정합화한다.

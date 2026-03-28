@@ -172,6 +172,98 @@ def _seed_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _seed_group_us_market_fixture(conn: sqlite3.Connection) -> None:
+    today = datetime.now(UTC).date().isoformat()
+    decisions = [
+        ("d-kr-1", f"{today}T09:10:00+00:00", "005930", "KR", "KRX", "KRX_REG", "BUY", 2.0),
+        (
+            "d-us-nasdaq-1",
+            f"{today}T13:10:00+00:00",
+            "AAPL",
+            "US_NASDAQ",
+            "NASDAQ",
+            "US_REG",
+            "BUY",
+            1.0,
+        ),
+        (
+            "d-us-nyse-1",
+            f"{today}T13:20:00+00:00",
+            "IBM",
+            "US_NYSE",
+            "NYSE",
+            "US_REG",
+            "BUY",
+            -0.5,
+        ),
+        (
+            "d-us-amex-1",
+            f"{today}T13:30:00+00:00",
+            "SPY",
+            "US_AMEX",
+            "AMEX",
+            "US_REG",
+            "BUY",
+            0.25,
+        ),
+    ]
+    for (
+        decision_id,
+        timestamp,
+        stock_code,
+        market,
+        exchange_code,
+        session_id,
+        action,
+        pnl,
+    ) in decisions:
+        conn.execute(
+            """
+            INSERT INTO decision_logs (
+                decision_id, timestamp, stock_code, market, exchange_code,
+                session_id, action, confidence, rationale, context_snapshot, input_data
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                decision_id,
+                timestamp,
+                stock_code,
+                market,
+                exchange_code,
+                session_id,
+                action,
+                80,
+                "group us repro",
+                json.dumps({"scenario_match": {"rsi": 28.0}}),
+                json.dumps({"current_price": 100}),
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO trades (
+                timestamp, stock_code, action, confidence, rationale,
+                quantity, price, pnl, market, exchange_code, selection_context, decision_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                timestamp,
+                stock_code,
+                action,
+                80,
+                "group us repro",
+                1,
+                100,
+                pnl,
+                market,
+                exchange_code,
+                None,
+                decision_id,
+            ),
+        )
+
+    conn.commit()
+
+
 def _app(tmp_path: Path) -> Any:
     db_path = tmp_path / "dashboard_test.db"
     conn = init_db(str(db_path))
@@ -345,7 +437,7 @@ def test_status_endpoint(tmp_path: Path) -> None:
     get_status = _endpoint(app, "/api/status")
     body = get_status()
     assert "KR" in body["markets"]
-    assert "US_NASDAQ" in body["markets"]
+    assert "US" in body["markets"]
     assert "totals" in body
 
 
@@ -355,7 +447,7 @@ def test_status_endpoint_returns_market_operating_summary(tmp_path: Path) -> Non
     body = get_status()
 
     kr = body["markets"]["KR"]
-    us = body["markets"]["US_NASDAQ"]
+    us = body["markets"]["US"]
 
     assert kr["open_position_count"] == 1
     assert kr["latest_decision_action"] == "BUY"
@@ -370,6 +462,37 @@ def test_status_endpoint_returns_market_operating_summary(tmp_path: Path) -> Non
     assert us["current_pnl_pct"] == -3.5
     assert us["circuit_breaker_status"] == "tripped"
     assert us["status_tone"] == "tripped"
+
+
+def test_group_us_markets_status_and_positions_for_overview(tmp_path: Path) -> None:
+    db_path = tmp_path / "dashboard_group_us_status.db"
+    conn = init_db(str(db_path))
+    _seed_group_us_market_fixture(conn)
+    conn.close()
+
+    app = create_dashboard_app(str(db_path))
+    get_status = _endpoint(app, "/api/status")
+    status_body = get_status()
+
+    assert list(status_body["markets"]) == ["KR", "US"]
+    assert status_body["markets"]["KR"]["trade_count"] == 1
+    assert status_body["markets"]["KR"]["decision_count"] == 1
+    assert status_body["markets"]["US"]["trade_count"] == 3
+    assert status_body["markets"]["US"]["decision_count"] == 3
+    assert status_body["markets"]["US"]["open_position_count"] == 3
+    assert status_body["markets"]["US"]["latest_session_id"] == "US_REG"
+    assert status_body["totals"] == {
+        "trade_count": 4,
+        "total_pnl": 2.75,
+        "decision_count": 4,
+    }
+
+    get_positions = _endpoint(app, "/api/positions")
+    positions_body = get_positions()
+
+    assert positions_body["count"] == 4
+    assert sum(1 for position in positions_body["positions"] if position["market"] == "US") == 3
+    assert any(position["market"] == "KR" for position in positions_body["positions"])
 
 
 def test_status_endpoint_includes_runtime_tracking_diagnostics_when_provider_is_present(
@@ -581,8 +704,45 @@ def test_decisions_endpoint_supports_rich_filters_and_metadata(tmp_path: Path) -
     assert body["decisions"][0]["decision_id"] == "d-kr-1"
     assert body["decisions"][0]["llm_prompt"] == "kr prompt"
     assert body["filters"]["session_id"] == "KRX_REG"
-    assert body["markets"] == ["JP", "KR", "US_NASDAQ"]
+    assert body["markets"] == ["JP", "KR", "US"]
     assert body["sessions"] == ["JP_REG", "KRX_REG", "US_REG"]
+
+
+def test_group_us_markets_decisions_and_pnl_history_filters(tmp_path: Path) -> None:
+    db_path = tmp_path / "dashboard_group_us_filters.db"
+    conn = init_db(str(db_path))
+    _seed_group_us_market_fixture(conn)
+    conn.close()
+
+    app = create_dashboard_app(str(db_path))
+    get_decisions = _endpoint(app, "/api/decisions")
+    decisions_body = get_decisions(
+        market="US",
+        session_id="all",
+        action="all",
+        stock_code=None,
+        min_confidence=0,
+        from_date=None,
+        to_date=None,
+        matched_only=False,
+        limit=50,
+    )
+
+    assert decisions_body["count"] == 3
+    assert decisions_body["markets"] == ["KR", "US"]
+    assert {decision["exchange_code"] for decision in decisions_body["decisions"]} == {
+        "AMEX",
+        "NASDAQ",
+        "NYSE",
+    }
+    assert {decision["market"] for decision in decisions_body["decisions"]} == {"US"}
+
+    get_pnl_history = _endpoint(app, "/api/pnl/history")
+    pnl_body = get_pnl_history(days=30, market="US")
+
+    assert pnl_body["market"] == "US"
+    assert pnl_body["pnl"] == [0.75]
+    assert pnl_body["trades"] == [3]
 
 
 def test_decisions_endpoint_applies_limit_after_matched_only_filter(tmp_path: Path) -> None:

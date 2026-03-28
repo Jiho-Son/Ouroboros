@@ -12,6 +12,10 @@ from typing import Annotated, Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 
+_DASHBOARD_MARKET_GROUPS: dict[str, tuple[str, ...]] = {
+    "US": ("US_NASDAQ", "US_NYSE", "US_AMEX"),
+}
+
 
 def create_dashboard_app(
     db_path: str,
@@ -33,7 +37,7 @@ def create_dashboard_app(
     def get_status() -> dict[str, Any]:
         today = datetime.now(UTC).date().isoformat()
         provider = app.state.runtime_status_provider
-        runtime_status = provider() if provider is not None else {}
+        runtime_status = _group_runtime_status(provider() if provider is not None else {})
         with _connect(db_path) as conn:
             trade_rows = {
                 row["market"]: row
@@ -142,50 +146,69 @@ def create_dashboard_app(
                 (today, today, today),
             ).fetchall()
             activity_markets = {row[0] for row in activity_rows}
-            markets = sorted(activity_markets | set(position_rows))
+            raw_markets = sorted(activity_markets | set(position_rows))
             market_status: dict[str, Any] = {}
             total_trades = 0
             total_pnl = 0.0
             total_decisions = 0
             cb_threshold = float(os.getenv("CIRCUIT_BREAKER_PCT", "-3.0"))
-            for market in markets:
-                trade_row = trade_rows.get(market)
-                decision_row = decision_rows.get(market)
-                latest_decision = latest_decision_rows.get(market)
-                current_market_pnl_pct = market_pnl_pct.get(market)
-                market_cb_status = _cb_status_from_pnl_pct(cb_threshold, current_market_pnl_pct)
-                open_position_count = position_rows.get(market, 0)
-                decision_count = int(
+            for raw_market in raw_markets:
+                market = _dashboard_market_code(raw_market)
+                trade_row = trade_rows.get(raw_market)
+                decision_row = decision_rows.get(raw_market)
+                latest_decision = latest_decision_rows.get(raw_market)
+                bucket = market_status.setdefault(
+                    market,
+                    {
+                        "trade_count": 0,
+                        "total_pnl": 0.0,
+                        "decision_count": 0,
+                        "playbook_status": None,
+                        "open_position_count": 0,
+                        "latest_decision_at": None,
+                        "latest_decision_action": None,
+                        "latest_session_id": None,
+                        "runtime_tracking": runtime_status.get(market),
+                        "_pnl_samples": [],
+                    },
+                )
+                bucket["trade_count"] += int(trade_row["trade_count"] if trade_row else 0)
+                bucket["total_pnl"] += float(trade_row["total_pnl"] if trade_row else 0.0)
+                bucket["decision_count"] += int(
                     decision_row["decision_count"] if decision_row is not None else 0
                 )
-                market_status[market] = {
-                    "trade_count": int(trade_row["trade_count"] if trade_row else 0),
-                    "total_pnl": float(trade_row["total_pnl"] if trade_row else 0.0),
-                    "decision_count": decision_count,
-                    "playbook_status": playbook_rows.get(market),
-                    "open_position_count": open_position_count,
-                    "latest_decision_at": latest_decision["timestamp"]
-                    if latest_decision
-                    else None,
-                    "latest_decision_action": latest_decision["action"]
-                    if latest_decision
-                    else None,
-                    "latest_session_id": latest_decision["session_id"]
-                    if latest_decision
-                    else None,
-                    "current_pnl_pct": current_market_pnl_pct,
-                    "circuit_breaker_status": market_cb_status,
-                    "status_tone": _market_status_tone(
-                        circuit_breaker_status=market_cb_status,
-                        open_position_count=open_position_count,
-                        decision_count=decision_count,
-                        playbook_status=playbook_rows.get(market),
-                    ),
-                    "runtime_tracking": runtime_status.get(market),
-                }
-                total_trades += market_status[market]["trade_count"]
-                total_pnl += market_status[market]["total_pnl"]
-                total_decisions += market_status[market]["decision_count"]
+                bucket["open_position_count"] += position_rows.get(raw_market, 0)
+                bucket["playbook_status"] = _merge_playbook_status(
+                    bucket["playbook_status"], playbook_rows.get(raw_market)
+                )
+                current_market_pnl_pct = market_pnl_pct.get(raw_market)
+                if current_market_pnl_pct is not None:
+                    bucket["_pnl_samples"].append(current_market_pnl_pct)
+                if latest_decision is not None and _is_newer_timestamp(
+                    latest_decision["timestamp"], bucket["latest_decision_at"]
+                ):
+                    bucket["latest_decision_at"] = latest_decision["timestamp"]
+                    bucket["latest_decision_action"] = latest_decision["action"]
+                    bucket["latest_session_id"] = latest_decision["session_id"]
+
+            for market, bucket in market_status.items():
+                pnl_samples = bucket.pop("_pnl_samples")
+                current_market_pnl_pct = (
+                    round(min(pnl_samples), 4) if pnl_samples else None
+                )
+                market_cb_status = _cb_status_from_pnl_pct(cb_threshold, current_market_pnl_pct)
+                bucket["current_pnl_pct"] = current_market_pnl_pct
+                bucket["circuit_breaker_status"] = market_cb_status
+                bucket["status_tone"] = _market_status_tone(
+                    circuit_breaker_status=market_cb_status,
+                    open_position_count=bucket["open_position_count"],
+                    decision_count=bucket["decision_count"],
+                    playbook_status=bucket["playbook_status"],
+                )
+                bucket["total_pnl"] = round(bucket["total_pnl"], 2)
+                total_trades += bucket["trade_count"]
+                total_pnl += bucket["total_pnl"]
+                total_decisions += bucket["decision_count"]
 
             current_pnl_pct = (
                 round(min(market_pnl_pct.values()), 4) if market_pnl_pct else None
@@ -366,13 +389,11 @@ def create_dashboard_app(
         to_date: str | None = Query(default=None),
         matched_only: bool = Query(default=False),
         limit: int = Query(default=50, ge=1, le=500),
-    ) -> dict[str, Any]:
+        ) -> dict[str, Any]:
         with _connect(db_path) as conn:
             where_clauses: list[str] = []
             params: list[Any] = []
-            if market != "all":
-                where_clauses.append("market = ?")
-                params.append(market)
+            _append_market_filter(where_clauses, params, market)
             if session_id != "all":
                 where_clauses.append("session_id = ?")
                 params.append(session_id)
@@ -425,7 +446,7 @@ def create_dashboard_app(
                         "decision_id": row["decision_id"],
                         "timestamp": row["timestamp"],
                         "stock_code": row["stock_code"],
-                        "market": row["market"],
+                        "market": _dashboard_market_code(row["market"]),
                         "exchange_code": row["exchange_code"],
                         "session_id": row["session_id"],
                         "action": row["action"],
@@ -440,12 +461,12 @@ def create_dashboard_app(
                         "outcome_accuracy": row["outcome_accuracy"],
                     }
                 )
-            markets = [
-                row["market"]
-                for row in conn.execute(
-                    "SELECT DISTINCT market FROM decision_logs ORDER BY market"
-                ).fetchall()
-            ]
+            markets = sorted(
+                {
+                    _dashboard_market_code(row["market"])
+                    for row in conn.execute("SELECT DISTINCT market FROM decision_logs").fetchall()
+                }
+            )
             sessions = [
                 row["session_id"]
                 for row in conn.execute(
@@ -493,20 +514,38 @@ def create_dashboard_app(
                     (f"-{days} days",),
                 ).fetchall()
             else:
-                rows = conn.execute(
-                    """
-                    SELECT DATE(timestamp) AS date,
-                           SUM(pnl) AS daily_pnl,
-                           COUNT(*) AS trade_count
-                    FROM trades
-                    WHERE pnl IS NOT NULL
-                      AND market = ?
-                      AND DATE(timestamp) >= DATE('now', ?)
-                    GROUP BY DATE(timestamp)
-                    ORDER BY DATE(timestamp)
-                    """,
-                    (market, f"-{days} days"),
-                ).fetchall()
+                raw_markets = _dashboard_market_filter_values(market)
+                if len(raw_markets) == 1:
+                    rows = conn.execute(
+                        """
+                        SELECT DATE(timestamp) AS date,
+                               SUM(pnl) AS daily_pnl,
+                               COUNT(*) AS trade_count
+                        FROM trades
+                        WHERE pnl IS NOT NULL
+                          AND market = ?
+                          AND DATE(timestamp) >= DATE('now', ?)
+                        GROUP BY DATE(timestamp)
+                        ORDER BY DATE(timestamp)
+                        """,
+                        (raw_markets[0], f"-{days} days"),
+                    ).fetchall()
+                else:
+                    placeholders = ",".join("?" for _ in raw_markets)
+                    rows = conn.execute(
+                        f"""
+                        SELECT DATE(timestamp) AS date,
+                               SUM(pnl) AS daily_pnl,
+                               COUNT(*) AS trade_count
+                        FROM trades
+                        WHERE pnl IS NOT NULL
+                          AND market IN ({placeholders})
+                          AND DATE(timestamp) >= DATE('now', ?)
+                        GROUP BY DATE(timestamp)
+                        ORDER BY DATE(timestamp)
+                        """,
+                        (*raw_markets, f"-{days} days"),
+                    ).fetchall()
             return {
                 "days": days,
                 "market": market,
@@ -595,7 +634,7 @@ def create_dashboard_app(
                 positions.append(
                     {
                         "stock_code": row["stock_code"],
-                        "market": row["market"],
+                        "market": _dashboard_market_code(row["market"]),
                         "exchange_code": row["exchange_code"],
                         "entry_price": row["entry_price"],
                         "quantity": row["quantity"],
@@ -695,6 +734,101 @@ def _load_market_pnl_pct(conn: sqlite3.Connection) -> dict[str, float]:
         if pnl_pct is not None:
             market_pnl_pct[market] = round(float(pnl_pct), 4)
     return market_pnl_pct
+
+
+def _dashboard_market_code(market: str | None) -> str:
+    if not market:
+        return ""
+    normalized = str(market).strip().upper()
+    if normalized.startswith("US_"):
+        return "US"
+    return normalized
+
+
+def _dashboard_market_filter_values(market: str) -> tuple[str, ...]:
+    normalized = _dashboard_market_code(market)
+    return _DASHBOARD_MARKET_GROUPS.get(normalized, (normalized,))
+
+
+def _append_market_filter(
+    where_clauses: list[str],
+    params: list[Any],
+    market: str,
+) -> None:
+    if market == "all":
+        return
+    raw_markets = _dashboard_market_filter_values(market)
+    if len(raw_markets) == 1:
+        where_clauses.append("market = ?")
+        params.append(raw_markets[0])
+        return
+    placeholders = ",".join("?" for _ in raw_markets)
+    where_clauses.append(f"market IN ({placeholders})")
+    params.extend(raw_markets)
+
+
+def _is_newer_timestamp(candidate: str | None, current: str | None) -> bool:
+    if candidate is None:
+        return False
+    if current is None:
+        return True
+    return candidate > current
+
+
+def _merge_playbook_status(current: str | None, incoming: str | None) -> str | None:
+    if incoming is None:
+        return current
+    if current is None:
+        return incoming
+    if current == "ready" or incoming == "ready":
+        return "ready"
+    return incoming
+
+
+def _group_runtime_status(runtime_status: Any) -> dict[str, Any]:
+    if not isinstance(runtime_status, dict):
+        return {}
+
+    grouped: dict[str, Any] = {}
+    for raw_market, payload in runtime_status.items():
+        market = _dashboard_market_code(str(raw_market))
+        if not isinstance(payload, dict):
+            grouped[market] = payload
+            continue
+        bucket = grouped.setdefault(
+            market,
+            {
+                "session_id": payload.get("session_id"),
+                "active_count": 0,
+                "active_stocks": [],
+                "candidate_count": 0,
+                "candidate_codes": [],
+                "last_scan_age_seconds": payload.get("last_scan_age_seconds"),
+            },
+        )
+        bucket["active_count"] += int(payload.get("active_count") or 0)
+        bucket["candidate_count"] += int(payload.get("candidate_count") or 0)
+        bucket["active_stocks"] = _merge_unique_sequence(
+            bucket["active_stocks"], payload.get("active_stocks") or []
+        )
+        bucket["candidate_codes"] = _merge_unique_sequence(
+            bucket["candidate_codes"], payload.get("candidate_codes") or []
+        )
+        if not bucket.get("session_id"):
+            bucket["session_id"] = payload.get("session_id")
+        age = payload.get("last_scan_age_seconds")
+        current_age = bucket.get("last_scan_age_seconds")
+        if age is not None and (current_age is None or age < current_age):
+            bucket["last_scan_age_seconds"] = age
+    return grouped
+
+
+def _merge_unique_sequence(current: list[Any], incoming: list[Any]) -> list[Any]:
+    merged = list(current)
+    for item in incoming:
+        if item not in merged:
+            merged.append(item)
+    return merged
 
 
 def _cb_status_from_pnl_pct(
