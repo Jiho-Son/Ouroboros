@@ -1039,3 +1039,11 @@
 - next_ticket: OOR-869
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: 현재 HEAD `e5d60f1` 에 테스트 추가와 PR #883 가 이미 존재하므로, 이번 세션은 strict gate 재통과, 로컬 검증 fresh run, workpad/PR 메타데이터 현실화, Human Review 전이 조건 충족 여부 확정에 집중한다.
+
+### 2026-03-28 | session=codex-oor-869-review-followup
+- branch: feature/issue-869-hard-stop-threshold-boundary
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-869, PR #883
+- next_ticket: OOR-869
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #883 리뷰 스레드를 재확인하고 actionable 코멘트만 반영한 뒤, 검증 결과와 처리 범위를 PR 코멘트로 남긴다.

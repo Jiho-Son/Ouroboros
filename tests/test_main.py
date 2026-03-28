@@ -14622,7 +14622,17 @@ async def test_register_post_buy_for_hard_stop_uses_staged_exit_evidence_stop_lo
 
 
 @pytest.mark.asyncio
-async def test_register_post_buy_for_hard_stop_falls_back_to_default_stop_loss() -> None:
+@pytest.mark.parametrize(
+    "market_data",
+    [
+        {},
+        {"_staged_exit_evidence": {}},
+    ],
+    ids=["missing-staged-exit-evidence", "missing-stop-loss-threshold"],
+)
+async def test_register_post_buy_for_hard_stop_falls_back_to_default_stop_loss(
+    market_data: dict[str, object]
+) -> None:
     monitor = RealtimeHardStopMonitor()
     ws_client = MagicMock()
     ws_client.subscribe = AsyncMock()
@@ -14635,7 +14645,7 @@ async def test_register_post_buy_for_hard_stop_falls_back_to_default_stop_loss()
         stock_name=None,
         entry_price=100.0,
         quantity=5,
-        market_data={},
+        market_data=market_data,
     )
 
     tracked = monitor.get("KR", "005930")
@@ -14644,7 +14654,14 @@ async def test_register_post_buy_for_hard_stop_falls_back_to_default_stop_loss()
 
 
 @pytest.mark.asyncio
-async def test_register_post_buy_for_hard_stop_ignores_positive_stop_loss_threshold() -> None:
+@pytest.mark.parametrize(
+    "threshold",
+    [1.5, 0],
+    ids=["positive", "zero"],
+)
+async def test_register_post_buy_for_hard_stop_ignores_non_negative_stop_loss_threshold(
+    threshold: float
+) -> None:
     monitor = RealtimeHardStopMonitor()
 
     await _register_post_buy_for_hard_stop(
@@ -14655,27 +14672,7 @@ async def test_register_post_buy_for_hard_stop_ignores_positive_stop_loss_thresh
         stock_name=None,
         entry_price=100.0,
         quantity=5,
-        market_data={"_staged_exit_evidence": {"stop_loss_threshold": 1.5}},
-    )
-
-    tracked = monitor.get("KR", "005930")
-    assert tracked is not None
-    assert tracked.hard_stop_price == pytest.approx(98.0)  # default -2.0%
-
-
-@pytest.mark.asyncio
-async def test_register_post_buy_for_hard_stop_ignores_zero_stop_loss_threshold() -> None:
-    monitor = RealtimeHardStopMonitor()
-
-    await _register_post_buy_for_hard_stop(
-        monitor=monitor,
-        websocket_client=None,
-        market=MARKETS["KR"],
-        stock_code="005930",
-        stock_name=None,
-        entry_price=100.0,
-        quantity=5,
-        market_data={"_staged_exit_evidence": {"stop_loss_threshold": 0}},
+        market_data={"_staged_exit_evidence": {"stop_loss_threshold": threshold}},
     )
 
     tracked = monitor.get("KR", "005930")
