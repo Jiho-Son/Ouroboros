@@ -1087,3 +1087,11 @@
 - next_ticket: OOR-870
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #884 review thread를 thread-aware로 다시 확인하고 actionable 항목만 분리해 수정, 검증, PR 코멘트/스레드 응답까지 현재 브랜치에서 마무리한다.
+
+### 2026-03-28 | session=codex-oor-870-land
+- branch: feature/issue-870-dashboard-country-grouping
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-870, PR #884
+- next_ticket: OOR-870
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Linear 상태가 `Merging` 이므로 현재 HEAD와 PR #884 기준으로 남은 리뷰/체크/mergeability를 재확인하고, 추가 수정이 필요 없으면 squash merge와 `Done` 전이까지 한 세션에서 마무리한다.
