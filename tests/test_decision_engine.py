@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.brain.decision_engine import DecisionEngine
-from src.brain.llm_client import GeminiProvider, OllamaProvider, build_llm_provider
+from src.brain.llm_client import (
+    GeminiProvider,
+    OllamaProvider,
+    OpenAICompatProvider,
+    build_llm_provider,
+)
 
 
 class _StubLLMProvider:
@@ -42,6 +47,22 @@ def test_build_llm_provider_returns_ollama_provider(settings) -> None:
     provider = build_llm_provider(ollama_settings)
 
     assert isinstance(provider, OllamaProvider)
+
+
+def test_build_llm_provider_returns_openai_compat_provider(settings) -> None:
+    compat_settings = settings.model_copy(update={"LLM_PROVIDER": "openai_compat"})
+
+    provider = build_llm_provider(compat_settings)
+
+    assert isinstance(provider, OpenAICompatProvider)
+
+
+def test_openai_compat_settings_llm_model(settings) -> None:
+    compat_settings = settings.model_copy(
+        update={"LLM_PROVIDER": "openai_compat", "OPENAI_COMPAT_MODEL": "test-model"},
+    )
+
+    assert compat_settings.llm_model == "test-model"
 
 
 def test_build_llm_provider_requires_gemini_api_key(settings) -> None:
