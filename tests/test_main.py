@@ -14634,12 +14634,10 @@ async def test_register_post_buy_for_hard_stop_falls_back_to_default_stop_loss(
     market_data: dict[str, object]
 ) -> None:
     monitor = RealtimeHardStopMonitor()
-    ws_client = MagicMock()
-    ws_client.subscribe = AsyncMock()
 
     await _register_post_buy_for_hard_stop(
         monitor=monitor,
-        websocket_client=ws_client,
+        websocket_client=None,
         market=MARKETS["KR"],
         stock_code="005930",
         stock_name=None,

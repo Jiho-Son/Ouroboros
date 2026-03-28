@@ -1047,3 +1047,11 @@
 - next_ticket: OOR-869
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #883 리뷰 스레드를 재확인하고 actionable 코멘트만 반영한 뒤, 검증 결과와 처리 범위를 PR 코멘트로 남긴다.
+
+### 2026-03-28 | session=codex-oor-869-pr883-review-address
+- branch: feature/issue-869-hard-stop-threshold-boundary
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-869, PR #883
+- next_ticket: OOR-869
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #883 review thread를 thread-aware로 재확인하고 actionable 항목만 로컬 수정 후 테스트와 lint 증적으로 닫을 계획이다.
