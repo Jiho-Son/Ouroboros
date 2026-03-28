@@ -1063,3 +1063,35 @@
 - next_ticket: OOR-869
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: Linear 상태가 `Merging` 이므로 기존 구현 변경 없이 PR #883 의 mergeability, 잔여 리뷰 코멘트, checks, squash merge, merge 후 `Done` 전이만 현재 HEAD 기준으로 끝까지 확인한다.
+
+### 2026-03-28 | session=codex-oor-870-start
+- branch: feature/issue-870-dashboard-country-grouping
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-870
+- next_ticket: OOR-870
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 미국 거래소 표시를 국가 단위 `US` 로 통합하는 티켓이므로, 먼저 대시보드의 현재 국가/거래소 집계 경로를 재현하고 테스트로 고정한 뒤 최소 수정으로 UI/데이터 표현을 정합화한다.
+
+### 2026-03-28 | session=codex-oor-870-verify
+- branch: feature/issue-870-dashboard-country-grouping
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-870, PR #884
+- next_ticket: OOR-870
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 열린 PR #884 와 기존 workpad가 있으므로, 현재 HEAD 기준으로 pull 동기화와 대시보드 그룹화 검증을 다시 실행하고 workpad/상태를 최신 사실로 정리한다.
+
+### 2026-03-28 | session=codex-oor-870-pr884-review-address
+- branch: feature/issue-870-dashboard-country-grouping
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-870, PR #884
+- next_ticket: OOR-870
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #884 review thread를 thread-aware로 다시 확인하고 actionable 항목만 분리해 수정, 검증, PR 코멘트/스레드 응답까지 현재 브랜치에서 마무리한다.
+
+### 2026-03-28 | session=codex-oor-870-land
+- branch: feature/issue-870-dashboard-country-grouping
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-870, PR #884
+- next_ticket: OOR-870
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Linear 상태가 `Merging` 이므로 현재 HEAD와 PR #884 기준으로 남은 리뷰/체크/mergeability를 재확인하고, 추가 수정이 필요 없으면 squash merge와 `Done` 전이까지 한 세션에서 마무리한다.
