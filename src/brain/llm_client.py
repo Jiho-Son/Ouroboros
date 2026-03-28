@@ -101,12 +101,43 @@ class OllamaProvider:
         return response.text
 
 
+class OpenAICompatProvider:
+    """OpenAI-compatible API provider (MLX, vLLM, llama.cpp, etc.)."""
+
+    def __init__(self, *, base_url: str, timeout_seconds: float) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._timeout_seconds = timeout_seconds
+
+    async def generate_text(self, *, model: str, prompt: str) -> str:
+        timeout = aiohttp.ClientTimeout(total=self._timeout_seconds)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                f"{self._base_url}/v1/chat/completions",
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            ) as response:
+                response.raise_for_status()
+                payload = await response.json()
+
+        choices = payload.get("choices")
+        if not choices:
+            raise ValueError("OpenAI-compatible response did not include `choices`")
+        return choices[0]["message"]["content"]
+
+
 def build_llm_provider(settings: Settings) -> LLMProvider:
     """Return the configured low-level LLM provider."""
     if settings.LLM_PROVIDER == "ollama":
         return OllamaProvider(
             base_url=settings.OLLAMA_BASE_URL,
             timeout_seconds=settings.OLLAMA_REQUEST_TIMEOUT_SECONDS,
+        )
+    if settings.LLM_PROVIDER == "openai_compat":
+        return OpenAICompatProvider(
+            base_url=settings.OPENAI_COMPAT_BASE_URL,
+            timeout_seconds=settings.OPENAI_COMPAT_REQUEST_TIMEOUT_SECONDS,
         )
     if not settings.GEMINI_API_KEY:
         raise ValueError("LLM_PROVIDER=gemini 이지만 GEMINI_API_KEY가 설정되지 않았습니다")

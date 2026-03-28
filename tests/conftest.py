@@ -15,6 +15,7 @@ def settings() -> Settings:
         KIS_APP_SECRET="test_app_secret",
         KIS_ACCOUNT_NO="12345678-01",
         KIS_BASE_URL="https://openapivts.koreainvestment.com:9443",
+        LLM_PROVIDER="gemini",
         GEMINI_API_KEY="test_gemini_key",
         CIRCUIT_BREAKER_PCT=-3.0,
         FAT_FINGER_PCT=30.0,

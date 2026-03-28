@@ -48,6 +48,7 @@ def settings() -> Settings:
         KIS_APP_KEY="test_key",
         KIS_APP_SECRET="test_secret",
         KIS_ACCOUNT_NO="12345678-01",
+        LLM_PROVIDER="gemini",
         GEMINI_API_KEY="test_gemini_key",
         GEMINI_MODEL="gemini-pro",
         DB_PATH=":memory:",

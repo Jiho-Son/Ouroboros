@@ -54,6 +54,11 @@ Updated: 2026-03-15
 - `TASK-OPS-004` (`REQ-OPS-004`,`TEST-ACC-019`): v2/v3 원본 계획 문서 위치를 `docs/ouroboros/source/`로 표준화하고 링크 일관성 검증
 - `TASK-OPS-005` (`REQ-OPS-005`,`TEST-ACC-020`): `WORKFLOW.md` `hooks.before_remove` 에 repo-owned canonical restart hook를 연결하고, merged worktree 삭제 시 canonical `main` checkout만 pull/restart 하도록 구현
 
+## 구현 단위 F: LLM 인프라
+
+- `TASK-CODE-013` (`REQ-OPS-006`,`TEST-CODE-009`): OpenAI-compatible LLM provider(`OpenAICompatProvider`)를 `src/brain/llm_client.py`에 추가하고 `build_llm_provider` factory에 `openai_compat` 분기 구현
+- `TEST-CODE-009` (`REQ-OPS-006`): `OpenAICompatProvider` provider wiring 및 config `llm_model` 프로퍼티 테스트
+
 ## 커밋 규칙
 
 - 커밋 메시지에 `TASK-*` 포함

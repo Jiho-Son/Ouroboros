@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     KIS_WS_PATH: str = "/tryitout"
 
     # LLM provider
-    LLM_PROVIDER: str = Field(default="gemini", pattern="^(gemini|ollama)$")
+    LLM_PROVIDER: str = Field(default="gemini", pattern="^(gemini|ollama|openai_compat)$")
 
     # Google Gemini
     GEMINI_API_KEY: str | None = None
@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
     OLLAMA_MODEL: str = "llama3.2"
     OLLAMA_REQUEST_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0.0, le=600.0)
+
+    # OpenAI-compatible serving (MLX, vLLM, llama.cpp, etc.)
+    OPENAI_COMPAT_BASE_URL: str = "http://127.0.0.1:8000"
+    OPENAI_COMPAT_MODEL: str = "default"
+    OPENAI_COMPAT_REQUEST_TIMEOUT_SECONDS: float = Field(default=120.0, gt=0.0, le=600.0)
 
     # External Data APIs (optional — for data-driven decisions)
     NEWS_API_KEY: str | None = None
@@ -243,4 +248,6 @@ class Settings(BaseSettings):
         """Return the active model name for the configured LLM provider."""
         if self.LLM_PROVIDER == "ollama":
             return self.OLLAMA_MODEL
+        if self.LLM_PROVIDER == "openai_compat":
+            return self.OPENAI_COMPAT_MODEL
         return self.GEMINI_MODEL
