@@ -3984,11 +3984,14 @@ async def _handle_market_close(
 def _clear_realtime_market_runtime_state(
     *,
     market_code: str,
+    market_info: MarketInfo | None,
     market_states: dict[str, str],
     playbooks: dict[str, DayPlaybook],
     pre_refresh_playbooks: dict[str, DayPlaybook | None],
     tracking_store: MarketTrackingStore,
     mid_refreshed: set[str],
+    buy_cooldown: dict[str, float] | None = None,
+    sell_resubmit_counts: dict[str, int] | None = None,
 ) -> None:
     """Drop per-market realtime state after the market fully closes."""
     market_states.pop(market_code, None)
@@ -3996,6 +3999,30 @@ def _clear_realtime_market_runtime_state(
     pre_refresh_playbooks.pop(market_code, None)
     cleared_snapshot = tracking_store.clear_market(market_code)
     mid_refreshed.discard(market_code)
+    market_prefix = f"{market_code.strip().upper()}:"
+    if buy_cooldown is not None:
+        for key in [key for key in buy_cooldown if key.upper().startswith(market_prefix)]:
+            buy_cooldown.pop(key, None)
+
+    if sell_resubmit_counts is not None:
+        if market_info is None:
+            if sell_resubmit_counts:
+                logger.warning(
+                    "sell_resubmit_counts cleanup skipped for closed market without metadata: %s",
+                    market_code,
+                )
+        else:
+            sell_market_key = (
+                market_code if market_info.is_domestic else market_info.exchange_code
+            ).strip().upper()
+            sell_prefixes = (f"{sell_market_key}:", f"BUY:{sell_market_key}:")
+            for key in [
+                key
+                for key in sell_resubmit_counts
+                if any(key.upper().startswith(prefix) for prefix in sell_prefixes)
+            ]:
+                sell_resubmit_counts.pop(key, None)
+
     if cleared_snapshot is not None:
         logger.info(
             "Market tracking cleared: market=%s session=%s active=%d candidates=%d",
@@ -4091,6 +4118,8 @@ async def _handle_realtime_market_closures(
     pre_refresh_playbooks: dict[str, DayPlaybook | None],
     tracking_store: MarketTrackingStore,
     mid_refreshed: set[str],
+    buy_cooldown: dict[str, float] | None = None,
+    sell_resubmit_counts: dict[str, int] | None = None,
     telegram: TelegramClient,
     context_aggregator: ContextAggregator,
     daily_reviewer: DailyReviewer,
@@ -4125,11 +4154,14 @@ async def _handle_realtime_market_closures(
             logger.warning("Missing market metadata for closed market: %s", market_code)
             _clear_realtime_market_runtime_state(
                 market_code=market_code,
+                market_info=None,
                 market_states=market_states,
                 playbooks=playbooks,
                 pre_refresh_playbooks=pre_refresh_playbooks,
                 tracking_store=tracking_store,
                 mid_refreshed=mid_refreshed,
+                buy_cooldown=buy_cooldown,
+                sell_resubmit_counts=sell_resubmit_counts,
             )
             continue
 
@@ -4148,11 +4180,14 @@ async def _handle_realtime_market_closures(
 
         _clear_realtime_market_runtime_state(
             market_code=market_code,
+            market_info=market_info,
             market_states=market_states,
             playbooks=playbooks,
             pre_refresh_playbooks=pre_refresh_playbooks,
             tracking_store=tracking_store,
             mid_refreshed=mid_refreshed,
+            buy_cooldown=buy_cooldown,
+            sell_resubmit_counts=sell_resubmit_counts,
         )
 
 
@@ -5189,6 +5224,8 @@ async def run(settings: Settings) -> None:
                     pre_refresh_playbooks=_pre_refresh_playbooks,
                     tracking_store=tracking_store,
                     mid_refreshed=mid_refreshed,
+                    buy_cooldown=buy_cooldown,
+                    sell_resubmit_counts=sell_resubmit_counts,
                     telegram=telegram,
                     context_aggregator=context_aggregator,
                     daily_reviewer=daily_reviewer,

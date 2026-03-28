@@ -5813,6 +5813,16 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
         "KR": _make_playbook("KR"),
         "US_NASDAQ": _make_playbook("US_NASDAQ"),
     }
+    buy_cooldown = {
+        "KR:005930": asyncio.get_event_loop().time() + 600,
+        "US_NASDAQ:AAPL": asyncio.get_event_loop().time() + 600,
+    }
+    sell_resubmit_counts = {
+        "KR:005930": 2,
+        "BUY:KR:005930": 1,
+        "NASD:AAPL": 1,
+        "BUY:NASD:AAPL": 1,
+    }
     tracking_store = MarketTrackingStore()
     tracking_store.record_scan_result(
         market_code="KR",
@@ -5839,6 +5849,8 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
             pre_refresh_playbooks=pre_refresh_playbooks,
             tracking_store=tracking_store,
             mid_refreshed=mid_refreshed,
+            buy_cooldown=buy_cooldown,
+            sell_resubmit_counts=sell_resubmit_counts,
             telegram=MagicMock(),
             context_aggregator=MagicMock(),
             daily_reviewer=MagicMock(),
@@ -5851,6 +5863,8 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
             pre_refresh_playbooks=pre_refresh_playbooks,
             tracking_store=tracking_store,
             mid_refreshed=mid_refreshed,
+            buy_cooldown=buy_cooldown,
+            sell_resubmit_counts=sell_resubmit_counts,
             telegram=MagicMock(),
             context_aggregator=MagicMock(),
             daily_reviewer=MagicMock(),
@@ -5864,6 +5878,12 @@ async def test_handle_realtime_market_closures_closes_removed_market_once_and_cl
     assert "KR" not in pre_refresh_playbooks
     assert tracking_store.get_snapshot("KR", now_monotonic=3.0) is None
     assert "KR" not in mid_refreshed
+    assert "KR:005930" not in buy_cooldown
+    assert "US_NASDAQ:AAPL" in buy_cooldown
+    assert "KR:005930" not in sell_resubmit_counts
+    assert "BUY:KR:005930" not in sell_resubmit_counts
+    assert "NASD:AAPL" in sell_resubmit_counts
+    assert "BUY:NASD:AAPL" in sell_resubmit_counts
     assert "US_NASDAQ" in market_states
     assert "US_NASDAQ" in playbooks
     assert "US_NASDAQ" in mid_refreshed
@@ -5911,6 +5931,8 @@ async def test_handle_realtime_market_closures_unknown_market_logs_warning_and_c
     market_states = {"MISSING": "CUSTOM_SESSION"}
     playbooks = {"MISSING": _make_playbook("KR")}
     pre_refresh_playbooks = {"MISSING": _make_playbook("KR")}
+    buy_cooldown = {"MISSING:005930": asyncio.get_event_loop().time() + 600}
+    sell_resubmit_counts = {"CUSTOM:005930": 2, "BUY:CUSTOM:005930": 1}
     tracking_store = MarketTrackingStore()
     tracking_store.record_scan_result(
         market_code="MISSING",
@@ -5930,6 +5952,8 @@ async def test_handle_realtime_market_closures_unknown_market_logs_warning_and_c
             pre_refresh_playbooks=pre_refresh_playbooks,
             tracking_store=tracking_store,
             mid_refreshed=mid_refreshed,
+            buy_cooldown=buy_cooldown,
+            sell_resubmit_counts=sell_resubmit_counts,
             telegram=MagicMock(),
             context_aggregator=MagicMock(),
             daily_reviewer=MagicMock(),
@@ -5937,10 +5961,16 @@ async def test_handle_realtime_market_closures_unknown_market_logs_warning_and_c
         )
 
     assert "Missing market metadata for closed market: MISSING" in caplog.text
+    assert (
+        "sell_resubmit_counts cleanup skipped for closed market without metadata: MISSING"
+        in caplog.text
+    )
     assert market_states == {}
     assert playbooks == {}
     assert pre_refresh_playbooks == {}
     assert tracking_store.get_snapshot("MISSING", now_monotonic=2.0) is None
+    assert buy_cooldown == {}
+    assert sell_resubmit_counts == {"CUSTOM:005930": 2, "BUY:CUSTOM:005930": 1}
     assert mid_refreshed == set()
 
 
@@ -5949,6 +5979,8 @@ async def test_handle_realtime_market_closures_cleans_runtime_state_after_close_
     market_states = {"KR": "KRX_REG"}
     playbooks = {"KR": _make_playbook("KR")}
     pre_refresh_playbooks = {"KR": _make_playbook("KR")}
+    buy_cooldown = {"KR:005930": asyncio.get_event_loop().time() + 600}
+    sell_resubmit_counts = {"KR:005930": 2, "BUY:KR:005930": 1}
     tracking_store = MarketTrackingStore()
     tracking_store.record_scan_result(
         market_code="KR",
@@ -5968,6 +6000,8 @@ async def test_handle_realtime_market_closures_cleans_runtime_state_after_close_
             pre_refresh_playbooks=pre_refresh_playbooks,
             tracking_store=tracking_store,
             mid_refreshed=mid_refreshed,
+            buy_cooldown=buy_cooldown,
+            sell_resubmit_counts=sell_resubmit_counts,
             telegram=MagicMock(),
             context_aggregator=MagicMock(),
             daily_reviewer=MagicMock(),
@@ -5978,6 +6012,8 @@ async def test_handle_realtime_market_closures_cleans_runtime_state_after_close_
     assert playbooks == {}
     assert pre_refresh_playbooks == {}
     assert tracking_store.get_snapshot("KR", now_monotonic=2.0) is None
+    assert buy_cooldown == {}
+    assert sell_resubmit_counts == {}
     assert mid_refreshed == set()
 
 

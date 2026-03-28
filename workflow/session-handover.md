@@ -1095,3 +1095,11 @@
 - next_ticket: OOR-870
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: Linear 상태가 `Merging` 이므로 현재 HEAD와 PR #884 기준으로 남은 리뷰/체크/mergeability를 재확인하고, 추가 수정이 필요 없으면 squash merge와 `Done` 전이까지 한 세션에서 마무리한다.
+
+### 2026-03-28 | session=codex-oor-871-start
+- branch: feature/issue-871-market-close-composite-cache-cleanup
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-871 Todo 상태, 이슈 설명/Acceptance Criteria, 첨부 PR 없음, 기존 workpad 없음
+- next_ticket: OOR-871
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `buy_cooldown` 및 `sell_resubmit_counts` composite-key stale 엔트리가 마켓 종료/예외 경로 뒤에도 남는지 재현부터 고정하고, realtime market close cleanup 정책을 코드·테스트·workpad 증적으로 정리한다.
