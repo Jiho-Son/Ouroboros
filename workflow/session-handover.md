@@ -1055,3 +1055,11 @@
 - next_ticket: OOR-869
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #883 review thread를 thread-aware로 재확인하고 actionable 항목만 로컬 수정 후 테스트와 lint 증적으로 닫을 계획이다.
+
+### 2026-03-28 | session=codex-oor-869-land
+- branch: feature/issue-869-hard-stop-threshold-boundary
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-869, PR #883
+- next_ticket: OOR-869
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Linear 상태가 `Merging` 이므로 기존 구현 변경 없이 PR #883 의 mergeability, 잔여 리뷰 코멘트, checks, squash merge, merge 후 `Done` 전이만 현재 HEAD 기준으로 끝까지 확인한다.
