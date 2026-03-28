@@ -149,7 +149,7 @@ def create_dashboard_app(
             raw_markets = sorted(activity_markets | set(position_rows))
             market_status: dict[str, Any] = {}
             total_trades = 0
-            total_pnl = 0.0
+            total_pnl_raw = 0.0
             total_decisions = 0
             cb_threshold = float(os.getenv("CIRCUIT_BREAKER_PCT", "-3.0"))
             for raw_market in raw_markets:
@@ -193,9 +193,9 @@ def create_dashboard_app(
 
             for market, bucket in market_status.items():
                 pnl_samples = bucket.pop("_pnl_samples")
-                current_market_pnl_pct = (
-                    round(min(pnl_samples), 4) if pnl_samples else None
-                )
+                # For grouped markets like US, expose the worst live P&L% so the
+                # overview card stays aligned with circuit-breaker risk semantics.
+                current_market_pnl_pct = round(min(pnl_samples), 4) if pnl_samples else None
                 market_cb_status = _cb_status_from_pnl_pct(cb_threshold, current_market_pnl_pct)
                 bucket["current_pnl_pct"] = current_market_pnl_pct
                 bucket["circuit_breaker_status"] = market_cb_status
@@ -205,14 +205,12 @@ def create_dashboard_app(
                     decision_count=bucket["decision_count"],
                     playbook_status=bucket["playbook_status"],
                 )
+                total_pnl_raw += bucket["total_pnl"]
                 bucket["total_pnl"] = round(bucket["total_pnl"], 2)
                 total_trades += bucket["trade_count"]
-                total_pnl += bucket["total_pnl"]
                 total_decisions += bucket["decision_count"]
 
-            current_pnl_pct = (
-                round(min(market_pnl_pct.values()), 4) if market_pnl_pct else None
-            )
+            current_pnl_pct = round(min(market_pnl_pct.values()), 4) if market_pnl_pct else None
             cb_status = _cb_status_from_pnl_pct(cb_threshold, current_pnl_pct)
 
             return {
@@ -221,7 +219,7 @@ def create_dashboard_app(
                 "markets": market_status,
                 "totals": {
                     "trade_count": total_trades,
-                    "total_pnl": round(total_pnl, 2),
+                    "total_pnl": round(total_pnl_raw, 2),
                     "decision_count": total_decisions,
                 },
                 "circuit_breaker": {
@@ -389,7 +387,7 @@ def create_dashboard_app(
         to_date: str | None = Query(default=None),
         matched_only: bool = Query(default=False),
         limit: int = Query(default=50, ge=1, le=500),
-        ) -> dict[str, Any]:
+    ) -> dict[str, Any]:
         with _connect(db_path) as conn:
             where_clauses: list[str] = []
             params: list[Any] = []
@@ -515,37 +513,21 @@ def create_dashboard_app(
                 ).fetchall()
             else:
                 raw_markets = _dashboard_market_filter_values(market)
-                if len(raw_markets) == 1:
-                    rows = conn.execute(
-                        """
-                        SELECT DATE(timestamp) AS date,
-                               SUM(pnl) AS daily_pnl,
-                               COUNT(*) AS trade_count
-                        FROM trades
-                        WHERE pnl IS NOT NULL
-                          AND market = ?
-                          AND DATE(timestamp) >= DATE('now', ?)
-                        GROUP BY DATE(timestamp)
-                        ORDER BY DATE(timestamp)
-                        """,
-                        (raw_markets[0], f"-{days} days"),
-                    ).fetchall()
-                else:
-                    placeholders = ",".join("?" for _ in raw_markets)
-                    rows = conn.execute(
-                        f"""
-                        SELECT DATE(timestamp) AS date,
-                               SUM(pnl) AS daily_pnl,
-                               COUNT(*) AS trade_count
-                        FROM trades
-                        WHERE pnl IS NOT NULL
-                          AND market IN ({placeholders})
-                          AND DATE(timestamp) >= DATE('now', ?)
-                        GROUP BY DATE(timestamp)
-                        ORDER BY DATE(timestamp)
-                        """,
-                        (*raw_markets, f"-{days} days"),
-                    ).fetchall()
+                placeholders = ",".join("?" for _ in raw_markets)
+                rows = conn.execute(
+                    f"""
+                    SELECT DATE(timestamp) AS date,
+                           SUM(pnl) AS daily_pnl,
+                           COUNT(*) AS trade_count
+                    FROM trades
+                    WHERE pnl IS NOT NULL
+                      AND market IN ({placeholders})
+                      AND DATE(timestamp) >= DATE('now', ?)
+                    GROUP BY DATE(timestamp)
+                    ORDER BY DATE(timestamp)
+                    """,
+                    (*raw_markets, f"-{days} days"),
+                ).fetchall()
             return {
                 "days": days,
                 "market": market,
@@ -780,9 +762,14 @@ def _merge_playbook_status(current: str | None, incoming: str | None) -> str | N
         return current
     if current is None:
         return incoming
-    if current == "ready" or incoming == "ready":
-        return "ready"
-    return incoming
+    severity = {
+        "ready": 0,
+        "pending": 1,
+        "expired": 2,
+        "failed": 3,
+        "error": 3,
+    }
+    return incoming if severity.get(incoming, 2) >= severity.get(current, 2) else current
 
 
 def _group_runtime_status(runtime_status: Any) -> dict[str, Any]:

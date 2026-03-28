@@ -495,6 +495,141 @@ def test_group_us_markets_status_and_positions_for_overview(tmp_path: Path) -> N
     assert any(position["market"] == "KR" for position in positions_body["positions"])
 
 
+def test_group_us_market_status_prefers_worst_playbook_state(tmp_path: Path) -> None:
+    db_path = tmp_path / "dashboard_group_us_playbook_status.db"
+    conn = init_db(str(db_path))
+    _seed_group_us_market_fixture(conn)
+    today = datetime.now(UTC).date().isoformat()
+    conn.executemany(
+        """
+        INSERT INTO playbooks (
+            date, market, status, playbook_json, generated_at,
+            token_count, scenario_count, match_count
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                today,
+                "US_NASDAQ",
+                "ready",
+                json.dumps({"market": "US_NASDAQ", "stock_playbooks": []}),
+                f"{today}T08:30:00+00:00",
+                100,
+                1,
+                0,
+            ),
+            (
+                today,
+                "US_NYSE",
+                "error",
+                json.dumps({"market": "US_NYSE", "stock_playbooks": []}),
+                f"{today}T08:35:00+00:00",
+                100,
+                1,
+                0,
+            ),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    app = create_dashboard_app(str(db_path))
+    get_status = _endpoint(app, "/api/status")
+    status_body = get_status()
+
+    assert status_body["markets"]["US"]["playbook_status"] == "error"
+
+
+def test_status_totals_sum_raw_market_pnl_before_rounding(tmp_path: Path) -> None:
+    db_path = tmp_path / "dashboard_total_pnl_rounding.db"
+    conn = init_db(str(db_path))
+    today = datetime.now(UTC).date().isoformat()
+    conn.executemany(
+        """
+        INSERT INTO decision_logs (
+            decision_id, timestamp, stock_code, market, exchange_code,
+            session_id, action, confidence, rationale, context_snapshot, input_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                "d-kr-rounding",
+                f"{today}T09:10:00+00:00",
+                "005930",
+                "KR",
+                "KRX",
+                "KRX_REG",
+                "BUY",
+                80,
+                "rounding repro",
+                json.dumps({"scenario_match": {"rsi": 28.0}}),
+                json.dumps({"current_price": 100}),
+            ),
+            (
+                "d-us-rounding",
+                f"{today}T21:10:00+00:00",
+                "AAPL",
+                "US_NASDAQ",
+                "NASDAQ",
+                "US_REG",
+                "BUY",
+                80,
+                "rounding repro",
+                json.dumps({"scenario_match": {"rsi": 28.0}}),
+                json.dumps({"current_price": 100}),
+            ),
+        ],
+    )
+    conn.executemany(
+        """
+        INSERT INTO trades (
+            timestamp, stock_code, action, confidence, rationale,
+            quantity, price, pnl, market, exchange_code, selection_context, decision_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                f"{today}T09:11:00+00:00",
+                "005930",
+                "BUY",
+                80,
+                "rounding repro",
+                1,
+                100,
+                0.335,
+                "KR",
+                "KRX",
+                None,
+                "d-kr-rounding",
+            ),
+            (
+                f"{today}T21:11:00+00:00",
+                "AAPL",
+                "BUY",
+                80,
+                "rounding repro",
+                1,
+                100,
+                0.335,
+                "US_NASDAQ",
+                "NASDAQ",
+                None,
+                "d-us-rounding",
+            ),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    app = create_dashboard_app(str(db_path))
+    get_status = _endpoint(app, "/api/status")
+    status_body = get_status()
+
+    assert status_body["markets"]["KR"]["total_pnl"] == 0.34
+    assert status_body["markets"]["US"]["total_pnl"] == 0.34
+    assert status_body["totals"]["total_pnl"] == 0.67
+
+
 def test_status_endpoint_includes_runtime_tracking_diagnostics_when_provider_is_present(
     tmp_path: Path,
 ) -> None:

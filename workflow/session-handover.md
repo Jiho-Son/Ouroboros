@@ -1079,3 +1079,11 @@
 - next_ticket: OOR-870
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: 열린 PR #884 와 기존 workpad가 있으므로, 현재 HEAD 기준으로 pull 동기화와 대시보드 그룹화 검증을 다시 실행하고 workpad/상태를 최신 사실로 정리한다.
+
+### 2026-03-28 | session=codex-oor-870-pr884-review-address
+- branch: feature/issue-870-dashboard-country-grouping
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-870, PR #884
+- next_ticket: OOR-870
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #884 review thread를 thread-aware로 다시 확인하고 actionable 항목만 분리해 수정, 검증, PR 코멘트/스레드 응답까지 현재 브랜치에서 마무리한다.
