@@ -57,7 +57,7 @@ Updated: 2026-03-15
 ## 구현 단위 F: LLM 인프라
 
 - `TASK-CODE-013` (`REQ-OPS-006`,`TEST-CODE-009`): OpenAI-compatible LLM provider(`OpenAICompatProvider`)를 `src/brain/llm_client.py`에 추가하고 `build_llm_provider` factory에 `openai_compat` 분기 구현
-- `TEST-CODE-009`: `OpenAICompatProvider` provider wiring 및 config `llm_model` 프로퍼티 테스트
+- `TEST-CODE-009` (`REQ-OPS-006`): `OpenAICompatProvider` provider wiring 및 config `llm_model` 프로퍼티 테스트
 
 ## 커밋 규칙
 
