@@ -1023,3 +1023,43 @@
 - next_ticket: OOR-868
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: Linear 상태가 `Merging` 이므로 기존 산출물 재사용 없이 merge 가능 상태, 잔여 리뷰 코멘트, checks, merge 후 `Done` 전이만 확인해 land loop를 끝까지 수행한다.
+
+### 2026-03-27 | session=codex-oor-869-start
+- branch: feature/issue-869-hard-stop-threshold-boundary
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-869
+- next_ticket: OOR-869
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `tests/test_main.py` 에 `_register_post_buy_for_hard_stop` 의 `stop_loss_threshold` 양수/0 입력 fallback 경계를 TDD로 고정하고, PR #873 리뷰 제안(comment ID 2993097892)을 재현 신호와 함께 검증한다.
+
+### 2026-03-27 | session=codex-oor-869-finalize
+- branch: feature/issue-869-hard-stop-threshold-boundary
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-869, PR #883
+- next_ticket: OOR-869
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 현재 HEAD `e5d60f1` 에 테스트 추가와 PR #883 가 이미 존재하므로, 이번 세션은 strict gate 재통과, 로컬 검증 fresh run, workpad/PR 메타데이터 현실화, Human Review 전이 조건 충족 여부 확정에 집중한다.
+
+### 2026-03-28 | session=codex-oor-869-review-followup
+- branch: feature/issue-869-hard-stop-threshold-boundary
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-869, PR #883
+- next_ticket: OOR-869
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #883 리뷰 스레드를 재확인하고 actionable 코멘트만 반영한 뒤, 검증 결과와 처리 범위를 PR 코멘트로 남긴다.
+
+### 2026-03-28 | session=codex-oor-869-pr883-review-address
+- branch: feature/issue-869-hard-stop-threshold-boundary
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-869, PR #883
+- next_ticket: OOR-869
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #883 review thread를 thread-aware로 재확인하고 actionable 항목만 로컬 수정 후 테스트와 lint 증적으로 닫을 계획이다.
+
+### 2026-03-28 | session=codex-oor-869-land
+- branch: feature/issue-869-hard-stop-threshold-boundary
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-869, PR #883
+- next_ticket: OOR-869
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Linear 상태가 `Merging` 이므로 기존 구현 변경 없이 PR #883 의 mergeability, 잔여 리뷰 코멘트, checks, squash merge, merge 후 `Done` 전이만 현재 HEAD 기준으로 끝까지 확인한다.
