@@ -975,7 +975,7 @@ def test_positions_empty_when_no_trades(tmp_path: Path) -> None:
 
 
 def test_status_handles_fresh_db_file(tmp_path: Path) -> None:
-    """빈 SQLite 파일이어도 status 엔드포인트는 0건 상태를 반환해야 한다."""
+    """Status should return zero-count totals for a fresh SQLite file."""
     db_path = tmp_path / "fresh.db"
     db_path.touch()
 

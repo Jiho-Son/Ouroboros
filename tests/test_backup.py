@@ -262,6 +262,36 @@ class TestBackupScheduler:
 class TestHealthMonitor:
     """Test HealthMonitor functionality."""
 
+    class _FakeCursor:
+        def __init__(
+            self,
+            fetch_values: list[tuple[object, ...]],
+            errors: dict[str, Exception],
+        ) -> None:
+            self._fetch_values = list(fetch_values)
+            self._errors = errors
+
+        def execute(self, query: str) -> None:
+            for pattern, error in self._errors.items():
+                if pattern in query:
+                    raise error
+
+        def fetchone(self) -> tuple[object, ...]:
+            if not self._fetch_values:
+                raise AssertionError("fetchone() called without queued values")
+            return self._fetch_values.pop(0)
+
+    class _FakeConnection:
+        def __init__(self, cursor: TestHealthMonitor._FakeCursor) -> None:
+            self._cursor = cursor
+            self.closed = False
+
+        def cursor(self) -> TestHealthMonitor._FakeCursor:
+            return self._cursor
+
+        def close(self) -> None:
+            self.closed = True
+
     def test_monitor_init(self, temp_db: Path, tmp_path: Path) -> None:
         """Test monitor initialization."""
         backup_dir = tmp_path / "backups"
@@ -289,7 +319,7 @@ class TestHealthMonitor:
         assert "not found" in result.message.lower()
 
     def test_check_database_health_bootstraps_empty_db(self, tmp_path: Path) -> None:
-        """빈 SQLite 파일도 health check 시 스키마를 bootstrap 해야 한다."""
+        """Health checks should bootstrap schema for empty SQLite files."""
         db_path = tmp_path / "fresh.db"
         db_path.touch()
 
@@ -299,6 +329,60 @@ class TestHealthMonitor:
         assert result.status == HealthStatus.HEALTHY
         assert result.details is not None
         assert result.details["trade_count"] == 0
+
+    def test_check_database_health_uses_read_only_connect_before_bootstrap(
+        self,
+        temp_db: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Healthy DB files should not trigger schema bootstrap on every check."""
+        monitor = HealthMonitor(str(temp_db), tmp_path / "backups")
+
+        def fail_init_db(_db_path: str) -> sqlite3.Connection:
+            raise AssertionError("init_db should not run for healthy databases")
+
+        monkeypatch.setattr("src.backup.health_monitor.init_db", fail_init_db)
+
+        result = monitor.check_database_health()
+
+        assert result.status == HealthStatus.HEALTHY
+        assert result.details is not None
+        assert result.details["trade_count"] == 3
+
+    def test_check_database_health_closes_bootstrap_connection_on_fallback_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Fallback bootstrap connections must close even when later queries fail."""
+        db_path = tmp_path / "fresh.db"
+        db_path.touch()
+        monitor = HealthMonitor(str(db_path), tmp_path / "backups")
+
+        initial_cursor = self._FakeCursor(
+            fetch_values=[("ok",), (4096,)],
+            errors={
+                "SELECT COUNT(*) FROM trades": sqlite3.OperationalError(
+                    "no such table: trades"
+                )
+            },
+        )
+        initial_conn = self._FakeConnection(initial_cursor)
+        bootstrap_cursor = self._FakeCursor(
+            fetch_values=[],
+            errors={"PRAGMA integrity_check": sqlite3.OperationalError("integrity unavailable")},
+        )
+        bootstrap_conn = self._FakeConnection(bootstrap_cursor)
+
+        monkeypatch.setattr("src.backup.health_monitor.sqlite3.connect", lambda _path: initial_conn)
+        monkeypatch.setattr("src.backup.health_monitor.init_db", lambda _path: bootstrap_conn)
+
+        result = monitor.check_database_health()
+
+        assert result.status == HealthStatus.UNHEALTHY
+        assert "integrity unavailable" in result.message
+        assert bootstrap_conn.closed is True
 
     def test_check_disk_space(self, temp_db: Path, tmp_path: Path) -> None:
         """Test disk space check."""
