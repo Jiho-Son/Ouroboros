@@ -1119,3 +1119,19 @@
 - next_ticket: OOR-871
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #885의 actionable review는 async test loop API 교체 1건이며, optional nit 2건은 현재 코드/테스트와 대조 후 필요 시 함께 반영하고 검증 증적과 함께 PR 코멘트로 남긴다.
+
+### 2026-03-30 | session=codex-playbook-debug
+- branch: main
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: 로컬 미반영 변경 1건과 재시작 이후 플레이북 미생성 증상을 우선 조사
+- next_ticket: investigation-only
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 현재 브랜치가 `main` 이므로 원인 재현, 로그 분석, 미반영 변경 확인까지만 진행하고 코드 수정이 필요하면 별도 작업 브랜치/이슈 경로를 먼저 정리한다.
+
+### 2026-03-30 | session=codex-realtime-playbook-refresh-fix
+- branch: feature/issue-999-realtime-playbook-refresh
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: realtime 모드에서 재시작 후 fallback/current-session playbook 재사용으로 fresh generation이 누락되는 증상 조사 완료
+- next_ticket: issue-999
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: realtime loop에서 scanner candidate 변화 또는 fallback 성격 playbook일 때 current-session playbook 재사용을 건너뛰도록 테스트 우선으로 고정하고, 기존 mid-session/session-transition 정책은 유지한다.

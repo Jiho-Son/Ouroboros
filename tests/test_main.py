@@ -110,6 +110,7 @@ from src.strategy.models import (
     DayPlaybook,
     ScenarioAction,
     StockCondition,
+    StockPlaybook,
     StockScenario,
 )
 from src.strategy.playbook_store import StoredPlaybookEntry
@@ -120,6 +121,35 @@ from src.strategy.scenario_engine import ScenarioEngine, ScenarioMatch
 def _make_playbook(market: str = "KR") -> DayPlaybook:
     """Create a minimal empty playbook for testing."""
     return DayPlaybook(date=date(2026, 2, 8), market=market)
+
+
+def _make_stock_playbook(
+    market: str = "KR",
+    stock_code: str = "005930",
+    *,
+    rationale: str = "Primary test scenario",
+) -> DayPlaybook:
+    """Create a minimal non-empty playbook for reuse/refresh tests."""
+    return DayPlaybook(
+        date=date(2026, 2, 8),
+        market=market,
+        stock_playbooks=[
+            StockPlaybook(
+                stock_code=stock_code,
+                scenarios=[
+                    StockScenario(
+                        condition=StockCondition(rsi_below=30),
+                        action=ScenarioAction.BUY,
+                        confidence=80,
+                        allocation_pct=10.0,
+                        stop_loss_pct=-3.0,
+                        take_profit_pct=5.0,
+                        rationale=rationale,
+                    )
+                ],
+            )
+        ],
+    )
 
 
 def _make_settings(**overrides: Any) -> Settings:
@@ -1815,7 +1845,7 @@ class TestRealtimeSessionStateHelpers:
     def test_decide_playbook_selection_reuses_stored_regular_session_playbook(
         self,
     ) -> None:
-        stored_playbook = _make_playbook("US_NASDAQ")
+        stored_playbook = _make_stock_playbook("US_NASDAQ", "AAPL")
         entry = StoredPlaybookEntry(
             playbook=stored_playbook,
             slot="mid",
@@ -1830,6 +1860,7 @@ class TestRealtimeSessionStateHelpers:
             market_code="US_NASDAQ",
             session_id="US_REG",
             selection_intent=main_module.PlaybookSelectionIntent.RESUME_CURRENT_SESSION,
+            current_candidate_codes={"AAPL"},
         )
 
         assert decision.action is main_module.PlaybookSelectionAction.REUSE_STORED
@@ -1839,6 +1870,82 @@ class TestRealtimeSessionStateHelpers:
             "US_NASDAQ",
             session_id="US_REG",
         )
+
+    def test_decide_playbook_selection_rejects_empty_stored_playbook(self) -> None:
+        stored_playbook = _make_playbook("US_NASDAQ")
+        playbook_store = MagicMock()
+        playbook_store.load_latest_entry = MagicMock(
+            return_value=StoredPlaybookEntry(
+                playbook=stored_playbook,
+                slot="open",
+                generated_at=stored_playbook.generated_at,
+            )
+        )
+
+        decision = main_module._decide_playbook_selection(
+            playbook_store=playbook_store,
+            market_today=date(2026, 2, 8),
+            market_code="US_NASDAQ",
+            session_id="US_REG",
+            selection_intent=main_module.PlaybookSelectionIntent.RESUME_CURRENT_SESSION,
+            current_candidate_codes={"AAPL"},
+        )
+
+        assert decision.action is main_module.PlaybookSelectionAction.GENERATE_FRESH
+        assert decision.stored_entry is None
+        assert "empty" in decision.reason
+
+    def test_decide_playbook_selection_rejects_fallback_stored_playbook(self) -> None:
+        stored_playbook = _make_stock_playbook(
+            "US_NASDAQ",
+            "AAPL",
+            rationale="Rule-based BUY: momentum signal, volume=2.0x (fallback planner)",
+        )
+        playbook_store = MagicMock()
+        playbook_store.load_latest_entry = MagicMock(
+            return_value=StoredPlaybookEntry(
+                playbook=stored_playbook,
+                slot="open",
+                generated_at=stored_playbook.generated_at,
+            )
+        )
+
+        decision = main_module._decide_playbook_selection(
+            playbook_store=playbook_store,
+            market_today=date(2026, 2, 8),
+            market_code="US_NASDAQ",
+            session_id="US_REG",
+            selection_intent=main_module.PlaybookSelectionIntent.RESUME_CURRENT_SESSION,
+            current_candidate_codes={"AAPL"},
+        )
+
+        assert decision.action is main_module.PlaybookSelectionAction.GENERATE_FRESH
+        assert decision.stored_entry is None
+        assert "fallback" in decision.reason
+
+    def test_decide_playbook_selection_rejects_changed_candidate_set(self) -> None:
+        stored_playbook = _make_stock_playbook("US_NASDAQ", "AAPL")
+        playbook_store = MagicMock()
+        playbook_store.load_latest_entry = MagicMock(
+            return_value=StoredPlaybookEntry(
+                playbook=stored_playbook,
+                slot="open",
+                generated_at=stored_playbook.generated_at,
+            )
+        )
+
+        decision = main_module._decide_playbook_selection(
+            playbook_store=playbook_store,
+            market_today=date(2026, 2, 8),
+            market_code="US_NASDAQ",
+            session_id="US_REG",
+            selection_intent=main_module.PlaybookSelectionIntent.RESUME_CURRENT_SESSION,
+            current_candidate_codes={"TSLA"},
+        )
+
+        assert decision.action is main_module.PlaybookSelectionAction.GENERATE_FRESH
+        assert decision.stored_entry is None
+        assert "candidate" in decision.reason
 
     def test_decide_playbook_selection_force_fresh_on_transition(self) -> None:
         playbook_store = MagicMock()
@@ -1899,7 +2006,7 @@ class TestRealtimeSessionStateHelpers:
 
     def test_load_stored_playbook_for_session_uses_current_session_identity(self) -> None:
         playbook_store = MagicMock()
-        stored_playbook = _make_playbook("US_NASDAQ")
+        stored_playbook = _make_stock_playbook("US_NASDAQ", "AAPL")
         playbook_store.load_latest_entry = MagicMock(
             return_value=StoredPlaybookEntry(
                 playbook=stored_playbook,
@@ -1916,6 +2023,7 @@ class TestRealtimeSessionStateHelpers:
             session_id="US_PRE",
             selection_intent=main_module.PlaybookSelectionIntent.RESUME_CURRENT_SESSION,
             mid_refreshed=mid_refreshed,
+            current_candidate_codes={"AAPL"},
         )
 
         assert restored is stored_playbook
@@ -1930,7 +2038,7 @@ class TestRealtimeSessionStateHelpers:
         self,
     ) -> None:
         playbook_store = MagicMock()
-        stored_playbook = _make_playbook("US_NASDAQ")
+        stored_playbook = _make_stock_playbook("US_NASDAQ", "AAPL")
         playbook_store.load_latest_entry = MagicMock(
             return_value=StoredPlaybookEntry(
                 playbook=stored_playbook,
@@ -1946,6 +2054,7 @@ class TestRealtimeSessionStateHelpers:
             session_id="US_REG",
             selection_intent=main_module.PlaybookSelectionIntent.RESUME_CURRENT_SESSION,
             mid_refreshed=set(),
+            current_candidate_codes={"AAPL"},
         )
 
         assert restored is stored_playbook
@@ -1966,6 +2075,7 @@ class TestRealtimeSessionStateHelpers:
             selection_intent=main_module.PlaybookSelectionIntent.FORCE_FRESH,
             mid_refreshed=set(),
             force_reason="live session transition",
+            current_candidate_codes={"AAPL"},
         )
 
         assert restored is None
@@ -1985,6 +2095,7 @@ class TestRealtimeSessionStateHelpers:
             session_id="US_PRE",
             selection_intent=main_module.PlaybookSelectionIntent.RESUME_CURRENT_SESSION,
             mid_refreshed=mid_refreshed,
+            current_candidate_codes={"AAPL"},
         )
 
         assert restored is None
@@ -9019,7 +9130,19 @@ async def test_load_or_generate_daily_playbook_reuses_latest_current_session_ent
     market = MagicMock()
     market.code = "US_AMEX"
 
-    stored_playbook = _make_playbook("US_AMEX").model_copy(update={"session_id": "US_REG"})
+    candidate = ScanCandidate(
+        stock_code="PLU",
+        name="Pluri",
+        price=42.01,
+        volume=1_000_000.0,
+        volume_ratio=2.0,
+        rsi=28.0,
+        signal="oversold",
+        score=80.0,
+    )
+    stored_playbook = _make_stock_playbook("US_AMEX", "PLU").model_copy(
+        update={"session_id": "US_REG"}
+    )
     playbook_store = MagicMock()
     playbook_store.load_latest_entry = MagicMock(
         return_value=StoredPlaybookEntry(
@@ -9038,7 +9161,7 @@ async def test_load_or_generate_daily_playbook_reuses_latest_current_session_ent
     telegram.notify_playbook_generated = AsyncMock()
 
     playbook = await main_module._load_or_generate_daily_playbook(
-        candidates_list=[],
+        candidates_list=[candidate],
         current_holdings=[],
         market=market,
         market_today=date(2026, 3, 25),
@@ -13219,7 +13342,9 @@ async def test_run_reuses_stored_regular_session_playbook_after_restart() -> Non
             return None
 
     settings = _make_settings(TRADE_MODE="realtime", ENABLED_MARKETS="US_NASDAQ")
-    stored_playbook = _make_playbook("US_NASDAQ").model_copy(update={"session_id": "US_REG"})
+    stored_playbook = _make_stock_playbook("US_NASDAQ", "AAPL").model_copy(
+        update={"session_id": "US_REG"}
+    )
 
     market = MagicMock()
     market.code = "US_NASDAQ"
@@ -13366,6 +13491,177 @@ async def test_run_reuses_stored_regular_session_playbook_after_restart() -> Non
         "US_NASDAQ",
         session_id="US_REG",
     )
+    telegram.notify_playbook_failed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_run_regenerates_playbook_after_restart_when_scanner_candidates_change() -> None:
+    from src.analysis.smart_scanner import ScanCandidate
+
+    class _FakeEvent:
+        def __init__(self) -> None:
+            self._flag = False
+
+        def is_set(self) -> bool:
+            return self._flag
+
+        def set(self) -> None:
+            self._flag = True
+
+        def clear(self) -> None:
+            self._flag = False
+
+        async def wait(self) -> None:
+            return None
+
+    settings = _make_settings(TRADE_MODE="realtime", ENABLED_MARKETS="US_NASDAQ")
+    stored_playbook = _make_stock_playbook("US_NASDAQ", "AAPL").model_copy(
+        update={"session_id": "US_REG"}
+    )
+    fresh_playbook = _make_stock_playbook("US_NASDAQ", "TSLA")
+
+    market = MagicMock()
+    market.code = "US_NASDAQ"
+    market.name = "Nasdaq"
+    market.exchange_code = "NASD"
+    market.is_domestic = False
+    market.timezone = ZoneInfo("America/New_York")
+
+    candidate = ScanCandidate(
+        stock_code="TSLA",
+        name="Tesla",
+        price=190.0,
+        volume=1_000_000.0,
+        volume_ratio=2.0,
+        rsi=55.0,
+        signal="momentum",
+        score=80.0,
+    )
+
+    shutdown_event = _FakeEvent()
+    pause_event = _FakeEvent()
+    pause_event.set()
+
+    broker = MagicMock()
+    broker.close = AsyncMock()
+    overseas_broker = MagicMock()
+    overseas_broker.get_overseas_balance = AsyncMock(return_value={"output1": []})
+
+    playbook_store = MagicMock()
+    playbook_store.load_latest_entry = MagicMock(
+        return_value=StoredPlaybookEntry(
+            playbook=stored_playbook,
+            slot="open",
+            generated_at=stored_playbook.generated_at,
+        )
+    )
+    playbook_store.load = MagicMock(return_value=None)
+
+    pre_market_planner = MagicMock()
+    pre_market_planner.generate_playbook = AsyncMock(return_value=fresh_playbook)
+
+    smart_scanner = MagicMock()
+    smart_scanner.scan = AsyncMock(return_value=[candidate])
+    smart_scanner.get_stock_codes = MagicMock(return_value=["TSLA"])
+
+    telegram = MagicMock()
+    telegram.notify_system_start = AsyncMock()
+    telegram.notify_system_shutdown = AsyncMock()
+    telegram.notify_market_open = AsyncMock()
+    telegram.notify_playbook_failed = AsyncMock()
+    telegram.notify_playbook_generated = AsyncMock()
+    telegram.close = AsyncMock()
+
+    command_handler = MagicMock()
+    command_handler.register_command = MagicMock()
+    command_handler.register_command_with_args = MagicMock()
+    command_handler.start_polling = AsyncMock()
+    command_handler.stop_polling = AsyncMock()
+
+    async def _run_once(markets: list[Any], processor: Any) -> None:
+        for item in markets:
+            await processor(item)
+        shutdown_event.set()
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("src.main.asyncio.Event", side_effect=[shutdown_event, pause_event])
+        )
+        stack.enter_context(
+            patch(
+                "src.main.asyncio.get_running_loop",
+                return_value=MagicMock(add_signal_handler=MagicMock()),
+            )
+        )
+        stack.enter_context(patch("src.main.KISBroker", return_value=broker))
+        stack.enter_context(patch("src.main.OverseasBroker", return_value=overseas_broker))
+        stack.enter_context(patch("src.main.DecisionEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.RiskManager", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.init_db", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DecisionLogger", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextAggregator", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextScheduler", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.EvolutionOptimizer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextSelector", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ScenarioEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PlaybookStore", return_value=playbook_store))
+        stack.enter_context(patch("src.main.DailyReviewer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PreMarketPlanner", return_value=pre_market_planner))
+        stack.enter_context(patch("src.main.NotificationFilter", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.TelegramClient", return_value=telegram))
+        stack.enter_context(
+            patch("src.main.TelegramCommandHandler", return_value=command_handler)
+        )
+        stack.enter_context(
+            patch("src.main.SmartVolatilityScanner", return_value=smart_scanner)
+        )
+        stack.enter_context(
+            patch("src.main.CriticalityAssessor", return_value=MagicMock())
+        )
+        stack.enter_context(
+            patch(
+                "src.main.PriorityTaskQueue",
+                return_value=MagicMock(
+                    get_metrics=AsyncMock(return_value=MagicMock(total_enqueued=0))
+                ),
+            )
+        )
+        stack.enter_context(patch("src.main._start_dashboard_server"))
+        stack.enter_context(patch("src.main.sync_positions_from_broker", new=AsyncMock()))
+        stack.enter_context(
+            patch("src.main.process_blackout_recovery_orders", new=AsyncMock())
+        )
+        stack.enter_context(
+            patch("src.main.handle_overseas_pending_orders", new=AsyncMock())
+        )
+        stack.enter_context(
+            patch("src.main.build_overseas_symbol_universe", new=AsyncMock(return_value=[]))
+        )
+        stack.enter_context(patch("src.main.get_open_markets", return_value=[market]))
+        stack.enter_context(
+            patch("src.main._acquire_live_runtime_lock", return_value=None)
+        )
+        stack.enter_context(
+            patch("src.main.get_session_info", return_value=MagicMock(session_id="US_REG"))
+        )
+        stack.enter_context(patch("src.main._should_mid_session_refresh", return_value=False))
+        stack.enter_context(patch("src.main._should_rescan_market", return_value=True))
+        stack.enter_context(
+            patch("src.main._run_markets_in_parallel", side_effect=_run_once)
+        )
+        mock_trading_cycle = stack.enter_context(
+            patch("src.main.trading_cycle", new=AsyncMock())
+        )
+
+        await main_module.run(settings)
+
+    assert mock_trading_cycle.await_count == 1
+    resumed_playbook = mock_trading_cycle.await_args_list[0].args[3]
+    assert resumed_playbook.session_id == "US_REG"
+    assert resumed_playbook.get_stock_playbook("TSLA") is not None
+    assert resumed_playbook.get_stock_playbook("AAPL") is None
+    assert pre_market_planner.generate_playbook.await_count == 1
     telegram.notify_playbook_failed.assert_not_awaited()
 
 

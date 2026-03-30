@@ -2853,6 +2853,7 @@ async def _load_or_generate_daily_playbook(
         market_code=market.code,
         session_id=session_id,
         selection_intent=PlaybookSelectionIntent.RESUME_CURRENT_SESSION,
+        current_candidate_codes={candidate.stock_code for candidate in candidates_list},
     )
     if selection.stored_entry is not None:
         return _with_playbook_session_id(selection.stored_entry.playbook, session_id)
@@ -4351,6 +4352,39 @@ def _should_mid_session_refresh(
     return local_now.hour >= 12
 
 
+def _playbook_candidate_codes(playbook: DayPlaybook) -> set[str]:
+    """Return the explicit stock universe encoded in a playbook."""
+    return {stock_playbook.stock_code for stock_playbook in playbook.stock_playbooks}
+
+
+def _playbook_uses_failure_fallback(playbook: DayPlaybook) -> bool:
+    """Return True when the playbook was produced by planner-failure fallback paths."""
+    fallback_markers = ("fallback planner", "planner failure")
+    for stock_playbook in playbook.stock_playbooks:
+        for scenario in stock_playbook.scenarios:
+            rationale = (scenario.rationale or "").lower()
+            if any(marker in rationale for marker in fallback_markers):
+                return True
+    return False
+
+
+def _can_reuse_current_session_playbook(
+    *,
+    playbook: DayPlaybook,
+    current_candidate_codes: set[str] | None,
+) -> tuple[bool, str]:
+    """Validate whether a current-session playbook is reusable in realtime flow."""
+    if not playbook.stock_playbooks:
+        return False, "stored current-session playbook is empty"
+    if _playbook_uses_failure_fallback(playbook):
+        return False, "stored current-session playbook is fallback-generated"
+    if current_candidate_codes is not None:
+        normalized_candidate_codes = {code for code in current_candidate_codes if code}
+        if _playbook_candidate_codes(playbook) != normalized_candidate_codes:
+            return False, "scanner candidate set changed since current-session playbook"
+    return True, "current-session playbook remains reusable"
+
+
 def _decide_playbook_selection(
     *,
     playbook_store: PlaybookStore,
@@ -4358,6 +4392,7 @@ def _decide_playbook_selection(
     market_code: str,
     session_id: str,
     selection_intent: PlaybookSelectionIntent,
+    current_candidate_codes: set[str] | None = None,
     force_reason: str | None = None,
 ) -> PlaybookSelectionDecision:
     """Decide whether runtime should reuse the current-session playbook or regenerate it."""
@@ -4378,6 +4413,16 @@ def _decide_playbook_selection(
             reason="no stored current-session playbook",
         )
 
+    can_reuse, reuse_reason = _can_reuse_current_session_playbook(
+        playbook=stored_entry.playbook,
+        current_candidate_codes=current_candidate_codes,
+    )
+    if not can_reuse:
+        return PlaybookSelectionDecision(
+            action=PlaybookSelectionAction.GENERATE_FRESH,
+            reason=reuse_reason,
+        )
+
     return PlaybookSelectionDecision(
         action=PlaybookSelectionAction.REUSE_STORED,
         reason=f"reusing stored current-session playbook (slot={stored_entry.slot})",
@@ -4393,6 +4438,7 @@ def _load_stored_playbook_for_session(
     session_id: str,
     selection_intent: PlaybookSelectionIntent,
     mid_refreshed: set[str],
+    current_candidate_codes: set[str] | None = None,
     force_reason: str | None = None,
 ) -> DayPlaybook | None:
     """Load the latest stored playbook that matches the active runtime session."""
@@ -4402,6 +4448,7 @@ def _load_stored_playbook_for_session(
         market_code=market_code,
         session_id=session_id,
         selection_intent=selection_intent,
+        current_candidate_codes=current_candidate_codes,
         force_reason=force_reason,
     )
     if decision.stored_entry is None:
@@ -5422,6 +5469,25 @@ async def run(settings: Settings) -> None:
                                     tracking_snapshot,
                                 )
                                 market_today = datetime.now(market.timezone).date()
+                                current_candidate_codes = {
+                                    candidate.stock_code for candidate in candidates
+                                }
+                                cached_playbook = playbooks.get(market.code)
+                                if cached_playbook is not None:
+                                    can_reuse_cached, cached_reason = (
+                                        _can_reuse_current_session_playbook(
+                                            playbook=cached_playbook,
+                                            current_candidate_codes=current_candidate_codes,
+                                        )
+                                    )
+                                    if not can_reuse_cached:
+                                        playbooks.pop(market.code, None)
+                                        logger.info(
+                                            "Dropping cached playbook for %s session=%s; %s",
+                                            market.code,
+                                            session_info.session_id,
+                                            cached_reason,
+                                        )
                                 if market.code not in playbooks:
                                     selection_intent = (
                                         PlaybookSelectionIntent.FORCE_FRESH
@@ -5444,6 +5510,7 @@ async def run(settings: Settings) -> None:
                                         session_id=session_info.session_id,
                                         selection_intent=selection_intent,
                                         mid_refreshed=mid_refreshed,
+                                        current_candidate_codes=current_candidate_codes,
                                         force_reason=selection_reason,
                                     )
                                     if stored_pb is not None:
