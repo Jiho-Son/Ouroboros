@@ -18,6 +18,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from src.db import init_db
+
 logger = logging.getLogger(__name__)
 
 
@@ -81,7 +83,9 @@ class HealthMonitor:
 
         # Check if database is accessible
         try:
-            conn = sqlite3.connect(str(self.db_path))
+            # Reuse the shared DB bootstrap so fresh SQLite files expose the
+            # same schema contract as the runtime and dashboard paths.
+            conn = init_db(str(self.db_path))
             cursor = conn.cursor()
 
             # Run integrity check

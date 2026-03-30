@@ -288,6 +288,18 @@ class TestHealthMonitor:
         assert result.status == HealthStatus.UNHEALTHY
         assert "not found" in result.message.lower()
 
+    def test_check_database_health_bootstraps_empty_db(self, tmp_path: Path) -> None:
+        """빈 SQLite 파일도 health check 시 스키마를 bootstrap 해야 한다."""
+        db_path = tmp_path / "fresh.db"
+        db_path.touch()
+
+        monitor = HealthMonitor(str(db_path), tmp_path / "backups")
+        result = monitor.check_database_health()
+
+        assert result.status == HealthStatus.HEALTHY
+        assert result.details is not None
+        assert result.details["trade_count"] == 0
+
     def test_check_disk_space(self, temp_db: Path, tmp_path: Path) -> None:
         """Test disk space check."""
         monitor = HealthMonitor(str(temp_db), tmp_path, min_disk_space_gb=0.001)

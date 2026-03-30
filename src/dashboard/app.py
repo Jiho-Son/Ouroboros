@@ -12,6 +12,8 @@ from typing import Annotated, Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from src.db import init_db
+
 _DASHBOARD_MARKET_GROUPS: dict[str, tuple[str, ...]] = {
     "US": ("US_NASDAQ", "US_NYSE", "US_AMEX"),
 }
@@ -632,9 +634,10 @@ def create_dashboard_app(
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
+    # Dashboard readers must tolerate a fresh DB file before the trading loop
+    # has written the first trade by bootstrapping the shared schema contract.
+    conn = init_db(db_path)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=8000")
     return conn
 
