@@ -24,12 +24,34 @@ log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" | tee -a "$OUT_LOG" >/dev/null
 }
 
+log_has_pattern() {
+  local pattern="$1"
+  local run_log="$2"
+
+  if command -v rg >/dev/null 2>&1; then
+    rg -q "$pattern" "$run_log"
+  else
+    grep -Eq "$pattern" "$run_log"
+  fi
+}
+
+extract_log_matches() {
+  local pattern="$1"
+  local run_log="$2"
+
+  if command -v rg >/dev/null 2>&1; then
+    rg -o "$pattern" "$run_log" 2>/dev/null || true
+  else
+    grep -Eo "$pattern" "$run_log" 2>/dev/null || true
+  fi
+}
+
 check_signal() {
   local name="$1"
   local pattern="$2"
   local run_log="$3"
 
-  if rg -q "$pattern" "$run_log"; then
+  if log_has_pattern "$pattern" "$run_log"; then
     log "[COVERAGE] ${name}=PASS pattern=${pattern}"
     return 0
   fi
@@ -53,7 +75,7 @@ extract_logged_app_pid() {
     return 1
   fi
 
-  match="$(rg -o 'app pid=[0-9]+' "$run_log" 2>/dev/null | tail -n1 || true)"
+  match="$(extract_log_matches 'app pid=[0-9]+' "$run_log" | tail -n1 || true)"
   if [ -z "$match" ]; then
     return 1
   fi
@@ -88,7 +110,7 @@ check_forbidden() {
   local pattern="$2"
   local run_log="$3"
 
-  if rg -q "$pattern" "$run_log"; then
+  if log_has_pattern "$pattern" "$run_log"; then
     log "[FORBIDDEN] ${name}=HIT pattern=${pattern}"
     return 1
   fi

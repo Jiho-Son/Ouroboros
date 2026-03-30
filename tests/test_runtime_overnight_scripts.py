@@ -858,6 +858,7 @@ def test_runtime_verify_monitor_restores_missing_app_pid_from_latest_run_log(
             "MAX_HOURS": "1",
             "MAX_LOOPS": "1",
             "POLICY_TZ": "UTC",
+            "PATH": "/bin:/usr/bin",
         }
     )
     completed = subprocess.run(
@@ -871,6 +872,7 @@ def test_runtime_verify_monitor_restores_missing_app_pid_from_latest_run_log(
     assert completed.returncode == 0, completed.stderr
 
     assert (log_dir / "app.pid").read_text(encoding="utf-8").strip() == str(current_pid)
+    assert "rg: command not found" not in completed.stderr
     log_text = _latest_runtime_log(log_dir)
     assert "restored app pid file" in log_text
     assert "app_alive=1" in log_text
