@@ -445,12 +445,28 @@ class DecisionEngine:
 
         try:
             raw = await self._generate_text(prompt)
-        except Exception as exc:
-            logger.error("LLM provider error: %s", exc)
+        except TimeoutError as exc:
+            logger.error(
+                "LLM provider timeout after %ss: %s(%s)",
+                self._settings.OPENAI_COMPAT_REQUEST_TIMEOUT_SECONDS
+                if self._settings.LLM_PROVIDER == "openai_compat"
+                else self._settings.OLLAMA_REQUEST_TIMEOUT_SECONDS,
+                type(exc).__name__,
+                exc,
+            )
             return TradeDecision(
                 action="HOLD",
                 confidence=0,
-                rationale=f"API error: {exc}",
+                rationale=f"Timeout: {type(exc).__name__}",
+                token_count=token_count,
+                llm_prompt=prompt,
+            )
+        except Exception as exc:
+            logger.error("LLM provider error: %s(%s)", type(exc).__name__, exc)
+            return TradeDecision(
+                action="HOLD",
+                confidence=0,
+                rationale=f"API error: {type(exc).__name__}: {exc}",
                 token_count=token_count,
                 llm_prompt=prompt,
             )
@@ -636,14 +652,29 @@ class DecisionEngine:
 
         try:
             raw = await self._generate_text(prompt)
-        except Exception as exc:
-            logger.error("LLM provider error in batch decision: %s", exc)
-            # Return HOLD for all stocks on API error
+        except TimeoutError as exc:
+            logger.error(
+                "LLM provider timeout in batch decision: %s(%s)", type(exc).__name__, exc
+            )
             return {
                 stock["stock_code"]: TradeDecision(
                     action="HOLD",
                     confidence=0,
-                    rationale=f"API error: {exc}",
+                    rationale=f"Timeout: {type(exc).__name__}",
+                    token_count=token_count,
+                    cached=False,
+                )
+                for stock in stocks_data
+            }
+        except Exception as exc:
+            logger.error(
+                "LLM provider error in batch decision: %s(%s)", type(exc).__name__, exc
+            )
+            return {
+                stock["stock_code"]: TradeDecision(
+                    action="HOLD",
+                    confidence=0,
+                    rationale=f"API error: {type(exc).__name__}: {exc}",
                     token_count=token_count,
                     cached=False,
                 )
