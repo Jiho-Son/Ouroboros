@@ -83,9 +83,7 @@ class HealthMonitor:
 
         # Check if database is accessible
         try:
-            # Reuse the shared DB bootstrap so fresh SQLite files expose the
-            # same schema contract as the runtime and dashboard paths.
-            conn = init_db(str(self.db_path))
+            conn = sqlite3.connect(str(self.db_path))
             cursor = conn.cursor()
 
             # Run integrity check
@@ -106,7 +104,20 @@ class HealthMonitor:
             db_size = cursor.fetchone()[0]
 
             # Get row counts
-            cursor.execute("SELECT COUNT(*) FROM trades")
+            try:
+                cursor.execute("SELECT COUNT(*) FROM trades")
+            except sqlite3.OperationalError as exc:
+                if "no such table: trades" not in str(exc):
+                    raise
+                conn.close()
+                # Bootstrap only when the shared schema has not been created yet.
+                conn = init_db(str(self.db_path))
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()"
+                )
+                db_size = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM trades")
             trade_count = cursor.fetchone()[0]
 
             conn.close()
