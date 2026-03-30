@@ -836,50 +836,44 @@ def test_runtime_verify_monitor_restores_missing_app_pid_from_latest_run_log(
     log_dir = tmp_path / "overnight"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    fake_app = subprocess.Popen(["sleep", "10"], cwd=REPO_ROOT)
-    try:
-        (log_dir / "run_20260330_000000.log").write_text(
-            "\n".join(
-                [
-                    "[2026-03-30T13:00:00Z] starting: python3 -m src.main --mode=live --dashboard",
-                    f"[2026-03-30T13:00:01Z] app pid={fake_app.pid}",
-                    "Mode: live",
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
+    current_pid = os.getpid()
+    (log_dir / "run_20260330_000000.log").write_text(
+        "\n".join(
+            [
+                "[2026-03-30T13:00:00Z] starting: python3 -m src.main --mode=live --dashboard",
+                f"[2026-03-30T13:00:01Z] app pid={current_pid}",
+                "Mode: live",
+            ]
         )
+        + "\n",
+        encoding="utf-8",
+    )
 
-        env = os.environ.copy()
-        env.update(
-            {
-                "ROOT_DIR": str(REPO_ROOT),
-                "LOG_DIR": str(log_dir),
-                "INTERVAL_SEC": "1",
-                "MAX_HOURS": "1",
-                "MAX_LOOPS": "1",
-                "POLICY_TZ": "UTC",
-            }
-        )
-        completed = subprocess.run(
-            ["bash", str(RUNTIME_MONITOR)],
-            cwd=REPO_ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert completed.returncode == 0, completed.stderr
+    env = os.environ.copy()
+    env.update(
+        {
+            "ROOT_DIR": str(REPO_ROOT),
+            "LOG_DIR": str(log_dir),
+            "INTERVAL_SEC": "1",
+            "MAX_HOURS": "1",
+            "MAX_LOOPS": "1",
+            "POLICY_TZ": "UTC",
+        }
+    )
+    completed = subprocess.run(
+        ["bash", str(RUNTIME_MONITOR)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
 
-        assert (log_dir / "app.pid").read_text(encoding="utf-8").strip() == str(
-            fake_app.pid
-        )
-        log_text = _latest_runtime_log(log_dir)
-        assert "restored app pid file" in log_text
-        assert "app_alive=1" in log_text
-    finally:
-        fake_app.terminate()
-        fake_app.wait(timeout=5)
+    assert (log_dir / "app.pid").read_text(encoding="utf-8").strip() == str(current_pid)
+    log_text = _latest_runtime_log(log_dir)
+    assert "restored app pid file" in log_text
+    assert "app_alive=1" in log_text
 
 
 def test_runtime_verify_monitor_uses_branch_scoped_defaults_when_unset(
