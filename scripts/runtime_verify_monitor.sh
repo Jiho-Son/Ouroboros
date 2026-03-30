@@ -45,6 +45,44 @@ find_live_pids() {
   printf '%s\n' "$raw" | awk '{print $1}' | tr '\n' ',' | sed 's/,$//'
 }
 
+extract_logged_app_pid() {
+  local run_log="$1"
+  local match
+
+  if [ -z "$run_log" ] || [ ! -f "$run_log" ]; then
+    return 1
+  fi
+
+  match="$(rg -o 'app pid=[0-9]+' "$run_log" 2>/dev/null | tail -n1 || true)"
+  if [ -z "$match" ]; then
+    return 1
+  fi
+
+  printf '%s\n' "${match##*=}"
+}
+
+restore_app_pid_file_from_run_log() {
+  local current_pid="$1"
+  local run_log="$2"
+  local pid_file="$LOG_DIR/app.pid"
+  local logged_pid
+
+  if [ -n "$current_pid" ] && kill -0 "$current_pid" 2>/dev/null; then
+    printf '%s\n' "$current_pid"
+    return 0
+  fi
+
+  logged_pid="$(extract_logged_app_pid "$run_log")" || return 1
+  if ! kill -0 "$logged_pid" 2>/dev/null; then
+    log "[WARN] app pid recovery skipped stale_logged_pid=$logged_pid run_log=$run_log"
+    return 1
+  fi
+
+  printf '%s\n' "$logged_pid" > "$pid_file"
+  log "[INFO] restored app pid file from run log pid=$logged_pid path=$pid_file"
+  printf '%s\n' "$logged_pid"
+}
+
 check_forbidden() {
   local name="$1"
   local pattern="$2"
@@ -94,6 +132,10 @@ while true; do
 
   # Basic liveness hints.
   app_pid="$(cat "$LOG_DIR/app.pid" 2>/dev/null || true)"
+  restored_app_pid="$(restore_app_pid_file_from_run_log "$app_pid" "$latest_run" || true)"
+  if [ -n "$restored_app_pid" ]; then
+    app_pid="$restored_app_pid"
+  fi
   wd_pid="$(cat "$LOG_DIR/watchdog.pid" 2>/dev/null || true)"
   live_pids="$(find_live_pids)"
   app_alive=0
