@@ -240,6 +240,10 @@ Operational policy:
 - Non-`main` worktrees may run the same scripts concurrently for validation; the
   scripts auto-isolate `LOG_DIR`, `LIVE_RUNTIME_LOCK_PATH`, `DASHBOARD_PORT`, and
   `TMUX_SESSION_PREFIX` per branch unless you override them explicitly.
+- `scripts/runtime_verify_monitor.sh` can self-heal a missing/stale `app.pid`
+  from the latest `run_*.log` when the logged app PID is still alive; this
+  recovery stays inside the current worktree's `LOG_DIR` and does not mirror
+  PID files across runtime instances.
 - The hook stores its dedupe marker and restart log under the canonical state
   root (`data/overnight/canonical_restart.*` by default), so non-`main`
   worktree runtime state remains isolated. `canonical_restart.log` now records

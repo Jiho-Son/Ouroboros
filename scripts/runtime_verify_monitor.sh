@@ -24,12 +24,35 @@ log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" | tee -a "$OUT_LOG" >/dev/null
 }
 
+log_has_pattern() {
+  local pattern="$1"
+  local run_log="$2"
+
+  if command -v rg >/dev/null 2>&1; then
+    rg -q "$pattern" "$run_log"
+  else
+    grep -Eq "$pattern" "$run_log"
+  fi
+}
+
+extract_log_matches() {
+  local pattern="$1"
+  local run_log="$2"
+
+  # Keep patterns ERE-compatible so rg and grep -E remain interchangeable.
+  if command -v rg >/dev/null 2>&1; then
+    rg -o "$pattern" "$run_log" 2>/dev/null || true
+  else
+    grep -Eo "$pattern" "$run_log" 2>/dev/null || true
+  fi
+}
+
 check_signal() {
   local name="$1"
   local pattern="$2"
   local run_log="$3"
 
-  if rg -q "$pattern" "$run_log"; then
+  if log_has_pattern "$pattern" "$run_log"; then
     log "[COVERAGE] ${name}=PASS pattern=${pattern}"
     return 0
   fi
@@ -45,12 +68,60 @@ find_live_pids() {
   printf '%s\n' "$raw" | awk '{print $1}' | tr '\n' ',' | sed 's/,$//'
 }
 
+extract_logged_app_pid() {
+  local run_log="$1"
+  local match
+
+  if [ -z "$run_log" ] || [ ! -f "$run_log" ]; then
+    return 1
+  fi
+
+  match="$(extract_log_matches 'app pid=[0-9]+' "$run_log" | tail -n1 || true)"
+  if [ -z "$match" ]; then
+    return 1
+  fi
+
+  printf '%s\n' "${match##*=}"
+}
+
+restore_app_pid_file_from_run_log() {
+  local current_pid="$1"
+  local run_log="$2"
+  local pid_file="${3:-$LOG_DIR/app.pid}"
+  local logged_pid
+  local tmp_file
+
+  if [ -n "$current_pid" ] && kill -0 "$current_pid" 2>/dev/null; then
+    printf '%s\n' "$current_pid"
+    return 0
+  fi
+
+  logged_pid="$(extract_logged_app_pid "$run_log")" || return 1
+  if ! kill -0 "$logged_pid" 2>/dev/null; then
+    log "[WARN] app pid recovery skipped stale_logged_pid=$logged_pid run_log=$run_log"
+    return 1
+  fi
+
+  mkdir -p "$(dirname "$pid_file")"
+  tmp_file="$(mktemp "${pid_file}.tmp.XXXXXX")"
+  printf '%s\n' "$logged_pid" > "$tmp_file" || {
+    rm -f "$tmp_file"
+    return 1
+  }
+  mv "$tmp_file" "$pid_file" || {
+    rm -f "$tmp_file"
+    return 1
+  }
+  log "[INFO] restored app pid file from run log pid=$logged_pid path=$pid_file"
+  printf '%s\n' "$logged_pid"
+}
+
 check_forbidden() {
   local name="$1"
   local pattern="$2"
   local run_log="$3"
 
-  if rg -q "$pattern" "$run_log"; then
+  if log_has_pattern "$pattern" "$run_log"; then
     log "[FORBIDDEN] ${name}=HIT pattern=${pattern}"
     return 1
   fi
@@ -94,6 +165,10 @@ while true; do
 
   # Basic liveness hints.
   app_pid="$(cat "$LOG_DIR/app.pid" 2>/dev/null || true)"
+  restored_app_pid="$(restore_app_pid_file_from_run_log "$app_pid" "$latest_run" || true)"
+  if [ -n "$restored_app_pid" ]; then
+    app_pid="$restored_app_pid"
+  fi
   wd_pid="$(cat "$LOG_DIR/watchdog.pid" 2>/dev/null || true)"
   live_pids="$(find_live_pids)"
   app_alive=0
