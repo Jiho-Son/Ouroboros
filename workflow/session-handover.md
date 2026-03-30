@@ -1143,3 +1143,11 @@
 - next_ticket: OOR-874
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: `data/overnight/app.pid` 누락 원인을 먼저 재현하고, overnight 프로세스 시작/정지 경로의 PID 파일 계약을 테스트로 고정한 뒤 최소 수정으로 복구한다.
+
+### 2026-03-30 | session=codex-oor-874-pr889-review-address
+- branch: feature/issue-874-harness-process-pid-file-missing
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-874 In Progress 상태, PR #889 review 코멘트와 unresolved thread 확인 예정
+- next_ticket: OOR-874
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #889의 review 항목은 PID 파일 복구 경로의 원자적 쓰기, 함수 인자화, regex helper 제약 문서화가 중심이며, suggestion 항목은 현재 테스트/문서와 대조 후 필요한 범위만 반영하고 증적을 PR 코멘트로 남긴다.

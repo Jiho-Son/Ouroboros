@@ -39,6 +39,7 @@ extract_log_matches() {
   local pattern="$1"
   local run_log="$2"
 
+  # Keep patterns ERE-compatible so rg and grep -E remain interchangeable.
   if command -v rg >/dev/null 2>&1; then
     rg -o "$pattern" "$run_log" 2>/dev/null || true
   else
@@ -86,8 +87,9 @@ extract_logged_app_pid() {
 restore_app_pid_file_from_run_log() {
   local current_pid="$1"
   local run_log="$2"
-  local pid_file="$LOG_DIR/app.pid"
+  local pid_file="${3:-$LOG_DIR/app.pid}"
   local logged_pid
+  local tmp_file
 
   if [ -n "$current_pid" ] && kill -0 "$current_pid" 2>/dev/null; then
     printf '%s\n' "$current_pid"
@@ -100,7 +102,16 @@ restore_app_pid_file_from_run_log() {
     return 1
   fi
 
-  printf '%s\n' "$logged_pid" > "$pid_file"
+  mkdir -p "$(dirname "$pid_file")"
+  tmp_file="$(mktemp "${pid_file}.tmp.XXXXXX")"
+  printf '%s\n' "$logged_pid" > "$tmp_file" || {
+    rm -f "$tmp_file"
+    return 1
+  }
+  mv "$tmp_file" "$pid_file" || {
+    rm -f "$tmp_file"
+    return 1
+  }
   log "[INFO] restored app pid file from run log pid=$logged_pid path=$pid_file"
   printf '%s\n' "$logged_pid"
 }

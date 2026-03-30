@@ -1,5 +1,7 @@
 # OOR-874 PID File Recovery Implementation Plan
 
+**Related design doc:** [`2026-03-30-oor-874-pid-file-recovery-design.md`](2026-03-30-oor-874-pid-file-recovery-design.md)
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Make `scripts/runtime_verify_monitor.sh` recreate a missing/stale `app.pid` from the latest run log when the logged app PID is still alive, so harness process checks stop failing on missing PID files.

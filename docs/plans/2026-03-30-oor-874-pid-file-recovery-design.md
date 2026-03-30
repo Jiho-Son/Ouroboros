@@ -2,6 +2,8 @@
 
 **Ticket:** `OOR-874`
 
+**Related implementation plan:** [`2026-03-30-oor-874-pid-file-recovery.md`](2026-03-30-oor-874-pid-file-recovery.md)
+
 **Problem:** The harness reported `PID 파일 없음: data/overnight/app.pid`. The runtime monitor already treats a live process as healthy even when `app.pid` is missing, but it does not recreate the missing PID file. That leaves external process checks with a false negative even while the app process is still alive.
 
 **Approval source:** This is an unattended orchestration session, so the Linear ticket body is treated as the design input and approval boundary.

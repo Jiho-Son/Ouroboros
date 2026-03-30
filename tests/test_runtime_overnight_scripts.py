@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 import signal
 import socket
 import subprocess
@@ -13,6 +15,7 @@ WORKFLOW_TEMPLATE = REPO_ROOT / "WORKFLOW.md"
 RUN_OVERNIGHT = REPO_ROOT / "scripts" / "run_overnight.sh"
 RUNTIME_MONITOR = REPO_ROOT / "scripts" / "runtime_verify_monitor.sh"
 RUNTIME_INSTANCE_ENV = REPO_ROOT / "scripts" / "runtime_instance_env.sh"
+BASH = Path(shutil.which("bash") or "/bin/bash")
 SYMPHONY_BEFORE_REMOVE_CANONICAL_RESTART = (
     REPO_ROOT / "scripts" / "symphony_before_remove_canonical_restart.sh"
 )
@@ -24,10 +27,17 @@ def _latest_runtime_log(log_dir: Path) -> str:
     return logs[-1].read_text(encoding="utf-8")
 
 
+def _runtime_monitor_helper_functions() -> str:
+    lines = RUNTIME_MONITOR.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("log() {"))
+    end = next(i for i, line in enumerate(lines) if line.startswith("check_forbidden() {"))
+    return "\n".join(lines[start:end]) + "\n"
+
+
 def _resolve_runtime_defaults(*, state_root: Path, branch: str) -> dict[str, str]:
     completed = subprocess.run(
         [
-            "bash",
+            str(BASH),
             "-lc",
             (
                 f'source "{RUNTIME_INSTANCE_ENV}"; '
@@ -812,7 +822,7 @@ def test_runtime_verify_monitor_detects_live_process_without_pid_files(tmp_path:
             }
         )
         completed = subprocess.run(
-            ["bash", str(RUNTIME_MONITOR)],
+            [str(BASH), str(RUNTIME_MONITOR)],
             cwd=REPO_ROOT,
             env=env,
             capture_output=True,
@@ -862,7 +872,7 @@ def test_runtime_verify_monitor_restores_missing_app_pid_from_latest_run_log(
         }
     )
     completed = subprocess.run(
-        ["bash", str(RUNTIME_MONITOR)],
+        [str(BASH), str(RUNTIME_MONITOR)],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -876,6 +886,50 @@ def test_runtime_verify_monitor_restores_missing_app_pid_from_latest_run_log(
     log_text = _latest_runtime_log(log_dir)
     assert "restored app pid file" in log_text
     assert "app_alive=1" in log_text
+
+
+def test_runtime_verify_monitor_restore_helper_supports_pid_file_override(
+    tmp_path: Path,
+) -> None:
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    run_log = log_dir / "run_20260330_000000.log"
+    current_pid = os.getpid()
+    run_log.write_text(
+        "\n".join(
+            [
+                "[2026-03-30T13:00:00Z] starting: python3 -m src.main --mode=live --dashboard",
+                f"[2026-03-30T13:00:01Z] app pid={current_pid}",
+                "Mode: live",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    helper_log = log_dir / "helper.log"
+    custom_pid_file = tmp_path / "custom-state" / "restored-app.pid"
+    custom_pid_file.parent.mkdir(parents=True, exist_ok=True)
+
+    shell_script = f"""
+set -euo pipefail
+LOG_DIR={shlex.quote(str(log_dir))}
+OUT_LOG={shlex.quote(str(helper_log))}
+{_runtime_monitor_helper_functions()}
+restore_app_pid_file_from_run_log "" {shlex.quote(str(run_log))} {shlex.quote(str(custom_pid_file))}
+"""
+    completed = subprocess.run(
+        [str(BASH), "-lc", shell_script],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == str(current_pid)
+    assert custom_pid_file.read_text(encoding="utf-8").strip() == str(current_pid)
+    assert not (log_dir / "app.pid").exists()
+    assert "restored app pid file" in helper_log.read_text(encoding="utf-8")
 
 
 def test_runtime_verify_monitor_uses_branch_scoped_defaults_when_unset(
@@ -894,7 +948,7 @@ def test_runtime_verify_monitor_uses_branch_scoped_defaults_when_unset(
         }
     )
     completed = subprocess.run(
-        ["bash", str(RUNTIME_MONITOR)],
+        [str(BASH), str(RUNTIME_MONITOR)],
         cwd=REPO_ROOT,
         env=env,
         capture_output=True,
@@ -928,7 +982,7 @@ def test_run_overnight_fails_fast_when_dashboard_port_in_use(tmp_path: Path) -> 
             }
         )
         completed = subprocess.run(
-            ["bash", str(RUN_OVERNIGHT)],
+            [str(BASH), str(RUN_OVERNIGHT)],
             cwd=REPO_ROOT,
             env=env,
             capture_output=True,
