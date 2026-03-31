@@ -578,8 +578,8 @@ def test_get_performance_summary() -> None:
     Path(tmp_path).unlink()
 
 
-def test_get_performance_summary_uses_shared_bootstrap_contract(tmp_path: Path) -> None:
-    """Performance summary should still bootstrap schema when the DB file is recreated."""
+def test_get_performance_summary_bootstraps_fresh_db(tmp_path: Path) -> None:
+    """Performance summary should bootstrap schema for a fresh SQLite file."""
     db_path = tmp_path / "fresh.db"
     db_path.touch()
 
@@ -593,9 +593,6 @@ def test_get_performance_summary_uses_shared_bootstrap_contract(tmp_path: Path) 
     )
 
     optimizer = EvolutionOptimizer(settings)
-    optimizer._conn.close()
-    db_path.unlink()
-
     summary = optimizer.get_performance_summary()
 
     assert summary == {

@@ -182,7 +182,7 @@ class TestBackupExporter:
 
         assert stats["total_trades"] == 0
         assert stats["date_range"] == {"earliest": None, "latest": None}
-        assert stats["db_size_bytes"] >= 0
+        assert stats["db_size_bytes"] > 0
 
 
 class TestBackupScheduler:
