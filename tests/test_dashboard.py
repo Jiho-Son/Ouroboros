@@ -974,6 +974,20 @@ def test_positions_empty_when_no_trades(tmp_path: Path) -> None:
     assert body["positions"] == []
 
 
+def test_status_handles_fresh_db_file(tmp_path: Path) -> None:
+    """Status should return zero-count totals for a fresh SQLite file."""
+    db_path = tmp_path / "fresh.db"
+    db_path.touch()
+
+    app = create_dashboard_app(str(db_path))
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+
+    assert body["totals"]["trade_count"] == 0
+    assert body["totals"]["decision_count"] == 0
+    assert body["markets"] == {}
+
+
 def _seed_cb_context(conn: sqlite3.Connection, pnl_pct: float, market: str = "KR") -> None:
     import json as _json
 

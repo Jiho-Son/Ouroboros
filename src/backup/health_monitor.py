@@ -18,6 +18,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from src.db import init_db
+
 logger = logging.getLogger(__name__)
 
 
@@ -80,6 +82,7 @@ class HealthMonitor:
             )
 
         # Check if database is accessible
+        conn: sqlite3.Connection | None = None
         try:
             conn = sqlite3.connect(str(self.db_path))
             cursor = conn.cursor()
@@ -102,10 +105,23 @@ class HealthMonitor:
             db_size = cursor.fetchone()[0]
 
             # Get row counts
-            cursor.execute("SELECT COUNT(*) FROM trades")
-            trade_count = cursor.fetchone()[0]
-
-            conn.close()
+            try:
+                cursor.execute("SELECT COUNT(*) FROM trades")
+                trade_count = cursor.fetchone()[0]
+            except sqlite3.OperationalError as exc:
+                if "no such table: trades" not in str(exc).lower():
+                    raise
+                conn.close()
+                conn = init_db(str(self.db_path))
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA integrity_check")
+                result = cursor.fetchone()[0]
+                if result != "ok":
+                    return HealthCheckResult(
+                        status=HealthStatus.UNHEALTHY,
+                        message=f"Database integrity check failed: {result}",
+                    )
+                trade_count = 0
 
             return HealthCheckResult(
                 status=HealthStatus.HEALTHY,
@@ -122,6 +138,9 @@ class HealthMonitor:
                 status=HealthStatus.UNHEALTHY,
                 message=f"Database access error: {exc}",
             )
+        finally:
+            if conn is not None:
+                conn.close()
 
     def check_disk_space(self) -> HealthCheckResult:
         """Check available disk space.

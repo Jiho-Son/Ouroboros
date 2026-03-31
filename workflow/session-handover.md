@@ -1151,3 +1151,19 @@
 - next_ticket: OOR-874
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #889의 review 항목은 PID 파일 복구 경로의 원자적 쓰기, 함수 인자화, regex helper 제약 문서화가 중심이며, suggestion 항목은 현재 테스트/문서와 대조 후 필요한 범위만 반영하고 증적을 PR 코멘트로 남긴다.
+
+### 2026-03-30 | session=codex-oor-875-start
+- branch: feature/issue-875-harness-db-access-trades-table
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-875 Todo 상태, 첨부 PR 없음, 기존 workpad 없음
+- next_ticket: OOR-875
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `main` 에서 새 작업 브랜치를 분기했으며, strict handover gate 통과 후 Linear 상태를 `In Progress` 로 전이하고 db_access의 `no such table: trades` 재현과 근본 원인 규명을 먼저 수행한다.
+
+### 2026-03-30 | session=codex-oor-875-pr890-review-address
+- branch: feature/issue-875-harness-db-access-trades-table
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: PR #890 review 및 unresolved inline thread 확인 후 필요한 수정 반영 예정
+- next_ticket: OOR-875
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: health check의 `init_db()` 호출 범위 축소 여부, dashboard bootstrap 경로 유지 근거, 실패 경로 추적 이슈(OOR-877) 언급 상태를 thread 기준으로 재검증하고 필요한 항목만 수정한다.
