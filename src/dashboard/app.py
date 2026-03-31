@@ -135,6 +135,8 @@ def create_dashboard_app(
             }
             latest_trade = conn.execute(
                 """
+                -- External freshness monitors need the most recent persisted activity
+                -- across the full runtime history, not only today's rows.
                 SELECT market, timestamp, action
                 FROM trades
                 ORDER BY timestamp DESC
@@ -143,6 +145,8 @@ def create_dashboard_app(
             ).fetchone()
             latest_decision = conn.execute(
                 """
+                -- External freshness monitors need the most recent persisted activity
+                -- across the full runtime history, not only today's rows.
                 SELECT market, timestamp, action, session_id
                 FROM decision_logs
                 ORDER BY timestamp DESC
@@ -777,7 +781,18 @@ def _is_newer_timestamp(candidate: str | None, current: str | None) -> bool:
         return False
     if current is None:
         return True
-    return candidate > current
+    candidate_dt = _parse_timestamp(candidate)
+    current_dt = _parse_timestamp(current)
+    if candidate_dt is not None and current_dt is not None:
+        return candidate_dt >= current_dt
+    return candidate >= current
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _merge_playbook_status(current: str | None, incoming: str | None) -> str | None:
@@ -817,7 +832,7 @@ def _build_activity_summary(
     latest_observed_market = trade_market
     latest_observed_action = trade_action
     latest_observed_source = "trade" if trade_at is not None else None
-    if decision_at is not None and (trade_at is None or decision_at >= trade_at):
+    if _is_newer_timestamp(decision_at, trade_at):
         latest_observed_at = decision_at
         latest_observed_market = decision_market
         latest_observed_action = decision_action
