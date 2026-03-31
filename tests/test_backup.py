@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import sys
 from datetime import UTC, datetime
@@ -80,6 +81,22 @@ class TestBackupExporter:
         assert results[ExportFormat.JSON].exists()
         assert results[ExportFormat.JSON].suffix == ".json"
 
+    def test_export_json_bootstraps_fresh_db(self, tmp_path: Path) -> None:
+        """Fresh SQLite files should bootstrap schema before exporting JSON."""
+        db_path = tmp_path / "fresh.db"
+        db_path.touch()
+
+        exporter = BackupExporter(str(db_path))
+        output_dir = tmp_path / "exports"
+
+        results = exporter.export_all(output_dir, formats=[ExportFormat.JSON], compress=False)
+
+        assert ExportFormat.JSON in results
+        with open(results[ExportFormat.JSON], encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["record_count"] == 0
+        assert data["trades"] == []
+
     def test_export_json_compressed(self, temp_db: Path, tmp_path: Path) -> None:
         """Test compressed JSON export."""
         exporter = BackupExporter(str(temp_db))
@@ -154,6 +171,18 @@ class TestBackupExporter:
         assert stats["total_trades"] == 3
         assert "date_range" in stats
         assert "db_size_bytes" in stats
+
+    def test_get_export_stats_bootstraps_fresh_db(self, tmp_path: Path) -> None:
+        """Fresh SQLite files should bootstrap schema before reading export stats."""
+        db_path = tmp_path / "fresh.db"
+        db_path.touch()
+
+        exporter = BackupExporter(str(db_path))
+        stats = exporter.get_export_stats()
+
+        assert stats["total_trades"] == 0
+        assert stats["date_range"] == {"earliest": None, "latest": None}
+        assert stats["db_size_bytes"] >= 0
 
 
 class TestBackupScheduler:

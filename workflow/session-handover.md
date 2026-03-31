@@ -1167,3 +1167,11 @@
 - next_ticket: OOR-875
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: health check의 `init_db()` 호출 범위 축소 여부, dashboard bootstrap 경로 유지 근거, 실패 경로 추적 이슈(OOR-877) 언급 상태를 thread 기준으로 재검증하고 필요한 항목만 수정한다.
+
+### 2026-03-31 | session=codex-oor-877-start
+- branch: feature/issue-877-db-raw-sqlite-bootstrap-consumers
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-877 `Todo` 상태에서 `In Progress` 전이 완료, 첨부 PR 없음, bootstrap workpad 생성 완료
+- next_ticket: OOR-877
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: fresh SQLite 파일에서 raw consumer 경로의 `no such table` 재현을 먼저 확보하고, `init_db()` 또는 동등 helper 적용 범위를 `src/backup/exporter.py`, `src/evolution/performance_tracker.py`, `src/evolution/optimizer.py` 로 제한해 테스트 우선으로 수정한다.

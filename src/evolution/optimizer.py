@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sqlite3
 from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
@@ -138,7 +137,7 @@ class EvolutionOptimizer:
 
     def get_performance_summary(self) -> dict[str, Any]:
         """Return aggregate performance metrics from trade logs."""
-        conn = sqlite3.connect(self._db_path)
+        conn = init_db(self._db_path)
         try:
             row = conn.execute(
                 """
