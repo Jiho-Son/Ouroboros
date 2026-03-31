@@ -13,6 +13,8 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from src.db import init_db
+
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +75,7 @@ class PerformanceTracker:
         Returns:
             StrategyMetrics object with performance data
         """
-        conn = sqlite3.connect(self._db_path)
+        conn = init_db(self._db_path)
         conn.row_factory = sqlite3.Row
 
         try:

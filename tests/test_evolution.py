@@ -578,6 +578,32 @@ def test_get_performance_summary() -> None:
     Path(tmp_path).unlink()
 
 
+def test_get_performance_summary_bootstraps_fresh_db(tmp_path: Path) -> None:
+    """Performance summary should bootstrap schema for a fresh SQLite file."""
+    db_path = tmp_path / "fresh.db"
+    db_path.touch()
+
+    settings = Settings(
+        KIS_APP_KEY="test_key",
+        KIS_APP_SECRET="test_secret",
+        KIS_ACCOUNT_NO="12345678-01",
+        GEMINI_API_KEY="test_gemini_key",
+        GEMINI_MODEL="gemini-pro",
+        DB_PATH=str(db_path),
+    )
+
+    optimizer = EvolutionOptimizer(settings)
+    summary = optimizer.get_performance_summary()
+
+    assert summary == {
+        "total_trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "avg_pnl": 0,
+        "total_pnl": 0,
+    }
+
+
 # ------------------------------------------------------------------
 # ABTester Tests
 # ------------------------------------------------------------------
@@ -713,11 +739,8 @@ def test_get_strategy_metrics(db_conn: sqlite3.Connection) -> None:
     log_trade(db_conn, "005930", "HOLD", 75, "Hold", quantity=0, price=70000, pnl=0.0)
 
     tracker = PerformanceTracker(db_path=":memory:")
-    # Manually set connection for testing
-    tracker._db_path = db_conn
 
-    # Need to use the same connection
-    with patch("sqlite3.connect", return_value=db_conn):
+    with patch("src.evolution.performance_tracker.init_db", return_value=db_conn):
         metrics = tracker.get_strategy_metrics()
 
     assert metrics.total_trades == 4
@@ -726,6 +749,22 @@ def test_get_strategy_metrics(db_conn: sqlite3.Connection) -> None:
     assert metrics.holds == 1
     assert metrics.win_rate == 50.0
     assert metrics.total_pnl == 1300.0
+
+
+def test_get_strategy_metrics_bootstraps_fresh_db(tmp_path: Path) -> None:
+    """Fresh SQLite files should bootstrap schema before reading metrics."""
+    db_path = tmp_path / "fresh.db"
+    db_path.touch()
+
+    tracker = PerformanceTracker(db_path=str(db_path))
+    metrics = tracker.get_strategy_metrics()
+
+    assert metrics.total_trades == 0
+    assert metrics.wins == 0
+    assert metrics.losses == 0
+    assert metrics.holds == 0
+    assert metrics.win_rate == 0.0
+    assert metrics.total_pnl == 0
 
 
 def test_calculate_improvement_trend_improving(performance_tracker: PerformanceTracker) -> None:

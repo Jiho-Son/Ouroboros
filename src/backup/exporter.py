@@ -18,6 +18,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from src.db import init_db
+
 logger = logging.getLogger(__name__)
 
 
@@ -116,21 +118,21 @@ class BackupExporter:
         Returns:
             List of trade records
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = init_db(self.db_path)
         conn.row_factory = sqlite3.Row
 
-        if incremental_since:
-            cursor = conn.execute(
-                "SELECT * FROM trades WHERE timestamp > ?",
-                (incremental_since.isoformat(),),
-            )
-        else:
-            cursor = conn.execute("SELECT * FROM trades")
+        try:
+            if incremental_since:
+                cursor = conn.execute(
+                    "SELECT * FROM trades WHERE timestamp > ?",
+                    (incremental_since.isoformat(),),
+                )
+            else:
+                cursor = conn.execute("SELECT * FROM trades")
 
-        trades = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-
-        return trades
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
 
     def _export_json(
         self,
@@ -296,24 +298,27 @@ class BackupExporter:
         Returns:
             Dictionary with data statistics
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = init_db(self.db_path)
         cursor = conn.cursor()
 
-        stats = {}
+        try:
+            stats = {}
 
-        # Total trades
-        cursor.execute("SELECT COUNT(*) FROM trades")
-        stats["total_trades"] = cursor.fetchone()[0]
+            # Total trades
+            cursor.execute("SELECT COUNT(*) FROM trades")
+            stats["total_trades"] = cursor.fetchone()[0]
 
-        # Date range
-        cursor.execute("SELECT MIN(timestamp), MAX(timestamp) FROM trades")
-        min_date, max_date = cursor.fetchone()
-        stats["date_range"] = {"earliest": min_date, "latest": max_date}
+            # Date range
+            cursor.execute("SELECT MIN(timestamp), MAX(timestamp) FROM trades")
+            min_date, max_date = cursor.fetchone()
+            stats["date_range"] = {"earliest": min_date, "latest": max_date}
 
-        # Database size
-        cursor.execute("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()")
-        stats["db_size_bytes"] = cursor.fetchone()[0]
+            # Database size
+            cursor.execute(
+                "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()"
+            )
+            stats["db_size_bytes"] = cursor.fetchone()[0]
 
-        conn.close()
-
-        return stats
+            return stats
+        finally:
+            conn.close()

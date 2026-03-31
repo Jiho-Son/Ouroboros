@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-03-31 | session=codex-pr891-review-followup
+- branch: feature/issue-877-db-raw-sqlite-bootstrap-consumers
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #877, PR #891
+- next_ticket: #877
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #891 리뷰 스레드를 검토해 actionable comment만 반영하고, 수정 근거와 검증 결과를 PR 코멘트로 남긴다.
+
 ### 2026-03-27 | session=codex-pr879-review-followup
 - branch: feature/issue-862-market-lifecycle-reconciler
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -1167,3 +1175,19 @@
 - next_ticket: OOR-875
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: health check의 `init_db()` 호출 범위 축소 여부, dashboard bootstrap 경로 유지 근거, 실패 경로 추적 이슈(OOR-877) 언급 상태를 thread 기준으로 재검증하고 필요한 항목만 수정한다.
+
+### 2026-03-31 | session=codex-oor-877-start
+- branch: feature/issue-877-db-raw-sqlite-bootstrap-consumers
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-877 `Todo` 상태에서 `In Progress` 전이 완료, 첨부 PR 없음, bootstrap workpad 생성 완료
+- next_ticket: OOR-877
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: fresh SQLite 파일에서 raw consumer 경로의 `no such table` 재현을 먼저 확보하고, `init_db()` 또는 동등 helper 적용 범위를 `src/backup/exporter.py`, `src/evolution/performance_tracker.py`, `src/evolution/optimizer.py` 로 제한해 테스트 우선으로 수정한다.
+
+### 2026-03-31 | session=codex-oor-877-merge
+- branch: feature/issue-877-db-raw-sqlite-bootstrap-consumers
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-877 `Merging` 상태, PR #891 attachment/workpad 존재, 승인 1건과 green checks 확인 예정
+- next_ticket: OOR-877
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 기존 구현은 완료된 상태이므로 merge 전 세션 strict gate 재통과, GitHub preflight, review/check/mergeability 재검증 후 `land` 루프로 PR #891 를 squash merge 하고 Linear 상태를 `Done` 으로 정리한다.
