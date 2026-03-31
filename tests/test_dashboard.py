@@ -464,6 +464,76 @@ def test_status_endpoint_returns_market_operating_summary(tmp_path: Path) -> Non
     assert us["status_tone"] == "tripped"
 
 
+def test_status_endpoint_includes_global_activity_summary_for_harness_trade_gap(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "dashboard_activity_summary.db"
+    conn = init_db(str(db_path))
+    conn.execute(
+        """
+        INSERT INTO trades (
+            timestamp, stock_code, action, confidence, rationale,
+            quantity, price, pnl, market, exchange_code, selection_context, decision_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "2026-03-31T06:24:32.424822+00:00",
+            "005930",
+            "SELL",
+            88,
+            "trade gap repro",
+            1,
+            70200,
+            0.0,
+            "KR",
+            "KRX",
+            None,
+            "trade-gap-kr-sell",
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO decision_logs (
+            decision_id, timestamp, stock_code, market, exchange_code,
+            session_id, action, confidence, rationale, context_snapshot, input_data
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "decision-gap-us-hold",
+            "2026-03-31T15:54:32.424822+00:00",
+            "AAPL",
+            "US_NASDAQ",
+            "NASDAQ",
+            "US_REG",
+            "HOLD",
+            82,
+            "scanner alive without execution",
+            json.dumps({"scenario_match": {}}),
+            json.dumps({"current_price": 190}),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    app = create_dashboard_app(str(db_path), mode="live")
+    get_status = _endpoint(app, "/api/status")
+    body = get_status()
+
+    assert body["activity"] == {
+        "latest_trade_at": "2026-03-31T06:24:32.424822+00:00",
+        "latest_trade_market": "KR",
+        "latest_trade_action": "SELL",
+        "latest_decision_at": "2026-03-31T15:54:32.424822+00:00",
+        "latest_decision_market": "US",
+        "latest_decision_action": "HOLD",
+        "latest_decision_session_id": "US_REG",
+        "latest_observed_at": "2026-03-31T15:54:32.424822+00:00",
+        "latest_observed_market": "US",
+        "latest_observed_action": "HOLD",
+        "latest_observed_source": "decision",
+    }
+
+
 def test_group_us_markets_status_and_positions_for_overview(tmp_path: Path) -> None:
     db_path = tmp_path / "dashboard_group_us_status.db"
     conn = init_db(str(db_path))
@@ -986,6 +1056,19 @@ def test_status_handles_fresh_db_file(tmp_path: Path) -> None:
     assert body["totals"]["trade_count"] == 0
     assert body["totals"]["decision_count"] == 0
     assert body["markets"] == {}
+    assert body["activity"] == {
+        "latest_trade_at": None,
+        "latest_trade_market": None,
+        "latest_trade_action": None,
+        "latest_decision_at": None,
+        "latest_decision_market": None,
+        "latest_decision_action": None,
+        "latest_decision_session_id": None,
+        "latest_observed_at": None,
+        "latest_observed_market": None,
+        "latest_observed_action": None,
+        "latest_observed_source": None,
+    }
 
 
 def _seed_cb_context(conn: sqlite3.Connection, pnl_pct: float, market: str = "KR") -> None:

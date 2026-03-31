@@ -133,6 +133,22 @@ def create_dashboard_app(
                     """
                 ).fetchall()
             }
+            latest_trade = conn.execute(
+                """
+                SELECT market, timestamp, action
+                FROM trades
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            latest_decision = conn.execute(
+                """
+                SELECT market, timestamp, action, session_id
+                FROM decision_logs
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """
+            ).fetchone()
             market_pnl_pct = _load_market_pnl_pct(conn)
 
             activity_rows = conn.execute(
@@ -218,6 +234,10 @@ def create_dashboard_app(
             return {
                 "date": today,
                 "mode": mode,
+                "activity": _build_activity_summary(
+                    latest_trade=latest_trade,
+                    latest_decision=latest_decision,
+                ),
                 "markets": market_status,
                 "totals": {
                     "trade_count": total_trades,
@@ -773,6 +793,49 @@ def _merge_playbook_status(current: str | None, incoming: str | None) -> str | N
         "error": 3,
     }
     return incoming if severity.get(incoming, 2) >= severity.get(current, 2) else current
+
+
+def _build_activity_summary(
+    *,
+    latest_trade: sqlite3.Row | None,
+    latest_decision: sqlite3.Row | None,
+) -> dict[str, Any]:
+    trade_at = latest_trade["timestamp"] if latest_trade is not None else None
+    trade_market = (
+        _dashboard_market_code(latest_trade["market"]) if latest_trade is not None else None
+    )
+    trade_action = latest_trade["action"] if latest_trade is not None else None
+
+    decision_at = latest_decision["timestamp"] if latest_decision is not None else None
+    decision_market = (
+        _dashboard_market_code(latest_decision["market"]) if latest_decision is not None else None
+    )
+    decision_action = latest_decision["action"] if latest_decision is not None else None
+    decision_session_id = latest_decision["session_id"] if latest_decision is not None else None
+
+    latest_observed_at = trade_at
+    latest_observed_market = trade_market
+    latest_observed_action = trade_action
+    latest_observed_source = "trade" if trade_at is not None else None
+    if decision_at is not None and (trade_at is None or decision_at >= trade_at):
+        latest_observed_at = decision_at
+        latest_observed_market = decision_market
+        latest_observed_action = decision_action
+        latest_observed_source = "decision"
+
+    return {
+        "latest_trade_at": trade_at,
+        "latest_trade_market": trade_market,
+        "latest_trade_action": trade_action,
+        "latest_decision_at": decision_at,
+        "latest_decision_market": decision_market,
+        "latest_decision_action": decision_action,
+        "latest_decision_session_id": decision_session_id,
+        "latest_observed_at": latest_observed_at,
+        "latest_observed_market": latest_observed_market,
+        "latest_observed_action": latest_observed_action,
+        "latest_observed_source": latest_observed_source,
+    }
 
 
 def _group_runtime_status(runtime_status: Any) -> dict[str, Any]:
