@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from fastapi.testclient import TestClient
 
-from src.dashboard.app import _build_activity_summary, create_dashboard_app
+from src.dashboard.app import _build_activity_summary, _is_newer_timestamp, create_dashboard_app
 from src.db import init_db
 
 
@@ -647,6 +647,24 @@ def test_build_activity_summary_prefers_decision_when_timestamps_tie() -> None:
     assert summary["latest_observed_market"] == "US"
     assert summary["latest_observed_action"] == "HOLD"
     assert summary["latest_observed_source"] == "decision"
+
+
+def test_is_newer_timestamp_is_strict_by_default_for_equal_values() -> None:
+    assert (
+        _is_newer_timestamp(
+            "2026-03-31T15:54:32.424822+00:00",
+            "2026-03-31T15:54:32.424822+00:00",
+        )
+        is False
+    )
+
+
+def test_is_newer_timestamp_can_allow_equal_values() -> None:
+    assert _is_newer_timestamp(
+        "2026-03-31T15:54:32.424822+00:00",
+        "2026-03-31T15:54:32.424822+00:00",
+        allow_equal=True,
+    )
 
 
 def test_group_us_markets_status_and_positions_for_overview(tmp_path: Path) -> None:

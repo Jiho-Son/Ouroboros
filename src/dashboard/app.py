@@ -776,7 +776,12 @@ def _append_market_filter(
     params.extend(raw_markets)
 
 
-def _is_newer_timestamp(candidate: str | None, current: str | None) -> bool:
+def _is_newer_timestamp(
+    candidate: str | None,
+    current: str | None,
+    *,
+    allow_equal: bool = False,
+) -> bool:
     if candidate is None:
         return False
     if current is None:
@@ -784,8 +789,8 @@ def _is_newer_timestamp(candidate: str | None, current: str | None) -> bool:
     candidate_dt = _parse_timestamp(candidate)
     current_dt = _parse_timestamp(current)
     if candidate_dt is not None and current_dt is not None:
-        return candidate_dt >= current_dt
-    return candidate >= current
+        return candidate_dt >= current_dt if allow_equal else candidate_dt > current_dt
+    return candidate >= current if allow_equal else candidate > current
 
 
 def _parse_timestamp(value: str) -> datetime | None:
@@ -832,7 +837,7 @@ def _build_activity_summary(
     latest_observed_market = trade_market
     latest_observed_action = trade_action
     latest_observed_source = "trade" if trade_at is not None else None
-    if _is_newer_timestamp(decision_at, trade_at):
+    if _is_newer_timestamp(decision_at, trade_at, allow_equal=True):
         latest_observed_at = decision_at
         latest_observed_market = decision_market
         latest_observed_action = decision_action
