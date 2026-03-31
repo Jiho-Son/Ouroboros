@@ -1183,3 +1183,11 @@
 - next_ticket: OOR-877
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: fresh SQLite 파일에서 raw consumer 경로의 `no such table` 재현을 먼저 확보하고, `init_db()` 또는 동등 helper 적용 범위를 `src/backup/exporter.py`, `src/evolution/performance_tracker.py`, `src/evolution/optimizer.py` 로 제한해 테스트 우선으로 수정한다.
+
+### 2026-03-31 | session=codex-oor-877-merge
+- branch: feature/issue-877-db-raw-sqlite-bootstrap-consumers
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-877 `Merging` 상태, PR #891 attachment/workpad 존재, 승인 1건과 green checks 확인 예정
+- next_ticket: OOR-877
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 기존 구현은 완료된 상태이므로 merge 전 세션 strict gate 재통과, GitHub preflight, review/check/mergeability 재검증 후 `land` 루프로 PR #891 를 squash merge 하고 Linear 상태를 `Done` 으로 정리한다.
