@@ -1191,3 +1191,19 @@
 - next_ticket: OOR-877
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: 기존 구현은 완료된 상태이므로 merge 전 세션 strict gate 재통과, GitHub preflight, review/check/mergeability 재검증 후 `land` 루프로 PR #891 를 squash merge 하고 Linear 상태를 `Done` 으로 정리한다.
+
+### 2026-03-31 | session=codex-oor-880-start
+- branch: feature/issue-880-trade-gap-harness
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-880 `Todo` -> `In Progress` 전이 완료, bootstrap workpad 생성 완료, 첨부 PR 없음
+- next_ticket: OOR-880
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `trade_gap` alert의 실제 원인이 스케줄 공백, 거래 생성 실패, 관측 오탐 중 어디인지부터 재현 신호와 최근 변경점으로 고정하고, 근본 원인 확인 전에는 수정 방향을 가정하지 않는다.
+
+### 2026-03-31 | session=codex-oor-880-pr892-review-address
+- branch: feature/issue-880-trade-gap-harness
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: PR #892 review 및 unresolved thread 확인 후 필요한 수정과 PR 코멘트 반영 예정
+- next_ticket: OOR-880
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: review 지적은 dashboard freshness 노출 방식과 테스트/문서 정합성 중심으로 예상되며, thread별로 코드베이스와 대조해 실제 수정이 필요한 항목만 반영하고 근거와 검증 증적은 PR 코멘트로 남긴다.

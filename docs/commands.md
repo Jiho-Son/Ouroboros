@@ -303,7 +303,7 @@ Dashboard runs as a daemon thread on `DASHBOARD_HOST:DASHBOARD_PORT` (default: `
 | Endpoint | Description |
 |----------|-------------|
 | `GET /` | HTML dashboard UI with `Overview` / `Diagnostics` surfaces |
-| `GET /api/status` | Daily trading status by market, including operating summary fields (`open_position_count`, latest decision/session, market CB state, `status_tone`) |
+| `GET /api/status` | Daily trading status by market, including operating summary fields (`open_position_count`, latest decision/session, market CB state, `status_tone`) plus top-level `activity` freshness summary (`latest_trade_*`, `latest_decision_*`, `latest_observed_*`) |
 | `GET /api/playbook/{date}` | Playbook for specific date (query: `market`) |
 | `GET /api/scorecard/{date}` | Daily scorecard from L6_DAILY context |
 | `GET /api/performance` | Performance metrics by market and combined |

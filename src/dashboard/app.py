@@ -133,6 +133,26 @@ def create_dashboard_app(
                     """
                 ).fetchall()
             }
+            latest_trade = conn.execute(
+                """
+                -- External freshness monitors need the most recent persisted activity
+                -- across the full runtime history, not only today's rows.
+                SELECT market, timestamp, action
+                FROM trades
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """
+            ).fetchone()
+            latest_decision = conn.execute(
+                """
+                -- External freshness monitors need the most recent persisted activity
+                -- across the full runtime history, not only today's rows.
+                SELECT market, timestamp, action, session_id
+                FROM decision_logs
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """
+            ).fetchone()
             market_pnl_pct = _load_market_pnl_pct(conn)
 
             activity_rows = conn.execute(
@@ -218,6 +238,10 @@ def create_dashboard_app(
             return {
                 "date": today,
                 "mode": mode,
+                "activity": _build_activity_summary(
+                    latest_trade=latest_trade,
+                    latest_decision=latest_decision,
+                ),
                 "markets": market_status,
                 "totals": {
                     "trade_count": total_trades,
@@ -752,12 +776,28 @@ def _append_market_filter(
     params.extend(raw_markets)
 
 
-def _is_newer_timestamp(candidate: str | None, current: str | None) -> bool:
+def _is_newer_timestamp(
+    candidate: str | None,
+    current: str | None,
+    *,
+    allow_equal: bool = False,
+) -> bool:
     if candidate is None:
         return False
     if current is None:
         return True
-    return candidate > current
+    candidate_dt = _parse_timestamp(candidate)
+    current_dt = _parse_timestamp(current)
+    if candidate_dt is not None and current_dt is not None:
+        return candidate_dt >= current_dt if allow_equal else candidate_dt > current_dt
+    return candidate >= current if allow_equal else candidate > current
+
+
+def _parse_timestamp(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _merge_playbook_status(current: str | None, incoming: str | None) -> str | None:
@@ -773,6 +813,49 @@ def _merge_playbook_status(current: str | None, incoming: str | None) -> str | N
         "error": 3,
     }
     return incoming if severity.get(incoming, 2) >= severity.get(current, 2) else current
+
+
+def _build_activity_summary(
+    *,
+    latest_trade: sqlite3.Row | None,
+    latest_decision: sqlite3.Row | None,
+) -> dict[str, Any]:
+    trade_at = latest_trade["timestamp"] if latest_trade is not None else None
+    trade_market = (
+        _dashboard_market_code(latest_trade["market"]) if latest_trade is not None else None
+    )
+    trade_action = latest_trade["action"] if latest_trade is not None else None
+
+    decision_at = latest_decision["timestamp"] if latest_decision is not None else None
+    decision_market = (
+        _dashboard_market_code(latest_decision["market"]) if latest_decision is not None else None
+    )
+    decision_action = latest_decision["action"] if latest_decision is not None else None
+    decision_session_id = latest_decision["session_id"] if latest_decision is not None else None
+
+    latest_observed_at = trade_at
+    latest_observed_market = trade_market
+    latest_observed_action = trade_action
+    latest_observed_source = "trade" if trade_at is not None else None
+    if _is_newer_timestamp(decision_at, trade_at, allow_equal=True):
+        latest_observed_at = decision_at
+        latest_observed_market = decision_market
+        latest_observed_action = decision_action
+        latest_observed_source = "decision"
+
+    return {
+        "latest_trade_at": trade_at,
+        "latest_trade_market": trade_market,
+        "latest_trade_action": trade_action,
+        "latest_decision_at": decision_at,
+        "latest_decision_market": decision_market,
+        "latest_decision_action": decision_action,
+        "latest_decision_session_id": decision_session_id,
+        "latest_observed_at": latest_observed_at,
+        "latest_observed_market": latest_observed_market,
+        "latest_observed_action": latest_observed_action,
+        "latest_observed_source": latest_observed_source,
+    }
 
 
 def _group_runtime_status(runtime_status: Any) -> dict[str, Any]:
