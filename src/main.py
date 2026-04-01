@@ -4190,6 +4190,7 @@ async def _handle_daily_market_closures(
             # carrying stale state across batches.
             market_states.pop(market_code, None)
 
+
 async def _handle_realtime_market_closures(
     *,
     current_open_markets: list[MarketInfo],
