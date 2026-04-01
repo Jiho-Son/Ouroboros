@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-04-01 | session=codex-pr893-review-followup
+- branch: feature/issue-884-daily-cycle-phase-coverage
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #884
+- next_ticket: #884
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: PR #893 리뷰 스레드를 확인해 반영 여부를 기술적으로 검증하고, 필요한 수정은 테스트 후 push 및 PR 코멘트/스레드 답글로 남긴다.
+
 ### 2026-03-31 | session=codex-pr891-review-followup
 - branch: feature/issue-877-db-raw-sqlite-bootstrap-consumers
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -249,6 +257,14 @@
 - next_ticket: OOR-844
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: pnl 결산을 달러 기준으로 전환하려면 결산 시점 환율 소스 존재 여부가 선결 조건이며, 소스 부재 시 구현 보류 근거를 명시해야 한다.
+
+### 2026-04-01 | session=codex-oor-884-merge
+- branch: feature/issue-884-daily-cycle-phase-coverage
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #884, PR #893
+- next_ticket: #884
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: Merging 단계에서 PR #893의 mergeability, review 승인, green checks, workpad 최신성을 다시 확인하고 land loop를 실행한다.
 
 ### 2026-03-21 | session=codex-pr847-review-followup
 - branch: feature/issue-833-sell-trade-none-branch-test
@@ -1207,3 +1223,11 @@
 - next_ticket: OOR-880
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: review 지적은 dashboard freshness 노출 방식과 테스트/문서 정합성 중심으로 예상되며, thread별로 코드베이스와 대조해 실제 수정이 필요한 항목만 반영하고 근거와 검증 증적은 PR 코멘트로 남긴다.
+
+### 2026-04-01 | session=codex-oor-884-start
+- branch: feature/issue-884-daily-cycle-phase-coverage
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-884 `Todo` -> `In Progress` 전이 완료, bootstrap workpad 생성 완료, 첨부 PR 없음
+- next_ticket: OOR-884
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `daily_cycle`에서 `phase=4`만 관측된 재현 신호를 먼저 고정하고, phase 기록 누락이 실제 상태 전이 누락인지 관측/집계 누락인지 증거로 분리한 뒤 테스트 우선으로 수정한다.

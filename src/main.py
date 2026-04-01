@@ -221,6 +221,21 @@ def _log_realtime_hard_stop_monitor_start(settings: Settings) -> None:
     )
 
 
+def _stringify_daily_cycle_phase_field(value: Any) -> str:
+    if isinstance(value, bool):
+        return str(value).lower()
+    return str(value)
+
+
+def _log_daily_cycle_phase(phase: int, *, step: str, **fields: Any) -> None:
+    parts = [f"daily_cycle phase={phase}", f"step={step}"]
+    for key, value in fields.items():
+        if value is None:
+            continue
+        parts.append(f"{key}={_stringify_daily_cycle_phase_field(value)}")
+    logger.info(" ".join(parts))
+
+
 def _daily_mode_has_additional_regular_session_batch(
     *,
     market: MarketInfo,
@@ -3739,6 +3754,12 @@ async def _run_daily_session_market(
             daily_buy_cooldown=daily_buy_cooldown,
         )
     )
+    _log_daily_cycle_phase(
+        2,
+        step="prepare_market",
+        market=market.code,
+        session=runtime_session_id,
+    )
 
     candidates_list = await _load_daily_session_market_candidates(
         db_conn=db_conn,
@@ -3839,6 +3860,13 @@ async def _run_daily_session_market(
         "Evaluating %d stocks against playbook for %s",
         len(stocks_data),
         market.name,
+    )
+    _log_daily_cycle_phase(
+        3,
+        step="evaluate_market",
+        market=market.code,
+        session=runtime_session_id,
+        stock_count=len(stocks_data),
     )
     for stock_data in stocks_data:
         await _process_daily_session_stock(
@@ -3951,6 +3979,12 @@ async def _handle_market_close(
     await telegram.notify_market_close(market_name, 0.0)
 
     market_date = datetime.now(market_timezone).date().isoformat()
+    _log_daily_cycle_phase(
+        6,
+        step="daily_review",
+        market=market_code,
+        market_date=market_date,
+    )
     context_aggregator.aggregate_daily_from_trades(
         date=market_date,
         market=market_code,
@@ -4112,6 +4146,50 @@ def _reconcile_market_lifecycle(
         closed=closed,
         session_changed=session_changed,
     )
+
+
+async def _handle_daily_market_closures(
+    *,
+    market_states: dict[str, str],
+    telegram: TelegramClient,
+    context_aggregator: ContextAggregator,
+    daily_reviewer: DailyReviewer,
+    evolution_optimizer: EvolutionOptimizer | None = None,
+    closed_events: tuple[MarketLifecycleEvent, ...],
+) -> None:
+    """Handle close/review flow for daily mode between batch iterations."""
+    for event in closed_events:
+        market_code = event.market_code
+        _log_daily_cycle_phase(
+            5,
+            step="cleanup_closed_market",
+            market=market_code,
+            previous_session=event.previous_session_id,
+        )
+        market_info = event.market or MARKETS.get(market_code)
+        if market_info is None:
+            logger.warning("Missing market metadata for closed daily market: %s", market_code)
+            market_states.pop(market_code, None)
+            continue
+
+        try:
+            await _handle_market_close(
+                market_code=market_code,
+                market_name=market_info.name,
+                market_timezone=market_info.timezone,
+                telegram=telegram,
+                context_aggregator=context_aggregator,
+                daily_reviewer=daily_reviewer,
+                evolution_optimizer=evolution_optimizer,
+            )
+        except Exception as exc:
+            logger.warning("Daily market close handling failed: %s", exc)
+        finally:
+            # Drop the closed-market session marker on both success and failure so the
+            # next open session is treated as a fresh lifecycle transition instead of
+            # carrying stale state across batches.
+            market_states.pop(market_code, None)
+
 
 async def _handle_realtime_market_closures(
     *,
@@ -5124,6 +5202,13 @@ async def run(settings: Settings) -> None:
                 settings.DAILY_SESSIONS,
                 settings.SESSION_INTERVAL_HOURS,
             )
+            _log_daily_cycle_phase(
+                0,
+                step="startup_ready",
+                mode=settings.MODE,
+                trade_mode=settings.TRADE_MODE,
+                enabled_markets=",".join(settings.enabled_market_list),
+            )
 
             session_interval = timedelta(hours=settings.SESSION_INTERVAL_HOURS)
             session_interval_seconds = session_interval.total_seconds()
@@ -5162,6 +5247,53 @@ async def run(settings: Settings) -> None:
                     settings.enabled_market_list,
                     now=current_batch_started_at,
                 )
+                current_market_sessions = {
+                    market.code: get_session_info(market, current_batch_started_at).session_id
+                    for market in current_open_markets
+                }
+                lifecycle_diff = _reconcile_market_lifecycle(
+                    previous_market_states=_market_states,
+                    current_market_sessions=current_market_sessions,
+                    current_markets={market.code: market for market in current_open_markets},
+                )
+                if lifecycle_diff.closed:
+                    await _handle_daily_market_closures(
+                        market_states=_market_states,
+                        telegram=telegram,
+                        context_aggregator=context_aggregator,
+                        daily_reviewer=daily_reviewer,
+                        evolution_optimizer=evolution_optimizer,
+                        closed_events=lifecycle_diff.closed,
+                    )
+                _market_states.update(current_market_sessions)
+
+                if not current_open_markets:
+                    try:
+                        next_market, next_open_time = get_next_market_open(
+                            settings.enabled_market_list
+                        )
+                        wait_seconds = max(
+                            (next_open_time - current_batch_started_at).total_seconds(),
+                            0.0,
+                        )
+                        _log_daily_cycle_phase(
+                            1,
+                            step="wait_for_market_open",
+                            next_market=next_market.code,
+                            next_open_at=next_open_time.astimezone(
+                                next_market.timezone
+                            ).isoformat(),
+                            wait_seconds=f"{wait_seconds:.1f}",
+                        )
+                    except ValueError as exc:
+                        logger.error("Failed to find next market open: %s", exc)
+                        wait_seconds = session_interval_seconds
+                    logger.info("Next session in %.1f hours", wait_seconds / 3600)
+                    try:
+                        await asyncio.wait_for(shutdown.wait(), timeout=wait_seconds)
+                    except TimeoutError:
+                        pass
+                    continue
                 # Preserve the legacy cadence if the batch run fails before it
                 # can compute a catch-up timestamp.
                 wait_seconds = session_interval_seconds
@@ -5197,6 +5329,13 @@ async def run(settings: Settings) -> None:
                     wait_seconds = max(
                         (next_scheduled_batch_at - batch_completed_at).total_seconds(),
                         0.0,
+                    )
+                    _log_daily_cycle_phase(
+                        4,
+                        step="schedule_next_batch",
+                        next_batch=next_scheduled_batch_at.isoformat(),
+                        wait_seconds=f"{wait_seconds:.1f}",
+                        markets=",".join(market.code for market in current_open_markets),
                     )
                     _log_daily_mode_last_regular_batch_warning(
                         open_markets=current_open_markets,

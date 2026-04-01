@@ -14819,6 +14819,365 @@ async def test_run_daily_mode_keeps_default_wait_when_dst_regular_session_is_act
 
 
 @pytest.mark.asyncio
+async def test_run_daily_mode_waits_for_next_market_open_and_logs_phase_1(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FakeEvent:
+        def __init__(self) -> None:
+            self._flag = False
+
+        def is_set(self) -> bool:
+            return self._flag
+
+        def set(self) -> None:
+            self._flag = True
+
+        def clear(self) -> None:
+            self._flag = False
+
+        async def wait(self) -> None:
+            return None
+
+    settings = _make_settings(
+        TRADE_MODE="daily",
+        ENABLED_MARKETS="KR",
+        SESSION_INTERVAL_HOURS=6,
+        DAILY_SESSIONS=4,
+    )
+    shutdown_event = _FakeEvent()
+    pause_event = _FakeEvent()
+    pause_event.set()
+
+    broker = MagicMock()
+    broker.close = AsyncMock()
+    overseas_broker = MagicMock()
+    overseas_broker.close = AsyncMock()
+    next_open_time = datetime(2026, 3, 24, 0, 0, tzinfo=UTC)
+
+    async def _wait_for(awaitable: Any, timeout: float | None = None) -> None:
+        await awaitable
+        shutdown_event.set()
+        return None
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("src.main.asyncio.Event", side_effect=[shutdown_event, pause_event])
+        )
+        stack.enter_context(patch("src.main.asyncio.wait_for", side_effect=_wait_for))
+        stack.enter_context(
+            patch(
+                "src.main.asyncio.get_running_loop",
+                return_value=MagicMock(add_signal_handler=MagicMock()),
+            )
+        )
+        stack.enter_context(patch("src.main.KISBroker", return_value=broker))
+        stack.enter_context(patch("src.main.OverseasBroker", return_value=overseas_broker))
+        stack.enter_context(patch("src.main.DecisionEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.RiskManager", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.init_db", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DecisionLogger", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextAggregator", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextScheduler", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.EvolutionOptimizer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextSelector", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ScenarioEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PlaybookStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DailyReviewer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PreMarketPlanner", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.NotificationFilter", return_value=MagicMock()))
+        stack.enter_context(
+            patch(
+                "src.main.TelegramClient",
+                return_value=MagicMock(
+                    notify_system_start=AsyncMock(),
+                    notify_system_shutdown=AsyncMock(),
+                    close=AsyncMock(),
+                ),
+            )
+        )
+        command_handler = MagicMock(
+            register_command=MagicMock(),
+            register_command_with_args=MagicMock(),
+            start_polling=AsyncMock(),
+            stop_polling=AsyncMock(),
+        )
+        stack.enter_context(patch("src.main.TelegramCommandHandler", return_value=command_handler))
+        stack.enter_context(patch("src.main.SmartVolatilityScanner", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.CriticalityAssessor", return_value=MagicMock()))
+        stack.enter_context(
+            patch(
+                "src.main.PriorityTaskQueue",
+                return_value=MagicMock(
+                    get_metrics=AsyncMock(return_value=MagicMock(total_enqueued=0))
+                ),
+            )
+        )
+        stack.enter_context(patch("src.main._start_dashboard_server"))
+        stack.enter_context(patch("src.main.sync_positions_from_broker", new=AsyncMock()))
+        stack.enter_context(patch("src.main._acquire_live_runtime_lock", return_value=None))
+        stack.enter_context(patch("src.main.get_open_markets", return_value=[]))
+        stack.enter_context(
+            patch(
+                "src.main.get_next_market_open",
+                return_value=(MARKETS["KR"], next_open_time),
+            )
+        )
+        run_daily_session_mock = stack.enter_context(
+            patch("src.main.run_daily_session", new=AsyncMock(return_value=0.0))
+        )
+
+        with caplog.at_level(logging.INFO):
+            await main_module.run(settings)
+
+    run_daily_session_mock.assert_not_awaited()
+    assert "daily_cycle phase=0" in caplog.text
+    assert "daily_cycle phase=1" in caplog.text
+    assert "step=wait_for_market_open" in caplog.text
+    assert "next_market=KR" in caplog.text
+    assert "next_open_at=2026-03-24T09:00:00+09:00" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_daily_mode_handles_market_close_review_and_logs_phases(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FakeEvent:
+        def __init__(self) -> None:
+            self._flag = False
+
+        def is_set(self) -> bool:
+            return self._flag
+
+        def set(self) -> None:
+            self._flag = True
+
+        def clear(self) -> None:
+            self._flag = False
+
+        async def wait(self) -> None:
+            return None
+
+    settings = _make_settings(
+        TRADE_MODE="daily",
+        ENABLED_MARKETS="KR",
+        SESSION_INTERVAL_HOURS=6,
+        DAILY_SESSIONS=4,
+    )
+    shutdown_event = _FakeEvent()
+    pause_event = _FakeEvent()
+    pause_event.set()
+
+    broker = MagicMock()
+    broker.close = AsyncMock()
+    overseas_broker = MagicMock()
+    overseas_broker.close = AsyncMock()
+    reviewer = MagicMock()
+    reviewer.generate_scorecard.return_value = DailyScorecard(
+        date="2026-03-24",
+        market="KR",
+        total_decisions=1,
+        buys=0,
+        sells=0,
+        holds=1,
+        total_pnl=0.0,
+        win_rate=0.0,
+        avg_confidence=80.0,
+        scenario_match_rate=100.0,
+        lessons=[],
+    )
+    reviewer.generate_lessons = AsyncMock(return_value=["cleanup complete"])
+    next_open_time = datetime(2026, 3, 25, 0, 0, tzinfo=UTC)
+    wait_calls = 0
+
+    async def _wait_for(awaitable: Any, timeout: float | None = None) -> None:
+        nonlocal wait_calls
+        await awaitable
+        wait_calls += 1
+        if wait_calls == 1:
+            raise TimeoutError
+        shutdown_event.set()
+        return None
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("src.main.asyncio.Event", side_effect=[shutdown_event, pause_event])
+        )
+        stack.enter_context(patch("src.main.asyncio.wait_for", side_effect=_wait_for))
+        stack.enter_context(
+            patch(
+                "src.main.asyncio.get_running_loop",
+                return_value=MagicMock(add_signal_handler=MagicMock()),
+            )
+        )
+        stack.enter_context(patch("src.main.KISBroker", return_value=broker))
+        stack.enter_context(patch("src.main.OverseasBroker", return_value=overseas_broker))
+        stack.enter_context(patch("src.main.DecisionEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.RiskManager", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.init_db", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DecisionLogger", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextStore", return_value=MagicMock()))
+        context_aggregator = stack.enter_context(
+            patch("src.main.ContextAggregator", return_value=MagicMock())
+        )
+        stack.enter_context(patch("src.main.ContextScheduler", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.EvolutionOptimizer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextSelector", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ScenarioEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PlaybookStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DailyReviewer", return_value=reviewer))
+        stack.enter_context(patch("src.main.PreMarketPlanner", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.NotificationFilter", return_value=MagicMock()))
+        telegram = stack.enter_context(
+            patch(
+                "src.main.TelegramClient",
+                return_value=MagicMock(
+                    notify_system_start=AsyncMock(),
+                    notify_system_shutdown=AsyncMock(),
+                    notify_market_close=AsyncMock(),
+                    send_message=AsyncMock(),
+                    close=AsyncMock(),
+                ),
+            )
+        )
+        command_handler = MagicMock(
+            register_command=MagicMock(),
+            register_command_with_args=MagicMock(),
+            start_polling=AsyncMock(),
+            stop_polling=AsyncMock(),
+        )
+        stack.enter_context(patch("src.main.TelegramCommandHandler", return_value=command_handler))
+        stack.enter_context(patch("src.main.SmartVolatilityScanner", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.CriticalityAssessor", return_value=MagicMock()))
+        stack.enter_context(
+            patch(
+                "src.main.PriorityTaskQueue",
+                return_value=MagicMock(
+                    get_metrics=AsyncMock(return_value=MagicMock(total_enqueued=0))
+                ),
+            )
+        )
+        stack.enter_context(patch("src.main._start_dashboard_server"))
+        stack.enter_context(patch("src.main.sync_positions_from_broker", new=AsyncMock()))
+        stack.enter_context(patch("src.main._acquire_live_runtime_lock", return_value=None))
+        stack.enter_context(patch("src.main._run_evolution_loop", new=AsyncMock()))
+        stack.enter_context(
+            patch("src.main.get_open_markets", side_effect=[[MARKETS["KR"]], []])
+        )
+        stack.enter_context(
+            patch("src.main.get_next_market_open", return_value=(MARKETS["KR"], next_open_time))
+        )
+        run_daily_session_mock = stack.enter_context(
+            patch("src.main.run_daily_session", new=AsyncMock(return_value=0.0))
+        )
+
+        with caplog.at_level(logging.INFO):
+            await main_module.run(settings)
+
+    run_daily_session_mock.assert_awaited_once()
+    reviewer.generate_scorecard.assert_called_once()
+    reviewer.generate_lessons.assert_awaited_once()
+    telegram.return_value.notify_market_close.assert_awaited_once()
+    context_aggregator.return_value.aggregate_daily_from_trades.assert_called_once()
+    assert "daily_cycle phase=4" in caplog.text
+    assert "daily_cycle phase=5" in caplog.text
+    assert "daily_cycle phase=6" in caplog.text
+    assert "market=KR" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_daily_session_logs_phase_prepare_and_process(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    settings = _make_settings(MODE="paper")
+
+    market = MagicMock()
+    market.name = "Korea"
+    market.code = "KR"
+    market.exchange_code = "KRX"
+    market.is_domestic = True
+    market.timezone = ZoneInfo("Asia/Seoul")
+
+    stock_data = {
+        "stock_code": "005930",
+        "stock_name": "Samsung",
+        "current_price": 70000.0,
+        "foreigner_net": 0.0,
+        "price_change_pct": 1.2,
+    }
+
+    with (
+        patch("src.main.get_open_markets", return_value=[market]),
+        patch(
+            "src.main._prepare_daily_session_market",
+            new=AsyncMock(return_value=("KRX_REG", "J", date(2026, 3, 24))),
+        ),
+        patch(
+            "src.main._load_daily_session_market_candidates",
+            new=AsyncMock(
+                return_value=[
+                    ScanCandidate(
+                        stock_code="005930",
+                        name="Samsung",
+                        price=70000.0,
+                        volume=1_000_000.0,
+                        volume_ratio=2.0,
+                        rsi=55.0,
+                        signal="momentum",
+                        score=88.0,
+                    )
+                ]
+            ),
+        ),
+        patch(
+            "src.main._load_daily_session_market_holdings",
+            new=AsyncMock(
+                return_value=(
+                    {"output1": [], "output2": [{"tot_evlu_amt": "100000"}]},
+                    [],
+                )
+            ),
+        ),
+        patch(
+            "src.main._load_or_generate_daily_playbook",
+            new=AsyncMock(return_value=_make_stock_playbook("KR", "005930")),
+        ),
+        patch(
+            "src.main._collect_daily_session_market_data",
+            new=AsyncMock(return_value=[stock_data]),
+        ),
+        patch(
+            "src.main._get_daily_session_balance_snapshot",
+            new=AsyncMock(return_value=({}, {}, 100000.0, 50000.0, 50000.0)),
+        ),
+        patch("src.main._process_daily_session_stock", new=AsyncMock()),
+    ):
+        with caplog.at_level(logging.INFO):
+            await run_daily_session(
+                broker=MagicMock(),
+                overseas_broker=MagicMock(),
+                scenario_engine=MagicMock(),
+                playbook_store=MagicMock(),
+                pre_market_planner=MagicMock(),
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(),
+                criticality_assessor=MagicMock(),
+                telegram=MagicMock(),
+                settings=settings,
+                smart_scanner=MagicMock(),
+                daily_start_eval=0.0,
+            )
+
+    assert "daily_cycle phase=2" in caplog.text
+    assert "step=prepare_market" in caplog.text
+    assert "daily_cycle phase=3" in caplog.text
+    assert "step=evaluate_market" in caplog.text
+    assert "market=KR" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_trading_cycle_orchestrates_stage_helpers_in_order() -> None:
     """Issue #447 regression: trading_cycle should preserve stage orchestration contracts."""
     call_order: list[str] = []
