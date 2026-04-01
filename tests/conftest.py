@@ -52,7 +52,7 @@ def main() -> int:
     if args[:2] == ["run", "list"]:
         payload = [
             {
-                "databaseId": int(os.environ["__PREFIX___RUN_ID"]),
+                "databaseId": int(os.environ["{PREFIX}_RUN_ID"]),
                 "status": "completed",
                 "conclusion": "success",
                 "createdAt": "2026-03-31T17:15:44Z",
@@ -67,12 +67,12 @@ def main() -> int:
     if args[:2] == ["run", "download"]:
         destination = Path(_arg_value(args, "-D"))
         destination.mkdir(parents=True, exist_ok=True)
-        record_path = os.environ.get("__PREFIX___DOWNLOAD_DEST_RECORD")
+        record_path = os.environ.get("{PREFIX}_DOWNLOAD_DEST_RECORD")
         if record_path:
             Path(record_path).write_text(str(destination), encoding="utf-8")
-        if os.environ.get("__PREFIX___DOWNLOAD_FAIL", "false") == "true":
+        if os.environ.get("{PREFIX}_DOWNLOAD_FAIL", "false") == "true":
             return 1
-        source = Path(os.environ["__PREFIX___ARTIFACT_SOURCE"])
+        source = Path(os.environ["{PREFIX}_ARTIFACT_SOURCE"])
         shutil.copy(source, destination / source.name)
         return 0
 
@@ -82,7 +82,7 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 """
-        path.write_text(script.replace("__PREFIX__", env_prefix), encoding="utf-8")
+        path.write_text(script.replace("{PREFIX}", env_prefix), encoding="utf-8")
         path.chmod(0o755)
         return path
 

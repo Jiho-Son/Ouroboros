@@ -43,9 +43,11 @@ def _resolve_runtime_defaults(*, state_root: Path, branch: str) -> dict[str, str
                 f'source "{RUNTIME_INSTANCE_ENV}"; '
                 "runtime_resolve_defaults; "
                 'printf "ROOT_DIR=%s\nLOG_DIR=%s\nDASHBOARD_PORT=%s\n'
-                'TMUX_SESSION_PREFIX=%s\nLIVE_RUNTIME_LOCK_PATH=%s\n" '
+                'TMUX_SESSION_PREFIX=%s\nLIVE_RUNTIME_LOCK_PATH=%s\n'
+                'RUNTIME_BRANCH_NAME_RESOLVED=%s\n" '
                 '"$ROOT_DIR" "$LOG_DIR" "$DASHBOARD_PORT" '
-                '"$TMUX_SESSION_PREFIX" "$LIVE_RUNTIME_LOCK_PATH"'
+                '"$TMUX_SESSION_PREFIX" "$LIVE_RUNTIME_LOCK_PATH" '
+                '"$RUNTIME_BRANCH_NAME_RESOLVED"'
             ),
         ],
         cwd=REPO_ROOT,
@@ -415,6 +417,13 @@ def test_runtime_instance_defaults_keep_main_canonical(tmp_path: Path) -> None:
     assert defaults["DASHBOARD_PORT"] == "8080"
     assert defaults["TMUX_SESSION_PREFIX"] == "ouroboros_overnight"
     assert defaults["LIVE_RUNTIME_LOCK_PATH"] == str(state_root / "live_runtime.lock")
+
+
+def test_runtime_instance_defaults_exports_resolved_branch_name(tmp_path: Path) -> None:
+    state_root = tmp_path / "overnight"
+    defaults = _resolve_runtime_defaults(state_root=state_root, branch="main")
+
+    assert defaults["RUNTIME_BRANCH_NAME_RESOLVED"] == "main"
 
 
 def test_before_remove_canonical_restart_skips_unmerged_worktree(

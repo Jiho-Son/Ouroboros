@@ -1248,3 +1248,11 @@
 - next_ticket: OOR-885
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #894의 unresolved review thread를 코드/테스트/문서와 대조해 실제 수정 필요 항목만 반영하고, 수정 근거와 검증 결과를 PR 코멘트로 남긴다.
+
+### 2026-04-01 | session=codex-oor-885-pr894-second-review
+- branch: feature/issue-885-backtest-gate-monitoring
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: PR #894 후속 리뷰에서 `RUNTIME_BRANCH_NAME`→`RUNTIME_BRANCH_NAME_RESOLVED` 검증과 선택적 마이너 개선 확인 예정
+- next_ticket: OOR-885
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: runtime monitor가 resolved branch gate를 실제로 통과하는지 테스트로 고정하고, 선택적 마이너 피드백은 가독성/안전성 범위에서만 반영한다.
