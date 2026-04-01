@@ -29,9 +29,11 @@ Optimized for cost-sensitive/provider-limited deployments:
 
 **Example**: With 2 markets (US, KR) and 4 sessions/day = 8 API calls/day (within 20 call limit)
 
-**Runtime observability**: daily mode startup logs the first batch anchor, and the
-runtime warns when an enabled market has no additional regular-session batch
-before close under the current cadence.
+**Runtime observability**: daily mode logs explicit `daily_cycle phase=0..6`
+boundaries for startup, next-open idle wait, market preparation, market
+evaluation, next-batch scheduling, closed-market cleanup, and daily review.
+The runtime also warns when an enabled market has no additional regular-session
+batch before close under the current cadence.
 
 **Daily evaluation coverage**: in `TRADE_MODE=daily`, scanner `top_n` still
 defines the ranked entry-candidate set, but the market evaluation loop also
