@@ -200,6 +200,9 @@ bash scripts/runtime_verify_monitor.sh
 # Runtime monitor with explicit policy timezone (example: KST)
 POLICY_TZ=Asia/Seoul bash scripts/runtime_verify_monitor.sh
 
+# Manually mirror the latest successful scheduled Backtest Gate artifact
+bash scripts/sync_backtest_gate_artifact.sh
+
 # After a restart, inspect US websocket hard-stop diagnostics in the latest run log
 latest_run="$(ls -t data/overnight/run_*.log | head -n1)"
 rg -n "Realtime hard-stop websocket monitor started|Realtime websocket action=connect|Realtime websocket action=(resubscribe|subscribe|unsubscribe)|Realtime websocket action=(parsed_us_event|ignore_us_parse_failure)|Realtime hard-stop evaluate action=(enter|result)|Realtime price event action=(received_us_event|no_trigger|dispatch_trigger)|Realtime hard-stop action=(decision_logged|trade_logged|persisted)" "$latest_run"
@@ -244,6 +247,11 @@ Operational policy:
   from the latest `run_*.log` when the logged app PID is still alive; this
   recovery stays inside the current worktree's `LOG_DIR` and does not mirror
   PID files across runtime instances.
+- In the canonical `main` checkout, `scripts/runtime_verify_monitor.sh` also
+  calls `scripts/sync_backtest_gate_artifact.sh` on a configurable interval
+  (`BACKTEST_GATE_SYNC_INTERVAL_SEC`, default 3600) to mirror the latest
+  successful scheduled `Backtest Gate` artifact into `data/backtest-gate`.
+  Non-`main` worktrees skip this sync path by default.
 - The hook stores its dedupe marker and restart log under the canonical state
   root (`data/overnight/canonical_restart.*` by default), so non-`main`
   worktree runtime state remains isolated. `canonical_restart.log` now records
@@ -261,6 +269,7 @@ Examples:
 # Canonical main checkout: stable state root and dashboard port 8080
 bash scripts/run_overnight.sh
 bash scripts/runtime_verify_monitor.sh
+bash scripts/sync_backtest_gate_artifact.sh
 tail -f data/overnight/runtime_verify_*.log
 
 # Hook regression proof: merged worktree cleanup restarts canonical main once

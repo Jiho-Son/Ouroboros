@@ -258,6 +258,7 @@
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: pnl 결산을 달러 기준으로 전환하려면 결산 시점 환율 소스 존재 여부가 선결 조건이며, 소스 부재 시 구현 보류 근거를 명시해야 한다.
 
+
 ### 2026-04-01 | session=codex-oor-884-merge
 - branch: feature/issue-884-daily-cycle-phase-coverage
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -1231,3 +1232,11 @@
 - next_ticket: OOR-884
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: `daily_cycle`에서 `phase=4`만 관측된 재현 신호를 먼저 고정하고, phase 기록 누락이 실제 상태 전이 누락인지 관측/집계 누락인지 증거로 분리한 뒤 테스트 우선으로 수정한다.
+
+### 2026-04-01 | session=codex-oor-885-start
+- branch: feature/issue-885-backtest-gate-monitoring
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-885
+- next_ticket: OOR-885
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: backtest gate 실행 흔적 누락 원인을 재현 중심으로 확인하고, gate/관측/문서 중 실제 결손 지점을 코드와 테스트로 복구한다.

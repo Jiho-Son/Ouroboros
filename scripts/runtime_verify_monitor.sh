@@ -14,14 +14,48 @@ MAX_HOURS="${MAX_HOURS:-24}"
 MAX_LOOPS="${MAX_LOOPS:-0}"
 POLICY_TZ="${POLICY_TZ:-Asia/Seoul}"
 DASHBOARD_PORT="${DASHBOARD_PORT}"
+BACKTEST_GATE_SYNC_ENABLED="${BACKTEST_GATE_SYNC_ENABLED:-true}"
+BACKTEST_GATE_SYNC_INTERVAL_SEC="${BACKTEST_GATE_SYNC_INTERVAL_SEC:-3600}"
 
 mkdir -p "$LOG_DIR"
 OUT_LOG="$LOG_DIR/runtime_verify_$(date +%Y%m%d_%H%M%S).log"
 END_TS=$(( $(date +%s) + MAX_HOURS*3600 ))
 loops=0
+last_backtest_gate_sync_ts=0
 
 log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" | tee -a "$OUT_LOG" >/dev/null
+}
+
+maybe_sync_backtest_gate() {
+  local now_ts="$1"
+  local summary
+
+  if [ "$BACKTEST_GATE_SYNC_ENABLED" != "true" ]; then
+    return 0
+  fi
+  if [ "${RUNTIME_BRANCH_NAME_RESOLVED:-}" != "main" ]; then
+    return 0
+  fi
+  if [ "$last_backtest_gate_sync_ts" -gt 0 ] &&
+    [ $((now_ts - last_backtest_gate_sync_ts)) -lt "$BACKTEST_GATE_SYNC_INTERVAL_SEC" ]; then
+    return 0
+  fi
+
+  last_backtest_gate_sync_ts="$now_ts"
+  if summary="$(bash "$SCRIPT_DIR/sync_backtest_gate_artifact.sh" 2>&1)"; then
+    summary="$(printf '%s' "$summary" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/ $//')"
+    [ -n "$summary" ] && log "[INFO] backtest gate sync $summary"
+    return 0
+  fi
+
+  summary="$(printf '%s' "$summary" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/ $//')"
+  if [ -n "$summary" ]; then
+    log "[WARN] backtest gate sync failed $summary"
+  else
+    log "[WARN] backtest gate sync failed"
+  fi
+  return 0
 }
 
 log_has_pattern() {
@@ -160,6 +194,8 @@ while true; do
     log "[INFO] monitor completed (max loops reached)"
     exit 0
   fi
+
+  maybe_sync_backtest_gate "$now"
 
   latest_run="$(ls -t "$LOG_DIR"/run_*.log 2>/dev/null | head -n1 || true)"
 

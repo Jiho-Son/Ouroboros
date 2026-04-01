@@ -277,6 +277,59 @@ if __name__ == "__main__":
     return fake_gh
 
 
+def _write_fake_backtest_gate_gh(*, tmp_path: Path) -> Path:
+    fake_gh = tmp_path / "fake_backtest_gate_gh.py"
+    fake_gh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import shutil
+import sys
+from pathlib import Path
+
+
+def _arg_value(args: list[str], flag: str) -> str:
+    index = args.index(flag)
+    return args[index + 1]
+
+
+def main() -> int:
+    args = sys.argv[1:]
+
+    if args[:2] == ["run", "list"]:
+        payload = [
+            {
+                "databaseId": int(os.environ["FAKE_BACKTEST_GATE_RUN_ID"]),
+                "status": "completed",
+                "conclusion": "success",
+                "createdAt": "2026-03-31T17:15:44Z",
+                "updatedAt": "2026-03-31T17:16:37Z",
+                "headBranch": "main",
+                "event": "schedule",
+            }
+        ]
+        print(json.dumps(payload))
+        return 0
+
+    if args[:2] == ["run", "download"]:
+        destination = Path(_arg_value(args, "-D"))
+        destination.mkdir(parents=True, exist_ok=True)
+        source = Path(os.environ["FAKE_BACKTEST_GATE_ARTIFACT_SOURCE"])
+        shutil.copy(source, destination / source.name)
+        return 0
+
+    raise SystemExit(f"unsupported fake gh args: {args}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    return fake_gh
+
+
 def _resolve_before_remove_workspace_root(*, tmp_path: Path) -> Path:
     return tmp_path / "workspace"
 
@@ -1145,3 +1198,50 @@ def test_runtime_verify_monitor_survives_when_no_live_pid(tmp_path: Path) -> Non
     assert "[HEARTBEAT]" in log_text, "monitor did not complete a heartbeat cycle"
     # live_pids may be 'none' (no match) or a pid (process found) — either is valid.
     # The critical invariant is that the script survived the loop without pipefail abort.
+
+
+def test_runtime_verify_monitor_syncs_backtest_gate_logs_on_main(tmp_path: Path) -> None:
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    backtest_log_dir = tmp_path / "backtest-gate"
+    marker_file = tmp_path / ".latest_backtest_gate_run"
+    artifact_source = tmp_path / "backtest_gate_20260331_171626.log"
+    artifact_source.write_text(
+        "2026-03-31T17:16:32Z [PASS] full backtest gate passed\n",
+        encoding="utf-8",
+    )
+    fake_gh = _write_fake_backtest_gate_gh(tmp_path=tmp_path)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "ROOT_DIR": str(REPO_ROOT),
+            "LOG_DIR": str(log_dir),
+            "INTERVAL_SEC": "1",
+            "MAX_HOURS": "1",
+            "MAX_LOOPS": "1",
+            "POLICY_TZ": "UTC",
+            "RUNTIME_BRANCH_NAME": "main",
+            "BACKTEST_GATE_GH_BIN": str(fake_gh),
+            "BACKTEST_GATE_LOG_DIR": str(backtest_log_dir),
+            "BACKTEST_GATE_SYNC_MARKER_FILE": str(marker_file),
+            "BACKTEST_GATE_SYNC_INTERVAL_SEC": "1",
+            "FAKE_BACKTEST_GATE_RUN_ID": "23810195275",
+            "FAKE_BACKTEST_GATE_ARTIFACT_SOURCE": str(artifact_source),
+        }
+    )
+    completed = subprocess.run(
+        ["bash", str(RUNTIME_MONITOR)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    mirrored = backtest_log_dir / artifact_source.name
+    assert mirrored.exists()
+    assert marker_file.read_text(encoding="utf-8").strip() == "23810195275"
+    log_text = _latest_runtime_log(log_dir)
+    assert "backtest gate sync synced run_id=23810195275 files=1" in log_text
