@@ -4185,6 +4185,9 @@ async def _handle_daily_market_closures(
         except Exception as exc:
             logger.warning("Daily market close handling failed: %s", exc)
         finally:
+            # Drop the closed-market session marker on both success and failure so the
+            # next open session is treated as a fresh lifecycle transition instead of
+            # carrying stale state across batches.
             market_states.pop(market_code, None)
 
 async def _handle_realtime_market_closures(
