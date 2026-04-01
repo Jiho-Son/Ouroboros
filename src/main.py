@@ -236,6 +236,58 @@ def _log_daily_cycle_phase(phase: int, *, step: str, **fields: Any) -> None:
     logger.info(" ".join(parts))
 
 
+_DAILY_CYCLE_PHASE_CONTRACT: tuple[tuple[int, str, str, str], ...] = (
+    (
+        1,
+        "wait_for_market_open",
+        "sleep_until_next_market_open",
+        "no_open_markets",
+    ),
+    (
+        2,
+        "prepare_market",
+        "scan_and_generate_day_playbook",
+        "open_market_batch",
+    ),
+    (
+        3,
+        "evaluate_market",
+        "evaluate_market_against_playbook",
+        "playbook_ready",
+    ),
+    (
+        4,
+        "schedule_next_batch",
+        "schedule_followup_batch",
+        "batch_complete_or_skipped",
+    ),
+    (
+        5,
+        "cleanup_closed_market",
+        "cleanup_runtime_state_for_closed_market",
+        "market_closed_since_previous_batch",
+    ),
+    (
+        6,
+        "daily_review",
+        "run_daily_review_and_evolution",
+        "after_closed_market_cleanup",
+    ),
+)
+
+
+def _log_daily_cycle_phase_contract() -> None:
+    """Log the daily phase contract once so short observation windows still see it."""
+    for phase, step, action, when in _DAILY_CYCLE_PHASE_CONTRACT:
+        _log_daily_cycle_phase(
+            phase,
+            step=step,
+            status="contract",
+            action=action,
+            when=when,
+        )
+
+
 def _daily_mode_has_additional_regular_session_batch(
     *,
     market: MarketInfo,
@@ -5209,6 +5261,7 @@ async def run(settings: Settings) -> None:
                 trade_mode=settings.TRADE_MODE,
                 enabled_markets=",".join(settings.enabled_market_list),
             )
+            _log_daily_cycle_phase_contract()
 
             session_interval = timedelta(hours=settings.SESSION_INTERVAL_HOURS)
             session_interval_seconds = session_interval.total_seconds()
