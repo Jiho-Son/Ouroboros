@@ -43,9 +43,11 @@ def _resolve_runtime_defaults(*, state_root: Path, branch: str) -> dict[str, str
                 f'source "{RUNTIME_INSTANCE_ENV}"; '
                 "runtime_resolve_defaults; "
                 'printf "ROOT_DIR=%s\nLOG_DIR=%s\nDASHBOARD_PORT=%s\n'
-                'TMUX_SESSION_PREFIX=%s\nLIVE_RUNTIME_LOCK_PATH=%s\n" '
+                'TMUX_SESSION_PREFIX=%s\nLIVE_RUNTIME_LOCK_PATH=%s\n'
+                'RUNTIME_BRANCH_NAME_RESOLVED=%s\n" '
                 '"$ROOT_DIR" "$LOG_DIR" "$DASHBOARD_PORT" '
-                '"$TMUX_SESSION_PREFIX" "$LIVE_RUNTIME_LOCK_PATH"'
+                '"$TMUX_SESSION_PREFIX" "$LIVE_RUNTIME_LOCK_PATH" '
+                '"$RUNTIME_BRANCH_NAME_RESOLVED"'
             ),
         ],
         cwd=REPO_ROOT,
@@ -415,6 +417,13 @@ def test_runtime_instance_defaults_keep_main_canonical(tmp_path: Path) -> None:
     assert defaults["DASHBOARD_PORT"] == "8080"
     assert defaults["TMUX_SESSION_PREFIX"] == "ouroboros_overnight"
     assert defaults["LIVE_RUNTIME_LOCK_PATH"] == str(state_root / "live_runtime.lock")
+
+
+def test_runtime_instance_defaults_exports_resolved_branch_name(tmp_path: Path) -> None:
+    state_root = tmp_path / "overnight"
+    defaults = _resolve_runtime_defaults(state_root=state_root, branch="main")
+
+    assert defaults["RUNTIME_BRANCH_NAME_RESOLVED"] == "main"
 
 
 def test_before_remove_canonical_restart_skips_unmerged_worktree(
@@ -1145,3 +1154,52 @@ def test_runtime_verify_monitor_survives_when_no_live_pid(tmp_path: Path) -> Non
     assert "[HEARTBEAT]" in log_text, "monitor did not complete a heartbeat cycle"
     # live_pids may be 'none' (no match) or a pid (process found) — either is valid.
     # The critical invariant is that the script survived the loop without pipefail abort.
+
+
+def test_runtime_verify_monitor_syncs_backtest_gate_logs_on_main(
+    tmp_path: Path, fake_backtest_gate_gh_factory
+) -> None:
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    backtest_log_dir = tmp_path / "backtest-gate"
+    marker_file = tmp_path / ".latest_backtest_gate_run"
+    artifact_source = tmp_path / "backtest_gate_20260331_171626.log"
+    artifact_source.write_text(
+        "2026-03-31T17:16:32Z [PASS] full backtest gate passed\n",
+        encoding="utf-8",
+    )
+    fake_gh = fake_backtest_gate_gh_factory(tmp_path / "fake_backtest_gate_gh.py")
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "ROOT_DIR": str(REPO_ROOT),
+            "LOG_DIR": str(log_dir),
+            "INTERVAL_SEC": "1",
+            "MAX_HOURS": "1",
+            "MAX_LOOPS": "1",
+            "POLICY_TZ": "UTC",
+            "RUNTIME_BRANCH_NAME": "main",
+            "BACKTEST_GATE_GH_BIN": str(fake_gh),
+            "BACKTEST_GATE_LOG_DIR": str(backtest_log_dir),
+            "BACKTEST_GATE_SYNC_MARKER_FILE": str(marker_file),
+            "BACKTEST_GATE_SYNC_INTERVAL_SEC": "1",
+            "FAKE_BACKTEST_GATE_RUN_ID": "23810195275",
+            "FAKE_BACKTEST_GATE_ARTIFACT_SOURCE": str(artifact_source),
+        }
+    )
+    completed = subprocess.run(
+        ["bash", str(RUNTIME_MONITOR)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    mirrored = backtest_log_dir / artifact_source.name
+    assert mirrored.exists()
+    assert marker_file.read_text(encoding="utf-8").strip() == "23810195275"
+    log_text = _latest_runtime_log(log_dir)
+    assert "backtest gate sync synced run_id=23810195275 files=1" in log_text

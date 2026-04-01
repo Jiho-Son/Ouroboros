@@ -191,6 +191,8 @@ pytest -v --cov=src --cov-report=term-missing
 - `feature/**` push: 변경 파일 기준 `auto` 모드
 - Daily schedule: `full` 강제 실행
 - Manual dispatch: `mode`(`auto|smoke|full`) 지정 가능
+- canonical/main 의 `scripts/runtime_verify_monitor.sh` 는 latest successful daily schedule artifact를
+  `data/backtest-gate` 로 미러링해 local freshness signal도 함께 유지한다.
 
 실행 기준:
 - `src/analysis/`, `src/strategy/`, `src/strategies/`, `src/main.py`, `src/markets/`, `src/broker/`
@@ -204,6 +206,7 @@ pytest -v --cov=src --cov-report=term-missing
 bash scripts/backtest_gate.sh
 BACKTEST_MODE=full bash scripts/backtest_gate.sh
 BASE_REF=origin/feature/v3-session-policy-stream BACKTEST_MODE=auto bash scripts/backtest_gate.sh
+bash scripts/sync_backtest_gate_artifact.sh
 ```
 
 ## Test Configuration
