@@ -46,7 +46,13 @@ print(run["databaseId"])
 }
 
 has_any_local_log() {
-  find "$TARGET_LOG_DIR" -maxdepth 1 -type f -name 'backtest_gate_*.log' | read -r _
+  local first_log=""
+
+  if [ -d "$TARGET_LOG_DIR" ]; then
+    first_log="$(find "$TARGET_LOG_DIR" -maxdepth 1 -type f -name 'backtest_gate_*.log' -print -quit 2>/dev/null)"
+  fi
+
+  [ -n "$first_log" ]
 }
 
 sync_latest_artifact() {
@@ -55,6 +61,7 @@ sync_latest_artifact() {
   local count
 
   tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "$tmp_dir"; trap - RETURN ERR' RETURN ERR
   "$GH_BIN" run download "$run_id" -n "$ARTIFACT_NAME" -D "$tmp_dir" >/dev/null
 
   mkdir -p "$TARGET_LOG_DIR"
@@ -65,13 +72,11 @@ sync_latest_artifact() {
   done < <(find "$tmp_dir" -type f -name 'backtest_gate_*.log' -print0 | sort -z)
 
   if [ "$count" -eq 0 ]; then
-    rm -rf "$tmp_dir"
     echo "artifact_empty run_id=$run_id" >&2
     return 1
   fi
 
   printf '%s\n' "$run_id" > "$MARKER_FILE"
-  rm -rf "$tmp_dir"
   echo "synced run_id=$run_id files=$count"
 }
 
@@ -84,7 +89,7 @@ main() {
     exit 1
   fi
 
-  run_id="$(latest_run_id || true)"
+  run_id="$(latest_run_id)"
   if [ -z "$run_id" ]; then
     echo "no_scheduled_run"
     exit 0

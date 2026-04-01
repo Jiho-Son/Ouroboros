@@ -10,57 +10,6 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
-def _write_fake_backtest_gate_gh(path: Path) -> None:
-    path.write_text(
-        """#!/usr/bin/env python3
-import json
-import os
-import shutil
-import sys
-from pathlib import Path
-
-
-def _arg_value(args: list[str], flag: str) -> str:
-    index = args.index(flag)
-    return args[index + 1]
-
-
-def main() -> int:
-    args = sys.argv[1:]
-
-    if args[:2] == ["run", "list"]:
-        payload = [
-            {
-                "databaseId": int(os.environ["FAKE_GH_RUN_ID"]),
-                "status": "completed",
-                "conclusion": "success",
-                "createdAt": "2026-03-31T17:15:44Z",
-                "updatedAt": "2026-03-31T17:16:37Z",
-                "headBranch": "main",
-                "event": "schedule",
-            }
-        ]
-        print(json.dumps(payload))
-        return 0
-
-    if args[:2] == ["run", "download"]:
-        destination = Path(_arg_value(args, "-D"))
-        destination.mkdir(parents=True, exist_ok=True)
-        source = Path(os.environ["FAKE_GH_ARTIFACT_SOURCE"])
-        shutil.copy(source, destination / source.name)
-        return 0
-
-    raise SystemExit(f"unsupported fake gh args: {args}")
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-""",
-        encoding="utf-8",
-    )
-    path.chmod(0o755)
-
-
 def test_backtest_gate_auto_skip_works_without_rg(tmp_path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     fake_bin = tmp_path / "bin"
@@ -110,7 +59,9 @@ exit 1
     assert "[PASS] backtest gate skipped" in (result.stdout + result.stderr)
 
 
-def test_sync_backtest_gate_artifact_downloads_latest_schedule_run(tmp_path) -> None:
+def test_sync_backtest_gate_artifact_downloads_latest_schedule_run(
+    tmp_path, fake_backtest_gate_gh_factory
+) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     artifact_source = tmp_path / "backtest_gate_20260331_171626.log"
     artifact_source.write_text(
@@ -119,7 +70,7 @@ def test_sync_backtest_gate_artifact_downloads_latest_schedule_run(tmp_path) -> 
     )
 
     fake_gh = tmp_path / "fake_gh.py"
-    _write_fake_backtest_gate_gh(fake_gh)
+    fake_backtest_gate_gh_factory(fake_gh)
 
     output_dir = tmp_path / "backtest-gate"
     marker_file = tmp_path / ".latest_backtest_gate_run"
@@ -129,8 +80,8 @@ def test_sync_backtest_gate_artifact_downloads_latest_schedule_run(tmp_path) -> 
             "BACKTEST_GATE_GH_BIN": str(fake_gh),
             "BACKTEST_GATE_LOG_DIR": str(output_dir),
             "BACKTEST_GATE_SYNC_MARKER_FILE": str(marker_file),
-            "FAKE_GH_RUN_ID": "23810195275",
-            "FAKE_GH_ARTIFACT_SOURCE": str(artifact_source),
+            "FAKE_BACKTEST_GATE_RUN_ID": "23810195275",
+            "FAKE_BACKTEST_GATE_ARTIFACT_SOURCE": str(artifact_source),
         }
     )
 
@@ -163,3 +114,40 @@ def test_sync_backtest_gate_artifact_downloads_latest_schedule_run(tmp_path) -> 
 
     assert second.returncode == 0, second.stderr
     assert second.stdout.strip() == "already_synced run_id=23810195275"
+
+
+def test_sync_backtest_gate_artifact_cleans_up_tmp_dir_on_download_failure(
+    tmp_path, fake_backtest_gate_gh_factory
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    fake_gh = fake_backtest_gate_gh_factory(tmp_path / "fake_gh.py")
+    output_dir = tmp_path / "backtest-gate"
+    marker_file = tmp_path / ".latest_backtest_gate_run"
+    download_dest_record = tmp_path / "download_dest.txt"
+    env = os.environ.copy()
+    env.update(
+        {
+            "BACKTEST_GATE_GH_BIN": str(fake_gh),
+            "BACKTEST_GATE_LOG_DIR": str(output_dir),
+            "BACKTEST_GATE_SYNC_MARKER_FILE": str(marker_file),
+            "FAKE_BACKTEST_GATE_RUN_ID": "23810195275",
+            "FAKE_BACKTEST_GATE_DOWNLOAD_FAIL": "true",
+            "FAKE_BACKTEST_GATE_DOWNLOAD_DEST_RECORD": str(download_dest_record),
+            "FAKE_BACKTEST_GATE_ARTIFACT_SOURCE": str(
+                tmp_path / "unused_backtest_gate.log"
+            ),
+        }
+    )
+
+    completed = subprocess.run(
+        ["/bin/bash", "scripts/sync_backtest_gate_artifact.sh"],
+        cwd=repo_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode != 0
+    tmp_dir = Path(download_dest_record.read_text(encoding="utf-8").strip())
+    assert not tmp_dir.exists(), "temporary download directory leaked on failure"

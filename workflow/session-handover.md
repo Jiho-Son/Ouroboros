@@ -1240,3 +1240,11 @@
 - next_ticket: OOR-885
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: backtest gate 실행 흔적 누락 원인을 재현 중심으로 확인하고, gate/관측/문서 중 실제 결손 지점을 코드와 테스트로 복구한다.
+
+### 2026-04-01 | session=codex-oor-885-pr894-review-followup
+- branch: feature/issue-885-backtest-gate-monitoring
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: PR #894 review thread 확인 및 unresolved 코멘트 대응 예정
+- next_ticket: OOR-885
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: PR #894의 unresolved review thread를 코드/테스트/문서와 대조해 실제 수정 필요 항목만 반영하고, 수정 근거와 검증 결과를 PR 코멘트로 남긴다.

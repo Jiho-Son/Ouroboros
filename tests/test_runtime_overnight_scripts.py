@@ -277,59 +277,6 @@ if __name__ == "__main__":
     return fake_gh
 
 
-def _write_fake_backtest_gate_gh(*, tmp_path: Path) -> Path:
-    fake_gh = tmp_path / "fake_backtest_gate_gh.py"
-    fake_gh.write_text(
-        """#!/usr/bin/env python3
-import json
-import os
-import shutil
-import sys
-from pathlib import Path
-
-
-def _arg_value(args: list[str], flag: str) -> str:
-    index = args.index(flag)
-    return args[index + 1]
-
-
-def main() -> int:
-    args = sys.argv[1:]
-
-    if args[:2] == ["run", "list"]:
-        payload = [
-            {
-                "databaseId": int(os.environ["FAKE_BACKTEST_GATE_RUN_ID"]),
-                "status": "completed",
-                "conclusion": "success",
-                "createdAt": "2026-03-31T17:15:44Z",
-                "updatedAt": "2026-03-31T17:16:37Z",
-                "headBranch": "main",
-                "event": "schedule",
-            }
-        ]
-        print(json.dumps(payload))
-        return 0
-
-    if args[:2] == ["run", "download"]:
-        destination = Path(_arg_value(args, "-D"))
-        destination.mkdir(parents=True, exist_ok=True)
-        source = Path(os.environ["FAKE_BACKTEST_GATE_ARTIFACT_SOURCE"])
-        shutil.copy(source, destination / source.name)
-        return 0
-
-    raise SystemExit(f"unsupported fake gh args: {args}")
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-""",
-        encoding="utf-8",
-    )
-    fake_gh.chmod(0o755)
-    return fake_gh
-
-
 def _resolve_before_remove_workspace_root(*, tmp_path: Path) -> Path:
     return tmp_path / "workspace"
 
@@ -1200,7 +1147,9 @@ def test_runtime_verify_monitor_survives_when_no_live_pid(tmp_path: Path) -> Non
     # The critical invariant is that the script survived the loop without pipefail abort.
 
 
-def test_runtime_verify_monitor_syncs_backtest_gate_logs_on_main(tmp_path: Path) -> None:
+def test_runtime_verify_monitor_syncs_backtest_gate_logs_on_main(
+    tmp_path: Path, fake_backtest_gate_gh_factory
+) -> None:
     log_dir = tmp_path / "overnight"
     log_dir.mkdir(parents=True, exist_ok=True)
     backtest_log_dir = tmp_path / "backtest-gate"
@@ -1210,7 +1159,7 @@ def test_runtime_verify_monitor_syncs_backtest_gate_logs_on_main(tmp_path: Path)
         "2026-03-31T17:16:32Z [PASS] full backtest gate passed\n",
         encoding="utf-8",
     )
-    fake_gh = _write_fake_backtest_gate_gh(tmp_path=tmp_path)
+    fake_gh = fake_backtest_gate_gh_factory(tmp_path / "fake_backtest_gate_gh.py")
 
     env = os.environ.copy()
     env.update(
