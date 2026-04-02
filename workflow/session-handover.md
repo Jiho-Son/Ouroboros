@@ -1256,3 +1256,11 @@
 - next_ticket: OOR-885
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: runtime monitor가 resolved branch gate를 실제로 통과하는지 테스트로 고정하고, 선택적 마이너 피드백은 가독성/안전성 범위에서만 반영한다.
+
+### 2026-04-02 | session=codex-oor-886-rework-restart
+- branch: feature/issue-886-harness-daily-cycle-missing-phases-rework
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-886 `Rework` 상태 확인, 기존 PR #895 close 완료, 기존 workpad 삭제 완료, fresh restart 진행
+- next_ticket: OOR-886
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: human 코멘트는 외부 로그 실관측 확인을 요구하지만 이번 세션은 제공된 repo copy 밖 경로 접근이 금지되어 있다. 따라서 repo 내부 재현/테스트/로그 근거만 사용해 실제 daily cycle phase 계약 누락 여부와 근본 원인을 다시 고정한다.
