@@ -328,6 +328,26 @@ def _resolve_daily_mode_next_batch_at(
     return min(catchup_candidates)
 
 
+def _collect_daily_mode_last_regular_batch_markets(
+    *,
+    open_markets: list[MarketInfo],
+    current_batch_started_at: datetime,
+    next_scheduled_batch_at: datetime,
+    session_interval: timedelta,
+) -> list[MarketInfo]:
+    """Return markets whose current batch is the last regular-session opportunity."""
+    return [
+        market
+        for market in open_markets
+        if not _daily_mode_has_additional_regular_session_batch(
+            market=market,
+            current_batch_started_at=current_batch_started_at,
+            next_scheduled_batch_at=next_scheduled_batch_at,
+            session_interval=session_interval,
+        )
+    ]
+
+
 def _log_daily_mode_startup_anchor(
     *,
     settings: Settings,
@@ -344,19 +364,11 @@ def _log_daily_mode_startup_anchor(
 
 def _log_daily_mode_last_regular_batch_warning(
     *,
-    open_markets: list[MarketInfo],
+    last_regular_batch_markets: list[MarketInfo],
     current_batch_started_at: datetime,
     next_scheduled_batch_at: datetime,
-    session_interval: timedelta,
 ) -> None:
-    for market in open_markets:
-        if _daily_mode_has_additional_regular_session_batch(
-            market=market,
-            current_batch_started_at=current_batch_started_at,
-            next_scheduled_batch_at=next_scheduled_batch_at,
-            session_interval=session_interval,
-        ):
-            continue
+    for market in last_regular_batch_markets:
         logger.warning(
             "Daily mode has no additional regular-session batch before close "
             "market=%s markets_open_at_batch_start=true current_batch=%s next_scheduled_batch=%s",
@@ -5330,18 +5342,31 @@ async def run(settings: Settings) -> None:
                         (next_scheduled_batch_at - batch_completed_at).total_seconds(),
                         0.0,
                     )
+                    last_regular_batch_markets = (
+                        _collect_daily_mode_last_regular_batch_markets(
+                            open_markets=current_open_markets,
+                            current_batch_started_at=current_batch_started_at,
+                            next_scheduled_batch_at=next_scheduled_batch_at,
+                            session_interval=session_interval,
+                        )
+                    )
+                    last_regular_batch_codes = ",".join(
+                        market.code for market in last_regular_batch_markets
+                    )
                     _log_daily_cycle_phase(
                         4,
                         step="schedule_next_batch",
                         next_batch=next_scheduled_batch_at.isoformat(),
                         wait_seconds=f"{wait_seconds:.1f}",
                         markets=",".join(market.code for market in current_open_markets),
+                        last_regular_batch_markets=(
+                            last_regular_batch_codes if last_regular_batch_codes else None
+                        ),
                     )
                     _log_daily_mode_last_regular_batch_warning(
-                        open_markets=current_open_markets,
+                        last_regular_batch_markets=last_regular_batch_markets,
                         current_batch_started_at=current_batch_started_at,
                         next_scheduled_batch_at=next_scheduled_batch_at,
-                        session_interval=session_interval,
                     )
                 except CircuitBreakerTripped:
                     # Warning logs are success-path only because a tripped circuit breaker

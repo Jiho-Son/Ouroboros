@@ -36,6 +36,11 @@ These phase numbers label lifecycle categories for downstream observability;
 they are not a strict chronological sequence inside one loop iteration, so a
 closed-market cleanup (`phase=5`) may be emitted before the later
 next-batch scheduling boundary (`phase=4`) in the same run.
+When a batch starts late enough that no additional regular-session batch remains
+before close, the `phase=4` log also carries
+`last_regular_batch_markets=<...>`; the corresponding `phase=5/6/1` events are
+then deferred to the first post-close iteration.
+
 The runtime also warns when an enabled market has no additional regular-session
 batch before close under the current cadence.
 

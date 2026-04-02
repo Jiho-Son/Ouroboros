@@ -218,6 +218,7 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+
 ### 2026-04-01 | session=codex-pr893-review-followup
 - branch: feature/issue-884-daily-cycle-phase-coverage
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -1256,3 +1257,19 @@
 - next_ticket: OOR-885
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: runtime monitor가 resolved branch gate를 실제로 통과하는지 테스트로 고정하고, 선택적 마이너 피드백은 가독성/안전성 범위에서만 반영한다.
+
+### 2026-04-02 | session=codex-oor-886-runtime-rework
+- branch: feature/issue-886-daily-cycle-runtime-rework
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-886
+- next_ticket: OOR-886
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: Rework 재시작으로 이전 PR/workpad를 폐기했다. repo copy 내부 재현 증거만 사용해 daily_cycle phase 누락 원인을 다시 확인한다.
+
+### 2026-04-02 | session=codex-pr897-review-followup
+- branch: feature/issue-886-daily-cycle-runtime-rework
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: PR #897 review thread 확인 및 후속 push/PR comment 예정
+- next_ticket: OOR-886
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: unresolved review thread를 코드/테스트와 대조해 실제 수정이 필요한 항목만 반영하고, 수정 근거와 검증 결과를 PR 코멘트로 남긴다.
