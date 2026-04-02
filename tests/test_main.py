@@ -379,6 +379,32 @@ def test_resolve_daily_mode_next_batch_at_caps_live_regular_session_gap() -> Non
     ) == datetime(2026, 3, 23, 0, 36, tzinfo=UTC)
 
 
+@pytest.mark.parametrize(
+    ("mode", "trade_mode", "session_id", "expected"),
+    [
+        ("live", "daily", "US_REG", True),
+        ("live", "daily", "KRX_REG", True),
+        ("live", "daily", "US_PRE", False),
+        ("paper", "daily", "US_REG", False),
+    ],
+)
+def test_should_preserve_current_session_playbook_for_live_daily_regular_session_polls(
+    mode: str,
+    trade_mode: str,
+    session_id: str,
+    expected: bool,
+) -> None:
+    settings = _make_settings(MODE=mode, TRADE_MODE=trade_mode)
+
+    assert (
+        main_module._should_preserve_current_session_playbook_for_live_daily_session(
+            settings=settings,
+            session_id=session_id,
+        )
+        is expected
+    )
+
+
 def test_resolve_terminal_sell_order_price_uses_limit_in_low_liquidity_session() -> None:
     market = MagicMock()
     market.code = "KR"
@@ -9182,6 +9208,63 @@ async def test_load_or_generate_daily_playbook_reuses_latest_current_session_ent
         playbook_store=playbook_store,
         pre_market_planner=pre_market_planner,
         telegram=telegram,
+    )
+
+    assert playbook is stored_playbook
+    playbook_store.load_latest_entry.assert_called_once_with(
+        date(2026, 3, 25),
+        "US_AMEX",
+        session_id="US_REG",
+    )
+    pre_market_planner.generate_playbook.assert_not_awaited()
+    playbook_store.save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_live_daily_poll_preserves_current_session_playbook() -> None:
+    market = MagicMock()
+    market.code = "US_AMEX"
+
+    changed_candidate = ScanCandidate(
+        stock_code="TSLA",
+        name="Tesla",
+        price=250.0,
+        volume=2_000_000.0,
+        volume_ratio=3.0,
+        rsi=72.0,
+        signal="breakout",
+        score=91.0,
+    )
+    stored_playbook = _make_stock_playbook("US_AMEX", "PLU").model_copy(
+        update={"session_id": "US_REG"}
+    )
+    playbook_store = MagicMock()
+    playbook_store.load_latest_entry = MagicMock(
+        return_value=StoredPlaybookEntry(
+            playbook=stored_playbook,
+            slot="open",
+            generated_at=stored_playbook.generated_at,
+        )
+    )
+    playbook_store.load = MagicMock(
+        side_effect=AssertionError("legacy open-slot lookup should not run")
+    )
+    playbook_store.save = MagicMock()
+    pre_market_planner = MagicMock()
+    pre_market_planner.generate_playbook = AsyncMock()
+    telegram = MagicMock()
+    telegram.notify_playbook_generated = AsyncMock()
+
+    playbook = await main_module._load_or_generate_daily_playbook(
+        candidates_list=[changed_candidate],
+        current_holdings=[],
+        market=market,
+        market_today=date(2026, 3, 25),
+        session_id="US_REG",
+        playbook_store=playbook_store,
+        pre_market_planner=pre_market_planner,
+        telegram=telegram,
+        preserve_current_session_playbook=True,
     )
 
     assert playbook is stored_playbook

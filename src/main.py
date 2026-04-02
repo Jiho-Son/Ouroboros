@@ -2903,6 +2903,17 @@ def _with_playbook_session_id(playbook: DayPlaybook, session_id: str) -> DayPlay
     return playbook.model_copy(update={"session_id": session_id})
 
 
+def _should_preserve_current_session_playbook_for_live_daily_session(
+    *, settings: Settings, session_id: str
+) -> bool:
+    """Keep the stored playbook sticky during live daily regular-session polls."""
+    return (
+        settings.MODE == "live"
+        and settings.TRADE_MODE == "daily"
+        and session_id in {"KRX_REG", "US_REG"}
+    )
+
+
 async def _load_or_generate_daily_playbook(
     *,
     candidates_list: list[ScanCandidate],
@@ -2913,15 +2924,21 @@ async def _load_or_generate_daily_playbook(
     playbook_store: PlaybookStore,
     pre_market_planner: PreMarketPlanner,
     telegram: TelegramClient,
+    preserve_current_session_playbook: bool = False,
 ) -> DayPlaybook:
     """Load the market playbook or generate it for the current trading day."""
+    candidate_codes = (
+        None
+        if preserve_current_session_playbook
+        else {candidate.stock_code for candidate in candidates_list}
+    )
     selection = _decide_playbook_selection(
         playbook_store=playbook_store,
         market_today=market_today,
         market_code=market.code,
         session_id=session_id,
         selection_intent=PlaybookSelectionIntent.RESUME_CURRENT_SESSION,
-        current_candidate_codes={candidate.stock_code for candidate in candidates_list},
+        current_candidate_codes=candidate_codes,
     )
     if selection.stored_entry is not None:
         return _with_playbook_session_id(selection.stored_entry.playbook, session_id)
@@ -3856,6 +3873,12 @@ async def _run_daily_session_market(
         playbook_store=playbook_store,
         pre_market_planner=pre_market_planner,
         telegram=telegram,
+        preserve_current_session_playbook=(
+            _should_preserve_current_session_playbook_for_live_daily_session(
+                settings=settings,
+                session_id=runtime_session_id,
+            )
+        ),
     )
 
     stocks_data = await _collect_daily_session_market_data(
