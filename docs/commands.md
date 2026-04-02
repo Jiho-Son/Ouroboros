@@ -247,8 +247,12 @@ Operational policy:
   from the latest `run_*.log` when the logged app PID is still alive; this
   recovery stays inside the current worktree's `LOG_DIR` and does not mirror
   PID files across runtime instances.
-- In the canonical `main` checkout, `scripts/runtime_verify_monitor.sh` also
-  calls `scripts/sync_backtest_gate_artifact.sh` on a configurable interval
+- In the canonical `main` checkout, `scripts/run_overnight.sh` automatically
+  starts `scripts/runtime_verify_monitor.sh` as a sidecar and records its PID
+  in `data/overnight/runtime_verify.pid`; `scripts/stop_overnight.sh` stops the
+  same sidecar during shutdown.
+- The canonical `main` runtime monitor sidecar also calls
+  `scripts/sync_backtest_gate_artifact.sh` on a configurable interval
   (`BACKTEST_GATE_SYNC_INTERVAL_SEC`, default 3600) to mirror the latest
   successful scheduled `Backtest Gate` artifact into `data/backtest-gate`.
   Non-`main` worktrees skip this sync path by default.
@@ -268,9 +272,9 @@ Examples:
 ```bash
 # Canonical main checkout: stable state root and dashboard port 8080
 bash scripts/run_overnight.sh
-bash scripts/runtime_verify_monitor.sh
-bash scripts/sync_backtest_gate_artifact.sh
+cat data/overnight/runtime_verify.pid
 tail -f data/overnight/runtime_verify_*.log
+bash scripts/sync_backtest_gate_artifact.sh
 
 # Hook regression proof: merged worktree cleanup restarts canonical main once
 pytest tests/test_runtime_overnight_scripts.py -k 'before_remove_canonical_restart' -v

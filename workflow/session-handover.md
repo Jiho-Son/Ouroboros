@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-04-02 | session=codex-oor-887-start
+- branch: feature/issue-887-backtest-gate-freshness
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-887
+- next_ticket: OOR-887
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: `backtest_gate` freshness 경보가 재발해, OOR-885 mirror 경로가 main runtime에서 실제로 동작하는지 재현·원인분석부터 다시 확인한다.
+
 ### 2026-04-02 | session=codex-pr898-review-followup
 - branch: feature/issue-888-live-daily-polling-gap
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -1288,3 +1296,11 @@
 - next_ticket: #888
 - process_gate_checked: process_ticket=#886 merged_to_feature_branch=yes
 - risks_or_notes: late-start regular-session 에서 live daily mode entry/staged-exit polling gap 재현 후 설계/테스트/문서/런타임 반영까지 한 세션에서 마무리한다.
+
+### 2026-04-02 | session=codex-oor-887-start
+- branch: feature/issue-887-backtest-gate-freshness
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-887
+- next_ticket: OOR-887
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: `backtest_gate` freshness 경보가 재발해, OOR-885 mirror 경로가 main runtime에서 실제로 동작하는지 재현·원인분석부터 다시 확인한다.

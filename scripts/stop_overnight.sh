@@ -11,6 +11,7 @@ cd "$ROOT_DIR"
 
 PID_FILE="$LOG_DIR/app.pid"
 WATCHDOG_PID_FILE="$LOG_DIR/watchdog.pid"
+RUNTIME_MONITOR_PID_FILE="$LOG_DIR/runtime_verify.pid"
 KILL_TIMEOUT="${KILL_TIMEOUT:-5}"
 
 stop_pid() {
@@ -47,6 +48,14 @@ stop_pid() {
 }
 
 status=0
+
+if [ -f "$RUNTIME_MONITOR_PID_FILE" ]; then
+    runtime_monitor_pid="$(cat "$RUNTIME_MONITOR_PID_FILE" || true)"
+    stop_pid "runtime monitor" "$runtime_monitor_pid" || status=1
+    rm -f "$RUNTIME_MONITOR_PID_FILE"
+else
+    echo "runtime monitor pid 파일 없음: $RUNTIME_MONITOR_PID_FILE"
+fi
 
 if [ -f "$WATCHDOG_PID_FILE" ]; then
     watchdog_pid="$(cat "$WATCHDOG_PID_FILE" || true)"
