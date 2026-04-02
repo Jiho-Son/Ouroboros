@@ -271,11 +271,21 @@ def _resolve_daily_mode_next_batch_at(
     current_batch_started_at: datetime,
     batch_completed_at: datetime,
     session_interval: timedelta,
+    live_regular_session_poll_interval: timedelta | None = None,
 ) -> datetime:
     """Return the next daily batch time, inserting a regular-session catch-up when needed."""
     default_next_batch_at = batch_completed_at + session_interval
+    next_batch_candidates: list[datetime] = [default_next_batch_at]
     if session_interval <= timedelta(0):
         return default_next_batch_at
+
+    live_regular_session_poll_candidate = _resolve_live_daily_regular_session_poll_candidate(
+        open_markets=open_markets,
+        batch_completed_at=batch_completed_at,
+        poll_interval=live_regular_session_poll_interval,
+    )
+    if live_regular_session_poll_candidate is not None:
+        next_batch_candidates.append(live_regular_session_poll_candidate)
 
     catchup_candidates: list[datetime] = []
     for market in open_markets:
@@ -322,10 +332,38 @@ def _resolve_daily_mode_next_batch_at(
                 break
             probe = probe + timedelta(minutes=1)
 
-    if not catchup_candidates:
-        return default_next_batch_at
+    if catchup_candidates:
+        next_batch_candidates.extend(catchup_candidates)
 
-    return min(catchup_candidates)
+    return min(next_batch_candidates)
+
+
+def _resolve_live_daily_regular_session_poll_candidate(
+    *,
+    open_markets: list[MarketInfo],
+    batch_completed_at: datetime,
+    poll_interval: timedelta | None,
+) -> datetime | None:
+    """Return a shorter live-daily poll candidate while a market stays in regular session."""
+    if poll_interval is None or poll_interval <= timedelta(0):
+        return None
+
+    candidates: list[datetime] = []
+    for market in open_markets:
+        current_session_id = get_session_info(market, batch_completed_at).session_id
+        if current_session_id not in {"KRX_REG", "US_REG"}:
+            continue
+
+        candidate = batch_completed_at + poll_interval
+        if get_session_info(market, candidate).session_id != current_session_id:
+            continue
+        if not is_market_open(market, candidate):
+            continue
+        candidates.append(candidate)
+
+    if not candidates:
+        return None
+    return min(candidates)
 
 
 def _collect_daily_mode_last_regular_batch_markets(
@@ -5224,6 +5262,11 @@ async def run(settings: Settings) -> None:
 
             session_interval = timedelta(hours=settings.SESSION_INTERVAL_HOURS)
             session_interval_seconds = session_interval.total_seconds()
+            live_regular_session_poll_interval: timedelta | None = None
+            if settings.MODE == "live":
+                live_regular_session_poll_interval = timedelta(
+                    seconds=settings.RESCAN_INTERVAL_SECONDS
+                )
 
             # daily_start_eval: portfolio eval captured at the first session of each
             # trading day.  Reset on calendar-date change so the CB measures only
@@ -5337,6 +5380,7 @@ async def run(settings: Settings) -> None:
                         current_batch_started_at=current_batch_started_at,
                         batch_completed_at=batch_completed_at,
                         session_interval=session_interval,
+                        live_regular_session_poll_interval=live_regular_session_poll_interval,
                     )
                     wait_seconds = max(
                         (next_scheduled_batch_at - batch_completed_at).total_seconds(),

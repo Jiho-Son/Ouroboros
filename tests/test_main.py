@@ -366,6 +366,19 @@ def test_resolve_daily_mode_next_batch_at_keeps_default_when_dst_regular_session
     ) == datetime(2026, 3, 25, 20, 13, tzinfo=UTC)
 
 
+def test_resolve_daily_mode_next_batch_at_caps_live_regular_session_gap() -> None:
+    current_batch_started_at = datetime(2026, 3, 23, 0, 31, tzinfo=UTC)
+    batch_completed_at = current_batch_started_at
+
+    assert main_module._resolve_daily_mode_next_batch_at(
+        open_markets=[MARKETS["KR"]],
+        current_batch_started_at=current_batch_started_at,
+        batch_completed_at=batch_completed_at,
+        session_interval=timedelta(hours=6),
+        live_regular_session_poll_interval=timedelta(seconds=300),
+    ) == datetime(2026, 3, 23, 0, 36, tzinfo=UTC)
+
+
 def test_resolve_terminal_sell_order_price_uses_limit_in_low_liquidity_session() -> None:
     market = MagicMock()
     market.code = "KR"
@@ -14446,6 +14459,7 @@ async def test_run_daily_mode_warning_logs_startup_anchor_and_last_regular_batch
             return current.astimezone(tz)
 
     settings = _make_settings(
+        MODE="paper",
         TRADE_MODE="daily",
         ENABLED_MARKETS="KR",
         SESSION_INTERVAL_HOURS=6,
@@ -14465,6 +14479,7 @@ async def test_run_daily_mode_warning_logs_startup_anchor_and_last_regular_batch
         return 0.0
 
     with ExitStack() as stack:
+        stack.enter_context(patch("src.main._ensure_runtime_mode_allowed", return_value=None))
         stack.enter_context(
             patch("src.main.asyncio.Event", side_effect=[shutdown_event, pause_event])
         )
@@ -14715,6 +14730,7 @@ async def test_run_daily_mode_keeps_default_wait_when_dst_regular_session_is_act
             return current.astimezone(tz)
 
     settings = _make_settings(
+        MODE="paper",
         TRADE_MODE="daily",
         ENABLED_MARKETS="US",
         SESSION_INTERVAL_HOURS=6,
@@ -14734,6 +14750,7 @@ async def test_run_daily_mode_keeps_default_wait_when_dst_regular_session_is_act
         return 0.0
 
     with ExitStack() as stack:
+        stack.enter_context(patch("src.main._ensure_runtime_mode_allowed", return_value=None))
         stack.enter_context(
             patch("src.main.asyncio.Event", side_effect=[shutdown_event, pause_event])
         )
@@ -14839,6 +14856,7 @@ async def test_run_daily_mode_waits_for_next_market_open_and_logs_phase_1(
             return None
 
     settings = _make_settings(
+        MODE="paper",
         TRADE_MODE="daily",
         ENABLED_MARKETS="KR",
         SESSION_INTERVAL_HOURS=6,
@@ -14860,6 +14878,7 @@ async def test_run_daily_mode_waits_for_next_market_open_and_logs_phase_1(
         return None
 
     with ExitStack() as stack:
+        stack.enter_context(patch("src.main._ensure_runtime_mode_allowed", return_value=None))
         stack.enter_context(
             patch("src.main.asyncio.Event", side_effect=[shutdown_event, pause_event])
         )
@@ -14971,6 +14990,7 @@ async def test_late_start_daily_cycle_logs_last_regular_batch_and_deferred_close
             return current.astimezone(tz)
 
     settings = _make_settings(
+        MODE="paper",
         TRADE_MODE="daily",
         ENABLED_MARKETS="KR",
         SESSION_INTERVAL_HOURS=6,
@@ -15013,6 +15033,7 @@ async def test_late_start_daily_cycle_logs_last_regular_batch_and_deferred_close
         return None
 
     with ExitStack() as stack:
+        stack.enter_context(patch("src.main._ensure_runtime_mode_allowed", return_value=None))
         stack.enter_context(
             patch("src.main.asyncio.Event", side_effect=[shutdown_event, pause_event])
         )
@@ -15101,6 +15122,140 @@ async def test_late_start_daily_cycle_logs_last_regular_batch_and_deferred_close
     assert "daily_cycle phase=5" in caplog.text
     assert "daily_cycle phase=6" in caplog.text
     assert "daily_cycle phase=1" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_run_live_daily_mode_late_start_regular_session_repools_before_close(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class _FakeEvent:
+        def __init__(self) -> None:
+            self._flag = False
+
+        def is_set(self) -> bool:
+            return self._flag
+
+        def set(self) -> None:
+            self._flag = True
+
+        def clear(self) -> None:
+            self._flag = False
+
+        async def wait(self) -> None:
+            return None
+
+    real_datetime = datetime
+
+    class _FrozenDateTime(datetime):
+        current = real_datetime(2026, 3, 23, 0, 31, tzinfo=UTC)
+
+        @classmethod
+        def now(cls, tz: Any | None = None) -> datetime:
+            current = cls.current
+            if tz is None:
+                return current
+            return current.astimezone(tz)
+
+    settings = _make_settings(
+        MODE="live",
+        TRADE_MODE="daily",
+        ENABLED_MARKETS="KR",
+        SESSION_INTERVAL_HOURS=6,
+        DAILY_SESSIONS=4,
+        RESCAN_INTERVAL_SECONDS=300,
+        REALTIME_HARD_STOP_ENABLED=False,
+    )
+    shutdown_event = _FakeEvent()
+    pause_event = _FakeEvent()
+    pause_event.set()
+    wait_calls = 0
+
+    async def _wait_for(awaitable: Any, timeout: float | None = None) -> None:
+        nonlocal wait_calls
+        await awaitable
+        wait_calls += 1
+        if wait_calls == 1:
+            _FrozenDateTime.current = real_datetime(2026, 3, 23, 0, 36, tzinfo=UTC)
+            raise TimeoutError
+        shutdown_event.set()
+        return None
+
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch("src.main.asyncio.Event", side_effect=[shutdown_event, pause_event])
+        )
+        stack.enter_context(patch("src.main.asyncio.wait_for", side_effect=_wait_for))
+        stack.enter_context(
+            patch(
+                "src.main.asyncio.get_running_loop",
+                return_value=MagicMock(add_signal_handler=MagicMock()),
+            )
+        )
+        stack.enter_context(patch("src.main.datetime", _FrozenDateTime))
+        stack.enter_context(patch("src.main.KISBroker", return_value=MagicMock(close=AsyncMock())))
+        stack.enter_context(
+            patch("src.main.OverseasBroker", return_value=MagicMock(close=AsyncMock()))
+        )
+        stack.enter_context(patch("src.main.DecisionEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.RiskManager", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.init_db", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DecisionLogger", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextAggregator", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextScheduler", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.EvolutionOptimizer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ContextSelector", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.ScenarioEngine", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PlaybookStore", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.DailyReviewer", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.PreMarketPlanner", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.NotificationFilter", return_value=MagicMock()))
+        stack.enter_context(
+            patch(
+                "src.main.TelegramClient",
+                return_value=MagicMock(
+                    notify_system_start=AsyncMock(),
+                    notify_system_shutdown=AsyncMock(),
+                    close=AsyncMock(),
+                ),
+            )
+        )
+        command_handler = MagicMock(
+            register_command=MagicMock(),
+            register_command_with_args=MagicMock(),
+            start_polling=AsyncMock(),
+            stop_polling=AsyncMock(),
+        )
+        stack.enter_context(patch("src.main.TelegramCommandHandler", return_value=command_handler))
+        stack.enter_context(patch("src.main.SmartVolatilityScanner", return_value=MagicMock()))
+        stack.enter_context(patch("src.main.CriticalityAssessor", return_value=MagicMock()))
+        stack.enter_context(
+            patch(
+                "src.main.PriorityTaskQueue",
+                return_value=MagicMock(
+                    get_metrics=AsyncMock(return_value=MagicMock(total_enqueued=0))
+                ),
+            )
+        )
+        stack.enter_context(patch("src.main._start_dashboard_server"))
+        stack.enter_context(patch("src.main.sync_positions_from_broker", new=AsyncMock()))
+        stack.enter_context(patch("src.main._acquire_live_runtime_lock", return_value=None))
+        stack.enter_context(
+            patch("src.main.get_open_markets", side_effect=[[MARKETS["KR"]], [MARKETS["KR"]]])
+        )
+        run_daily_session_mock = stack.enter_context(
+            patch("src.main.run_daily_session", new=AsyncMock(return_value=0.0))
+        )
+
+        with caplog.at_level(logging.INFO):
+            await main_module.run(settings)
+
+    assert run_daily_session_mock.await_count == 2
+    assert "daily_cycle phase=4" in caplog.text
+    assert "next_batch=2026-03-23T00:36:00+00:00" in caplog.text
+    assert "wait_seconds=300.0" in caplog.text
+    assert "last_regular_batch_markets=KR" not in caplog.text
+    assert "Daily mode has no additional regular-session batch before close" not in caplog.text
 
 
 @pytest.mark.asyncio

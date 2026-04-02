@@ -218,7 +218,6 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
-
 ### 2026-04-01 | session=codex-pr893-review-followup
 - branch: feature/issue-884-daily-cycle-phase-coverage
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
@@ -1273,3 +1272,11 @@
 - next_ticket: OOR-886
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: unresolved review thread를 코드/테스트와 대조해 실제 수정이 필요한 항목만 반영하고, 수정 근거와 검증 결과를 PR 코멘트로 남긴다.
+
+### 2026-04-02 | session=codex-oor-888-start
+- branch: feature/issue-888-live-daily-polling-gap
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #888, #886
+- next_ticket: #888
+- process_gate_checked: process_ticket=#886 merged_to_feature_branch=yes
+- risks_or_notes: late-start regular-session 에서 live daily mode entry/staged-exit polling gap 재현 후 설계/테스트/문서/런타임 반영까지 한 세션에서 마무리한다.

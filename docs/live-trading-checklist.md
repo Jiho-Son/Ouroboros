@@ -113,7 +113,9 @@ python -m src.main --mode=live --dashboard
 
 ### 3-4. 손절/익절 동작 차이 확인
 - [ ] KR/US 하드 스탑은 WebSocket 실시간 가격 이벤트 기준으로 감시됨
-- [ ] 익절/ATR trailing/모델 보조 청산은 기존 polling loop 기준으로 유지됨
+- [ ] `MODE=live` + `TRADE_MODE=daily` 의 regular session 에서는 entry/익절/ATR trailing/모델 보조 청산 polling cadence 가 `RESCAN_INTERVAL_SECONDS` 로 capped 됨
+- [ ] 위 단축 cadence 는 `daily_cycle phase=4 ... wait_seconds=<RESCAN_INTERVAL_SECONDS>` 또는 동등한 짧은 `Next session in ...` 로그로 확인됨
+- [ ] pre-market / after-hours / close 이후에는 기존 daily batch cadence 와 regular-session catch-up rule 이 유지됨
 - [ ] WebSocket 장애 시 polling 기반 staged-exit이 fallback으로 남아 있음
 
 ### 3-5. US websocket hard-stop close criteria
