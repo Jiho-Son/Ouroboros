@@ -74,7 +74,8 @@ else
 fi
 
 if command -v tmux >/dev/null 2>&1; then
-    sessions="$(tmux ls 2>/dev/null | awk -F: -v p="$TMUX_SESSION_PREFIX" '$1 ~ "^" p "_" {print $1}')"
+    tmux_ls_output="$(tmux ls 2>/dev/null || true)"
+    sessions="$(printf '%s\n' "$tmux_ls_output" | awk -F: -v p="$TMUX_SESSION_PREFIX" '$1 ~ "^" p "_" {print $1}')"
     if [ -n "$sessions" ]; then
         while IFS= read -r s; do
             [ -z "$s" ] && continue

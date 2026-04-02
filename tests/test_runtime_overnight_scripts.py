@@ -1284,6 +1284,57 @@ def test_run_overnight_starts_runtime_monitor_sidecar_and_syncs_backtest_gate_on
             os.kill(pid, 0)
 
 
+def test_stop_overnight_ignores_missing_tmux_server(tmp_path: Path) -> None:
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_tmux = fake_bin / "tmux"
+    fake_tmux.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [ \"$1\" = \"ls\" ]; then\n"
+        "  exit 1\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_tmux.chmod(0o755)
+
+    pids: list[int] = []
+    for name in ("runtime_verify.pid", "watchdog.pid", "app.pid"):
+        launched = subprocess.run(
+            ["bash", "-lc", "sleep 30 >/dev/null 2>&1 & echo $!"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        pid = int(launched.stdout.strip())
+        pids.append(pid)
+        (log_dir / name).write_text(str(pid), encoding="utf-8")
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "LOG_DIR": str(log_dir),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+    stopped = subprocess.run(
+        ["bash", str(STOP_OVERNIGHT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert stopped.returncode == 0, f"{stopped.stdout}\n{stopped.stderr}"
+    assert "종료할 tmux 세션 없음" in stopped.stdout
+    for pid in pids:
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+
+
 def test_runtime_verify_monitor_syncs_backtest_gate_logs_on_main(
     tmp_path: Path, fake_backtest_gate_gh_factory
 ) -> None:
