@@ -218,6 +218,14 @@
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: main 반영 후 실동작 재시작 로그에서 US realtime hard-stop 증적을 확인하고, websocket 연결/트리거 미관측 시 운영 관측 갭을 별도 이슈로 기록한다.
 
+### 2026-04-02 | session=codex-pr898-review-followup
+- branch: feature/issue-888-live-daily-polling-gap
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: #898
+- next_ticket: #888
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: PR #898 리뷰 스레드를 확인해 actionable 피드백만 반영하고, 미반영 항목은 기술 근거와 함께 PR 코멘트/스레드에 남긴다.
+
 ### 2026-04-01 | session=codex-pr893-review-followup
 - branch: feature/issue-884-daily-cycle-phase-coverage
 - docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md

@@ -357,6 +357,9 @@ def _resolve_live_daily_regular_session_poll_candidate(
         candidate = batch_completed_at + poll_interval
         if get_session_info(market, candidate).session_id != current_session_id:
             continue
+        # Keep the schedule-level open check even after the session-id match so
+        # future divergence between session classification and market-hours
+        # policy cannot schedule a regular-session catch-up outside tradable time.
         if not is_market_open(market, candidate):
             continue
         candidates.append(candidate)
