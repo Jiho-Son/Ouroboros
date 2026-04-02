@@ -1288,3 +1288,11 @@
 - next_ticket: #888
 - process_gate_checked: process_ticket=#886 merged_to_feature_branch=yes
 - risks_or_notes: late-start regular-session 에서 live daily mode entry/staged-exit polling gap 재현 후 설계/테스트/문서/런타임 반영까지 한 세션에서 마무리한다.
+
+### 2026-04-02 | session=codex-issue889-start
+- branch: feature/issue-889-live-daily-playbook-regeneration
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-889
+- next_ticket: OOR-889
+- process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
+- risks_or_notes: live daily 정규 세션 폴링이 current-session playbook을 재생성하지 않도록 분리하고, Linear 코멘트의 `수정제안 2번 요망`을 우선 반영한다.
