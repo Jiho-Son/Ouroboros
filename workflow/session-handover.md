@@ -1296,3 +1296,11 @@
 - next_ticket: OOR-889
 - process_gate_checked: process_ticket=#306,#308 merged_to_feature_branch=yes
 - risks_or_notes: live daily 정규 세션 폴링이 current-session playbook을 재생성하지 않도록 분리하고, Linear 코멘트의 `수정제안 2번 요망`을 우선 반영한다.
+
+### 2026-04-02 | session=codex-oor-887-rework-reset
+- branch: feature/issue-887-backtest-gate-freshness-rework
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-887 `Rework`, 기존 PR #899 종료 및 workpad reset 완료
+- next_ticket: OOR-887
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: 이전 시도는 `origin/main` 전진으로 PR conflict가 발생했다. 이번 재시도는 `origin/main@d9977f0` 기준으로 backtest gate freshness 재현 신호를 다시 고정하고, 표준 runtime 경로에 실제로 필요한 수정만 새 브랜치에 재적용한다.

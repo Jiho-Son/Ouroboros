@@ -191,8 +191,10 @@ pytest -v --cov=src --cov-report=term-missing
 - `feature/**` push: 변경 파일 기준 `auto` 모드
 - Daily schedule: `full` 강제 실행
 - Manual dispatch: `mode`(`auto|smoke|full`) 지정 가능
-- canonical/main 의 `scripts/runtime_verify_monitor.sh` 는 latest successful daily schedule artifact를
-  `data/backtest-gate` 로 미러링해 local freshness signal도 함께 유지한다.
+- canonical/main 의 표준 시작 경로 `scripts/run_overnight.sh` 는
+  `scripts/runtime_verify_monitor.sh` sidecar를 자동 기동하고, 이 monitor가 latest
+  successful daily schedule artifact를 `data/backtest-gate` 로 미러링해 local
+  freshness signal도 함께 유지한다.
 
 실행 기준:
 - `src/analysis/`, `src/strategy/`, `src/strategies/`, `src/main.py`, `src/markets/`, `src/broker/`
