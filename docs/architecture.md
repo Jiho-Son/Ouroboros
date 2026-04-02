@@ -17,7 +17,9 @@ Optimized for cost-sensitive/provider-limited deployments:
 - **Batch decisions**: 1 API call per market per session
 - **Fixed schedule**: 4 sessions per day at 6-hour intervals (configurable)
 - **Startup anchor**: the first daily batch runs immediately when the process starts
-- **Batch spacing**: later batches wait `SESSION_INTERVAL_HOURS` after the prior batch completes
+- **Batch spacing**: later batches normally wait `SESSION_INTERVAL_HOURS` after the
+  prior batch completes; in `MODE=live` + `TRADE_MODE=daily`, an already-open
+  regular session may cap the next poll gap to `RESCAN_INTERVAL_SECONDS`
 - **API efficiency**: Processes all stocks in a market simultaneously
 - **Use case**: Cost-conscious deployments or providers with tighter rate/cost budgets
 - **Configuration**:
@@ -50,13 +52,20 @@ merges open holdings from broker balance / DB into a separate mandatory
 evaluation set before playbook/scenario execution. This keeps entry ranking
 cost-efficient without allowing held-position exit checks to be skipped.
 
-**Live daily hard-stop coverage**: in `MODE=live`, realtime websocket hard-stop
-monitoring stays active for supported markets even when `TRADE_MODE=daily`.
-Daily batch cadence still governs entry and polling-based staged exits, but
-held-position hard-stop protection is not allowed to wait for the next batch.
-The runtime should therefore emit the same websocket startup / subscribe
-evidence for supported held positions in live daily mode as it does in realtime
-mode.
+**Live daily regular-session polling**: in `MODE=live` + `TRADE_MODE=daily`,
+entry and polling-based staged exits still execute through the existing
+`run_daily_session()` path, but when an open market is already inside its
+regular session the next batch is capped by `RESCAN_INTERVAL_SECONDS` instead
+of waiting the full `SESSION_INTERVAL_HOURS`. Pre-market / after-hours cadence
+still follows the normal daily batch spacing plus the existing regular-session
+catch-up rules.
+
+**Live daily hard-stop coverage**: realtime websocket hard-stop monitoring stays
+active for supported markets even when `TRADE_MODE=daily`. This websocket path
+still owns only hard-stop protection; it does not replace the shortened
+regular-session polling path for entry or favorable/staged exits. The runtime
+should therefore emit the same websocket startup / subscribe evidence for
+supported held positions in live daily mode as it does in realtime mode.
 
 ### Realtime Mode
 
