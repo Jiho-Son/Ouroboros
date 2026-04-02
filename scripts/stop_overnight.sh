@@ -53,8 +53,6 @@ if [ -f "$RUNTIME_MONITOR_PID_FILE" ]; then
     runtime_monitor_pid="$(cat "$RUNTIME_MONITOR_PID_FILE" || true)"
     stop_pid "runtime monitor" "$runtime_monitor_pid" || status=1
     rm -f "$RUNTIME_MONITOR_PID_FILE"
-else
-    echo "runtime monitor pid 파일 없음: $RUNTIME_MONITOR_PID_FILE"
 fi
 
 if [ -f "$WATCHDOG_PID_FILE" ]; then

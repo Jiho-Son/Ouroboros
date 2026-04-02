@@ -16,6 +16,7 @@ STARTUP_GRACE_SEC="${STARTUP_GRACE_SEC:-3}"
 dashboard_port="${DASHBOARD_PORT}"
 RUNTIME_MONITOR_AUTO="${RUNTIME_MONITOR_AUTO:-auto}"
 RUNTIME_MONITOR_INTERVAL_SEC="${RUNTIME_MONITOR_INTERVAL_SEC:-60}"
+# 0 means unbounded runtime for the sidecar monitor.
 RUNTIME_MONITOR_MAX_HOURS="${RUNTIME_MONITOR_MAX_HOURS:-0}"
 RUNTIME_MONITOR_POLICY_TZ="${RUNTIME_MONITOR_POLICY_TZ:-${POLICY_TZ:-Asia/Seoul}}"
 APP_CMD_BIN="${APP_CMD_BIN:-}"
@@ -100,7 +101,6 @@ should_start_runtime_monitor() {
             ;;
         auto)
             [ "${RUNTIME_BRANCH_NAME_RESOLVED:-}" = "main" ]
-            return $?
             ;;
         *)
             echo "알 수 없는 RUNTIME_MONITOR_AUTO 값: $RUNTIME_MONITOR_AUTO"
@@ -176,7 +176,7 @@ if should_start_runtime_monitor; then
     echo "$runtime_monitor_pid" > "$RUNTIME_MONITOR_PID_FILE"
     sleep 1
     if ! kill -0 "$runtime_monitor_pid" 2>/dev/null; then
-        echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] runtime monitor exited early (pid=$runtime_monitor_pid)" | tee -a "$RUN_LOG"
+        echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] [WARN] runtime monitor exited early (pid=$runtime_monitor_pid) - backtest gate sync may not run" | tee -a "$RUN_LOG"
         rm -f "$RUNTIME_MONITOR_PID_FILE"
         runtime_monitor_pid=""
     else
@@ -211,7 +211,13 @@ if [ "$TMUX_AUTO" = "true" ]; then
     window_name="overnight"
     tmux new-session -d -s "$session_name" -n "$window_name" "tail -f '$RUN_LOG'"
     tmux split-window -t "${session_name}:${window_name}" -v "tail -f '$WATCHDOG_LOG'"
-    tmux select-layout -t "${session_name}:${window_name}" even-vertical
+    if [ -n "${runtime_monitor_pid:-}" ]; then
+        latest_runtime_monitor_log="$(ls -t "$LOG_DIR"/runtime_verify_*.log 2>/dev/null | head -n1 || true)"
+        if [ -n "$latest_runtime_monitor_log" ]; then
+            tmux split-window -t "${session_name}:${window_name}" -h "tail -f '$latest_runtime_monitor_log'"
+        fi
+    fi
+    tmux select-layout -t "${session_name}:${window_name}" tiled
 
     echo "tmux session 생성: $session_name"
     echo "수동 접속: tmux attach -t $session_name"

@@ -10,7 +10,8 @@ runtime_resolve_defaults
 cd "$ROOT_DIR"
 
 INTERVAL_SEC="${INTERVAL_SEC:-60}"
-MAX_HOURS="${MAX_HOURS:-24}"
+# 0 means unbounded runtime, matching run_overnight.sh defaults.
+MAX_HOURS="${MAX_HOURS:-0}"
 MAX_LOOPS="${MAX_LOOPS:-0}"
 POLICY_TZ="${POLICY_TZ:-Asia/Seoul}"
 DASHBOARD_PORT="${DASHBOARD_PORT}"
