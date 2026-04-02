@@ -1,7 +1,5 @@
 # OOR-886 Daily Cycle Runtime Rework Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** late-start regular-session daily mode에서 `phase 5/6/1` 이 다음 post-close iteration으로 밀리는 이유를 runtime phase 로그 자체에 남기고, 회귀 테스트와 문서로 고정한다.
 
 **Architecture:** scheduler cadence 자체는 유지한다. `src/main.py` 의 기존 regular-session follow-up helper를 재사용해 현재 batch가 마지막 regular-session 기회인 시장 목록을 계산하고, 이를 `phase=4` schedule log에 추가한다. 테스트는 late-start `KR` runtime 경로와 기존 daily lifecycle coverage를 함께 묶어 실제 defer semantics를 검증한다.

@@ -40,6 +40,7 @@ When a batch starts late enough that no additional regular-session batch remains
 before close, the `phase=4` log also carries
 `last_regular_batch_markets=<...>`; the corresponding `phase=5/6/1` events are
 then deferred to the first post-close iteration.
+
 The runtime also warns when an enabled market has no additional regular-session
 batch before close under the current cadence.
 
