@@ -10,7 +10,8 @@ runtime_resolve_defaults
 cd "$ROOT_DIR"
 
 INTERVAL_SEC="${INTERVAL_SEC:-60}"
-MAX_HOURS="${MAX_HOURS:-24}"
+# 0 means unbounded runtime, matching run_overnight.sh defaults.
+MAX_HOURS="${MAX_HOURS:-0}"
 MAX_LOOPS="${MAX_LOOPS:-0}"
 POLICY_TZ="${POLICY_TZ:-Asia/Seoul}"
 DASHBOARD_PORT="${DASHBOARD_PORT}"
@@ -19,7 +20,10 @@ BACKTEST_GATE_SYNC_INTERVAL_SEC="${BACKTEST_GATE_SYNC_INTERVAL_SEC:-3600}"
 
 mkdir -p "$LOG_DIR"
 OUT_LOG="$LOG_DIR/runtime_verify_$(date +%Y%m%d_%H%M%S).log"
-END_TS=$(( $(date +%s) + MAX_HOURS*3600 ))
+END_TS=0
+if [ "$MAX_HOURS" -gt 0 ]; then
+  END_TS=$(( $(date +%s) + MAX_HOURS*3600 ))
+fi
 loops=0
 last_backtest_gate_sync_ts=0
 
@@ -186,7 +190,7 @@ log "[INFO] runtime verify monitor started interval=${INTERVAL_SEC}s max_hours=$
 while true; do
   loops=$((loops + 1))
   now=$(date +%s)
-  if [ "$now" -ge "$END_TS" ]; then
+  if [ "$END_TS" -gt 0 ] && [ "$now" -ge "$END_TS" ]; then
     log "[INFO] monitor completed (time window reached)"
     exit 0
   fi

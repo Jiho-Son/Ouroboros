@@ -11,6 +11,7 @@ cd "$ROOT_DIR"
 
 PID_FILE="$LOG_DIR/app.pid"
 WATCHDOG_PID_FILE="$LOG_DIR/watchdog.pid"
+RUNTIME_MONITOR_PID_FILE="$LOG_DIR/runtime_verify.pid"
 KILL_TIMEOUT="${KILL_TIMEOUT:-5}"
 
 stop_pid() {
@@ -48,6 +49,12 @@ stop_pid() {
 
 status=0
 
+if [ -f "$RUNTIME_MONITOR_PID_FILE" ]; then
+    runtime_monitor_pid="$(cat "$RUNTIME_MONITOR_PID_FILE" || true)"
+    stop_pid "runtime monitor" "$runtime_monitor_pid" || status=1
+    rm -f "$RUNTIME_MONITOR_PID_FILE"
+fi
+
 if [ -f "$WATCHDOG_PID_FILE" ]; then
     watchdog_pid="$(cat "$WATCHDOG_PID_FILE" || true)"
     stop_pid "watchdog" "$watchdog_pid" || status=1
@@ -65,7 +72,8 @@ else
 fi
 
 if command -v tmux >/dev/null 2>&1; then
-    sessions="$(tmux ls 2>/dev/null | awk -F: -v p="$TMUX_SESSION_PREFIX" '$1 ~ "^" p "_" {print $1}')"
+    tmux_ls_output="$(tmux ls 2>/dev/null || true)"
+    sessions="$(printf '%s\n' "$tmux_ls_output" | awk -F: -v p="$TMUX_SESSION_PREFIX" '$1 ~ "^" p "_" {print $1}')"
     if [ -n "$sessions" ]; then
         while IFS= read -r s; do
             [ -z "$s" ] && continue

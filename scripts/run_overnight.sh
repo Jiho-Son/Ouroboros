@@ -14,6 +14,11 @@ TMUX_AUTO="${TMUX_AUTO:-true}"
 TMUX_ATTACH="${TMUX_ATTACH:-true}"
 STARTUP_GRACE_SEC="${STARTUP_GRACE_SEC:-3}"
 dashboard_port="${DASHBOARD_PORT}"
+RUNTIME_MONITOR_AUTO="${RUNTIME_MONITOR_AUTO:-auto}"
+RUNTIME_MONITOR_INTERVAL_SEC="${RUNTIME_MONITOR_INTERVAL_SEC:-60}"
+# 0 means unbounded runtime for the sidecar monitor.
+RUNTIME_MONITOR_MAX_HOURS="${RUNTIME_MONITOR_MAX_HOURS:-0}"
+RUNTIME_MONITOR_POLICY_TZ="${RUNTIME_MONITOR_POLICY_TZ:-${POLICY_TZ:-Asia/Seoul}}"
 APP_CMD_BIN="${APP_CMD_BIN:-}"
 APP_CMD_ARGS="${APP_CMD_ARGS:-}"
 RUNS_DASHBOARD="false"
@@ -66,6 +71,7 @@ RUN_LOG="$LOG_DIR/run_${timestamp}.log"
 WATCHDOG_LOG="$LOG_DIR/watchdog_${timestamp}.log"
 PID_FILE="$LOG_DIR/app.pid"
 WATCHDOG_PID_FILE="$LOG_DIR/watchdog.pid"
+RUNTIME_MONITOR_PID_FILE="$LOG_DIR/runtime_verify.pid"
 
 is_port_in_use() {
     local port="$1"
@@ -83,6 +89,24 @@ is_port_in_use() {
     fi
     # No supported socket inspection command found.
     return 1
+}
+
+should_start_runtime_monitor() {
+    case "$RUNTIME_MONITOR_AUTO" in
+        true)
+            return 0
+            ;;
+        false)
+            return 1
+            ;;
+        auto)
+            [ "${RUNTIME_BRANCH_NAME_RESOLVED:-}" = "main" ]
+            ;;
+        *)
+            echo "알 수 없는 RUNTIME_MONITOR_AUTO 값: $RUNTIME_MONITOR_AUTO"
+            return 1
+            ;;
+    esac
 }
 
 if [ -f "$PID_FILE" ]; then
@@ -141,10 +165,30 @@ if ! kill -0 "$watchdog_pid" 2>/dev/null; then
     exit 1
 fi
 
+runtime_monitor_pid=""
+if should_start_runtime_monitor; then
+    nohup env \
+        INTERVAL_SEC="$RUNTIME_MONITOR_INTERVAL_SEC" \
+        MAX_HOURS="$RUNTIME_MONITOR_MAX_HOURS" \
+        POLICY_TZ="$RUNTIME_MONITOR_POLICY_TZ" \
+        bash scripts/runtime_verify_monitor.sh >/dev/null 2>&1 &
+    runtime_monitor_pid=$!
+    echo "$runtime_monitor_pid" > "$RUNTIME_MONITOR_PID_FILE"
+    sleep 1
+    if ! kill -0 "$runtime_monitor_pid" 2>/dev/null; then
+        echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] [WARN] runtime monitor exited early (pid=$runtime_monitor_pid) - backtest gate sync may not run" | tee -a "$RUN_LOG"
+        rm -f "$RUNTIME_MONITOR_PID_FILE"
+        runtime_monitor_pid=""
+    else
+        echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] runtime monitor pid=$runtime_monitor_pid" | tee -a "$RUN_LOG"
+    fi
+fi
+
 cat <<EOF
 시작 완료
 - app pid: $app_pid
 - watchdog pid: $watchdog_pid
+- runtime monitor pid: ${runtime_monitor_pid:-disabled}
 - root dir: $ROOT_DIR
 - log dir: $LOG_DIR
 - dashboard port: $dashboard_port
@@ -167,7 +211,13 @@ if [ "$TMUX_AUTO" = "true" ]; then
     window_name="overnight"
     tmux new-session -d -s "$session_name" -n "$window_name" "tail -f '$RUN_LOG'"
     tmux split-window -t "${session_name}:${window_name}" -v "tail -f '$WATCHDOG_LOG'"
-    tmux select-layout -t "${session_name}:${window_name}" even-vertical
+    if [ -n "${runtime_monitor_pid:-}" ]; then
+        latest_runtime_monitor_log="$(ls -t "$LOG_DIR"/runtime_verify_*.log 2>/dev/null | head -n1 || true)"
+        if [ -n "$latest_runtime_monitor_log" ]; then
+            tmux split-window -t "${session_name}:${window_name}" -h "tail -f '$latest_runtime_monitor_log'"
+        fi
+    fi
+    tmux select-layout -t "${session_name}:${window_name}" tiled
 
     echo "tmux session 생성: $session_name"
     echo "수동 접속: tmux attach -t $session_name"

@@ -6,6 +6,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_TEMPLATE = REPO_ROOT / "WORKFLOW.md"
 RUN_OVERNIGHT = REPO_ROOT / "scripts" / "run_overnight.sh"
+STOP_OVERNIGHT = REPO_ROOT / "scripts" / "stop_overnight.sh"
 RUNTIME_MONITOR = REPO_ROOT / "scripts" / "runtime_verify_monitor.sh"
 RUNTIME_INSTANCE_ENV = REPO_ROOT / "scripts" / "runtime_instance_env.sh"
 BASH = Path(shutil.which("bash") or "/bin/bash")
@@ -25,6 +27,15 @@ def _latest_runtime_log(log_dir: Path) -> str:
     logs = sorted(log_dir.glob("runtime_verify_*.log"))
     assert logs, "runtime monitor did not produce log output"
     return logs[-1].read_text(encoding="utf-8")
+
+
+def _wait_until(predicate, *, timeout: float = 5.0, interval: float = 0.1) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(interval)
+    return predicate()
 
 
 def _runtime_monitor_helper_functions() -> str:
@@ -1156,6 +1167,363 @@ def test_runtime_verify_monitor_survives_when_no_live_pid(tmp_path: Path) -> Non
     # The critical invariant is that the script survived the loop without pipefail abort.
 
 
+def test_runtime_verify_monitor_zero_max_hours_runs_until_stopped(tmp_path: Path) -> None:
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "ROOT_DIR": str(REPO_ROOT),
+            "LOG_DIR": str(log_dir),
+            "INTERVAL_SEC": "1",
+            "MAX_HOURS": "0",
+            "POLICY_TZ": "UTC",
+            "BACKTEST_GATE_SYNC_ENABLED": "false",
+        }
+    )
+    proc = subprocess.Popen(
+        ["bash", str(RUNTIME_MONITOR)],
+        cwd=REPO_ROOT,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    try:
+        time.sleep(2)
+        assert proc.poll() is None, proc.communicate(timeout=2)[1]
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+
+    log_text = _latest_runtime_log(log_dir)
+    assert "[INFO] runtime verify monitor started" in log_text
+
+
+def test_runtime_verify_monitor_defaults_to_unbounded_runtime(tmp_path: Path) -> None:
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "ROOT_DIR": str(REPO_ROOT),
+            "LOG_DIR": str(log_dir),
+            "INTERVAL_SEC": "1",
+            "MAX_LOOPS": "1",
+            "POLICY_TZ": "UTC",
+            "BACKTEST_GATE_SYNC_ENABLED": "false",
+        }
+    )
+    completed = subprocess.run(
+        ["bash", str(RUNTIME_MONITOR)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    log_text = _latest_runtime_log(log_dir)
+    assert "[INFO] runtime verify monitor started interval=1s max_hours=0 policy_tz=UTC" in log_text
+
+
+def test_run_overnight_warns_when_runtime_monitor_exits_early(tmp_path: Path) -> None:
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "ROOT_DIR": str(REPO_ROOT),
+            "LOG_DIR": str(log_dir),
+            "TMUX_AUTO": "false",
+            "STARTUP_GRACE_SEC": "1",
+            "CHECK_INTERVAL": "2",
+            "APP_CMD_BIN": "sleep",
+            "APP_CMD_ARGS": "30",
+            "RUNTIME_MONITOR_AUTO": "true",
+            "RUNTIME_MONITOR_INTERVAL_SEC": "invalid",
+        }
+    )
+    started = subprocess.run(
+        ["bash", str(RUN_OVERNIGHT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert started.returncode == 0, f"{started.stdout}\n{started.stderr}"
+
+    run_logs = sorted(log_dir.glob("run_*.log"))
+    assert run_logs, "run log not written"
+    run_log = run_logs[-1].read_text(encoding="utf-8")
+    assert "[WARN] runtime monitor exited early" in run_log
+
+    stopped = subprocess.run(
+        ["bash", str(STOP_OVERNIGHT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert stopped.returncode == 0, f"{stopped.stdout}\n{stopped.stderr}"
+
+
+def test_run_overnight_starts_runtime_monitor_sidecar_and_syncs_backtest_gate_on_main(
+    tmp_path: Path, fake_backtest_gate_gh_factory
+) -> None:
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    backtest_log_dir = tmp_path / "backtest-gate"
+    marker_file = tmp_path / ".latest_backtest_gate_run"
+    artifact_source = tmp_path / "backtest_gate_20260331_171626.log"
+    artifact_source.write_text(
+        "2026-03-31T17:16:32Z [PASS] full backtest gate passed\n",
+        encoding="utf-8",
+    )
+    fake_gh = fake_backtest_gate_gh_factory(tmp_path / "fake_backtest_gate_gh.py")
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "ROOT_DIR": str(REPO_ROOT),
+            "LOG_DIR": str(log_dir),
+            "TMUX_AUTO": "false",
+            "STARTUP_GRACE_SEC": "1",
+            "CHECK_INTERVAL": "2",
+            "APP_CMD_BIN": "sleep",
+            "APP_CMD_ARGS": "30",
+            "RUNTIME_BRANCH_NAME": "main",
+            "RUNTIME_MONITOR_INTERVAL_SEC": "1",
+            "RUNTIME_MONITOR_MAX_HOURS": "0",
+            "BACKTEST_GATE_GH_BIN": str(fake_gh),
+            "BACKTEST_GATE_LOG_DIR": str(backtest_log_dir),
+            "BACKTEST_GATE_SYNC_MARKER_FILE": str(marker_file),
+            "BACKTEST_GATE_SYNC_INTERVAL_SEC": "1",
+            "FAKE_BACKTEST_GATE_RUN_ID": "23810195275",
+            "FAKE_BACKTEST_GATE_ARTIFACT_SOURCE": str(artifact_source),
+        }
+    )
+    started = subprocess.run(
+        ["bash", str(RUN_OVERNIGHT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert started.returncode == 0, f"{started.stdout}\n{started.stderr}"
+
+    app_pid = int((log_dir / "app.pid").read_text(encoding="utf-8").strip())
+    watchdog_pid = int((log_dir / "watchdog.pid").read_text(encoding="utf-8").strip())
+    monitor_pid_path = log_dir / "runtime_verify.pid"
+    assert _wait_until(monitor_pid_path.exists), "runtime monitor pid file not created"
+    monitor_pid = int(monitor_pid_path.read_text(encoding="utf-8").strip())
+    assert _wait_until(marker_file.exists), "backtest gate marker not written"
+    assert marker_file.read_text(encoding="utf-8").strip() == "23810195275"
+    assert _wait_until((backtest_log_dir / artifact_source.name).exists)
+
+    for pid in (app_pid, watchdog_pid, monitor_pid):
+        os.kill(pid, 0)
+
+    log_text = _latest_runtime_log(log_dir)
+    assert "backtest gate sync synced run_id=23810195275 files=1" in log_text
+
+    stopped = subprocess.run(
+        ["bash", str(STOP_OVERNIGHT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert stopped.returncode == 0, f"{stopped.stdout}\n{stopped.stderr}"
+
+    for pid_file in ("app.pid", "watchdog.pid", "runtime_verify.pid"):
+        assert not (log_dir / pid_file).exists()
+    for pid in (monitor_pid, watchdog_pid, app_pid):
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+
+
+def test_run_overnight_adds_runtime_monitor_log_to_tmux_when_enabled(
+    tmp_path: Path, fake_backtest_gate_gh_factory
+) -> None:
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    backtest_log_dir = tmp_path / "backtest-gate"
+    marker_file = tmp_path / ".latest_backtest_gate_run"
+    artifact_source = tmp_path / "backtest_gate_20260331_171626.log"
+    artifact_source.write_text(
+        "2026-03-31T17:16:32Z [PASS] full backtest gate passed\n",
+        encoding="utf-8",
+    )
+    fake_gh = fake_backtest_gate_gh_factory(tmp_path / "fake_backtest_gate_gh.py")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    tmux_log = tmp_path / "tmux.log"
+    fake_tmux = fake_bin / "tmux"
+    fake_tmux.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$FAKE_TMUX_LOG\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_tmux.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "ROOT_DIR": str(REPO_ROOT),
+            "LOG_DIR": str(log_dir),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "FAKE_TMUX_LOG": str(tmux_log),
+            "TMUX_AUTO": "true",
+            "TMUX_ATTACH": "false",
+            "STARTUP_GRACE_SEC": "1",
+            "CHECK_INTERVAL": "2",
+            "APP_CMD_BIN": "sleep",
+            "APP_CMD_ARGS": "30",
+            "RUNTIME_BRANCH_NAME": "main",
+            "RUNTIME_MONITOR_INTERVAL_SEC": "1",
+            "RUNTIME_MONITOR_MAX_HOURS": "0",
+            "BACKTEST_GATE_GH_BIN": str(fake_gh),
+            "BACKTEST_GATE_LOG_DIR": str(backtest_log_dir),
+            "BACKTEST_GATE_SYNC_MARKER_FILE": str(marker_file),
+            "BACKTEST_GATE_SYNC_INTERVAL_SEC": "1",
+            "FAKE_BACKTEST_GATE_RUN_ID": "23810195275",
+            "FAKE_BACKTEST_GATE_ARTIFACT_SOURCE": str(artifact_source),
+        }
+    )
+    started = subprocess.run(
+        ["bash", str(RUN_OVERNIGHT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert started.returncode == 0, f"{started.stdout}\n{started.stderr}"
+
+    tmux_commands = tmux_log.read_text(encoding="utf-8")
+    assert "new-session" in tmux_commands
+    assert tmux_commands.count("split-window") == 2
+    assert "runtime_verify_" in tmux_commands
+
+    stopped = subprocess.run(
+        ["bash", str(STOP_OVERNIGHT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert stopped.returncode == 0, f"{stopped.stdout}\n{stopped.stderr}"
+
+
+def test_stop_overnight_ignores_missing_tmux_server(tmp_path: Path) -> None:
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_tmux = fake_bin / "tmux"
+    fake_tmux.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [ \"$1\" = \"ls\" ]; then\n"
+        "  exit 1\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_tmux.chmod(0o755)
+
+    pids: list[int] = []
+    for name in ("runtime_verify.pid", "watchdog.pid", "app.pid"):
+        launched = subprocess.run(
+            ["bash", "-lc", "sleep 30 >/dev/null 2>&1 & echo $!"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        pid = int(launched.stdout.strip())
+        pids.append(pid)
+        (log_dir / name).write_text(str(pid), encoding="utf-8")
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "LOG_DIR": str(log_dir),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+    stopped = subprocess.run(
+        ["bash", str(STOP_OVERNIGHT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert stopped.returncode == 0, f"{stopped.stdout}\n{stopped.stderr}"
+    assert "종료할 tmux 세션 없음" in stopped.stdout
+    for pid in pids:
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+
+
+def test_stop_overnight_treats_missing_runtime_monitor_pid_file_as_normal_when_disabled(
+    tmp_path: Path,
+) -> None:
+    log_dir = tmp_path / "overnight"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    pids: list[int] = []
+    for name in ("watchdog.pid", "app.pid"):
+        launched = subprocess.run(
+            ["bash", "-lc", "sleep 30 >/dev/null 2>&1 & echo $!"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        pid = int(launched.stdout.strip())
+        pids.append(pid)
+        (log_dir / name).write_text(str(pid), encoding="utf-8")
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "LOG_DIR": str(log_dir),
+            "RUNTIME_MONITOR_AUTO": "false",
+        }
+    )
+    stopped = subprocess.run(
+        ["bash", str(STOP_OVERNIGHT)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert stopped.returncode == 0, f"{stopped.stdout}\n{stopped.stderr}"
+    assert "runtime monitor pid 파일 없음" not in stopped.stdout
+    for pid in pids:
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+
+
 def test_runtime_verify_monitor_syncs_backtest_gate_logs_on_main(
     tmp_path: Path, fake_backtest_gate_gh_factory
 ) -> None:
@@ -1203,3 +1571,19 @@ def test_runtime_verify_monitor_syncs_backtest_gate_logs_on_main(
     assert marker_file.read_text(encoding="utf-8").strip() == "23810195275"
     log_text = _latest_runtime_log(log_dir)
     assert "backtest gate sync synced run_id=23810195275 files=1" in log_text
+
+
+def test_run_overnight_auto_runtime_monitor_branch_guard_has_no_redundant_return() -> None:
+    script_text = RUN_OVERNIGHT.read_text(encoding="utf-8")
+    auto_branch = (
+        'auto)\n'
+        '            [ "${RUNTIME_BRANCH_NAME_RESOLVED:-}" = "main" ]\n'
+        '            ;;'
+    )
+    redundant_return = (
+        'auto)\n'
+        '            [ "${RUNTIME_BRANCH_NAME_RESOLVED:-}" = "main" ]\n'
+        '            return $?'
+    )
+    assert auto_branch in script_text
+    assert redundant_return not in script_text
