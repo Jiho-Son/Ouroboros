@@ -19,6 +19,9 @@ RUNTIME_MONITOR_INTERVAL_SEC="${RUNTIME_MONITOR_INTERVAL_SEC:-60}"
 # 0 means unbounded runtime for the sidecar monitor.
 RUNTIME_MONITOR_MAX_HOURS="${RUNTIME_MONITOR_MAX_HOURS:-0}"
 RUNTIME_MONITOR_POLICY_TZ="${RUNTIME_MONITOR_POLICY_TZ:-${POLICY_TZ:-Asia/Seoul}}"
+RUNTIME_MONITOR_LOG_DISCOVERY_WAIT_SEC="${RUNTIME_MONITOR_LOG_DISCOVERY_WAIT_SEC:-2}"
+# Fractional polling relies on the GNU/coreutils sleep available in our Linux runtime/CI.
+RUNTIME_MONITOR_LOG_DISCOVERY_POLL_SEC="${RUNTIME_MONITOR_LOG_DISCOVERY_POLL_SEC:-0.2}"
 APP_CMD_BIN="${APP_CMD_BIN:-}"
 APP_CMD_ARGS="${APP_CMD_ARGS:-}"
 RUNS_DASHBOARD="false"
@@ -107,6 +110,59 @@ should_start_runtime_monitor() {
             return 1
             ;;
     esac
+}
+
+latest_runtime_monitor_log() {
+    ls -t "$LOG_DIR"/runtime_verify_*.log 2>/dev/null | head -n1 || true
+}
+
+runtime_monitor_log_discovery_attempts() {
+    awk \
+        -v wait="$RUNTIME_MONITOR_LOG_DISCOVERY_WAIT_SEC" \
+        -v poll="$RUNTIME_MONITOR_LOG_DISCOVERY_POLL_SEC" \
+        'BEGIN {
+            if (poll <= 0) {
+                print 0
+                exit
+            }
+            attempts = int((wait / poll) + 0.999999)
+            if (attempts < 0) {
+                attempts = 0
+            }
+            print attempts
+        }'
+}
+
+discover_runtime_monitor_log_for_tmux() {
+    local path=""
+    local attempts=0
+    local attempt=0
+
+    path="$(latest_runtime_monitor_log)"
+    if [ -n "$path" ]; then
+        printf '%s\n' "$path"
+        return 0
+    fi
+
+    attempts="$(runtime_monitor_log_discovery_attempts)"
+    while [ "$attempt" -lt "$attempts" ]; do
+        if [ -n "${runtime_monitor_pid:-}" ] && ! kill -0 "$runtime_monitor_pid" 2>/dev/null; then
+            echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] [WARN] runtime monitor tmux pane skipped: monitor exited before runtime_verify_*.log appeared (pid=$runtime_monitor_pid)" | tee -a "$RUN_LOG" >/dev/null
+            return 1
+        fi
+
+        sleep "$RUNTIME_MONITOR_LOG_DISCOVERY_POLL_SEC"
+        path="$(latest_runtime_monitor_log)"
+        if [ -n "$path" ]; then
+            echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] [INFO] runtime monitor tmux pane log discovered within ${RUNTIME_MONITOR_LOG_DISCOVERY_WAIT_SEC}s path=$path" | tee -a "$RUN_LOG" >/dev/null
+            printf '%s\n' "$path"
+            return 0
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] [WARN] runtime monitor tmux pane skipped: no runtime_verify_*.log found within ${RUNTIME_MONITOR_LOG_DISCOVERY_WAIT_SEC}s in $LOG_DIR (pid=${runtime_monitor_pid:-unknown})" | tee -a "$RUN_LOG" >/dev/null
+    return 1
 }
 
 if [ -f "$PID_FILE" ]; then
@@ -212,7 +268,7 @@ if [ "$TMUX_AUTO" = "true" ]; then
     tmux new-session -d -s "$session_name" -n "$window_name" "tail -f '$RUN_LOG'"
     tmux split-window -t "${session_name}:${window_name}" -v "tail -f '$WATCHDOG_LOG'"
     if [ -n "${runtime_monitor_pid:-}" ]; then
-        latest_runtime_monitor_log="$(ls -t "$LOG_DIR"/runtime_verify_*.log 2>/dev/null | head -n1 || true)"
+        latest_runtime_monitor_log="$(discover_runtime_monitor_log_for_tmux || true)"
         if [ -n "$latest_runtime_monitor_log" ]; then
             tmux split-window -t "${session_name}:${window_name}" -h "tail -f '$latest_runtime_monitor_log'"
         fi
