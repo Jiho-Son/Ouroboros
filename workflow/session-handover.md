@@ -1312,3 +1312,11 @@
 - next_ticket: OOR-887
 - process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
 - risks_or_notes: PR #901의 Important 3건과 Minor 2건을 현재 스크립트/테스트와 대조해 실제 수정이 필요한 항목만 반영하고, push 후 PR 코멘트로 처리 내역과 검증 증적을 남긴다.
+
+### 2026-04-03 | session=codex-oor-890-start
+- branch: feature/issue-890-harness-runtime-monitor-tmux-pane-log-race-follow-up
+- docs_checked: docs/workflow.md, docs/commands.md, docs/agent-constraints.md
+- open_issues_reviewed: OOR-890 `Todo` -> `In Progress` 전이 완료, bootstrap workpad 생성 완료, issue `branchName` 는 남아 있지만 실제 remote branch/PR 은 없음
+- next_ticket: OOR-890
+- process_gate_checked: process_ticket=n/a merged_to_feature_branch=n/a
+- risks_or_notes: `scripts/run_overnight.sh` 의 runtime monitor pane/log discovery race를 먼저 재현하거나 결정적으로 설명하고, bounded retry와 skip 이유 관측성을 테스트 우선으로 고정한다.
