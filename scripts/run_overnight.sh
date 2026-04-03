@@ -20,6 +20,7 @@ RUNTIME_MONITOR_INTERVAL_SEC="${RUNTIME_MONITOR_INTERVAL_SEC:-60}"
 RUNTIME_MONITOR_MAX_HOURS="${RUNTIME_MONITOR_MAX_HOURS:-0}"
 RUNTIME_MONITOR_POLICY_TZ="${RUNTIME_MONITOR_POLICY_TZ:-${POLICY_TZ:-Asia/Seoul}}"
 RUNTIME_MONITOR_LOG_DISCOVERY_WAIT_SEC="${RUNTIME_MONITOR_LOG_DISCOVERY_WAIT_SEC:-2}"
+# Fractional polling relies on the GNU/coreutils sleep available in our Linux runtime/CI.
 RUNTIME_MONITOR_LOG_DISCOVERY_POLL_SEC="${RUNTIME_MONITOR_LOG_DISCOVERY_POLL_SEC:-0.2}"
 APP_CMD_BIN="${APP_CMD_BIN:-}"
 APP_CMD_ARGS="${APP_CMD_ARGS:-}"
@@ -153,7 +154,7 @@ discover_runtime_monitor_log_for_tmux() {
         sleep "$RUNTIME_MONITOR_LOG_DISCOVERY_POLL_SEC"
         path="$(latest_runtime_monitor_log)"
         if [ -n "$path" ]; then
-            echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] [INFO] runtime monitor tmux pane log discovered after wait=${RUNTIME_MONITOR_LOG_DISCOVERY_WAIT_SEC}s path=$path" | tee -a "$RUN_LOG" >/dev/null
+            echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] [INFO] runtime monitor tmux pane log discovered within ${RUNTIME_MONITOR_LOG_DISCOVERY_WAIT_SEC}s path=$path" | tee -a "$RUN_LOG" >/dev/null
             printf '%s\n' "$path"
             return 0
         fi

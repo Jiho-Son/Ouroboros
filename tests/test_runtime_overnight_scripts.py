@@ -1522,6 +1522,11 @@ def test_run_overnight_waits_for_runtime_monitor_log_before_tmux_split(
     assert started.returncode == 0, f"{started.stdout}\n{started.stderr}"
     assert _wait_until(lambda: any(log_dir.glob("runtime_verify_*.log")))
 
+    run_logs = sorted(log_dir.glob("run_*.log"))
+    assert run_logs, "run log not written"
+    run_log = run_logs[-1].read_text(encoding="utf-8")
+    assert "runtime monitor tmux pane log discovered within 3s" in run_log
+
     tmux_commands = tmux_log.read_text(encoding="utf-8")
     assert tmux_commands.count("split-window") == 2
     assert "runtime_verify_" in tmux_commands
@@ -1592,6 +1597,8 @@ def test_run_overnight_logs_tmux_skip_reason_when_runtime_monitor_log_discovery_
         check=False,
     )
     assert started.returncode == 0, f"{started.stdout}\n{started.stderr}"
+    # Monitor is still alive; the log appears after the discovery window.
+    # Verify tmux skipped the pane even though the sidecar eventually wrote a log.
     assert _wait_until(lambda: any(log_dir.glob("runtime_verify_*.log")))
 
     tmux_commands = tmux_log.read_text(encoding="utf-8")
