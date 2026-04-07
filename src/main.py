@@ -309,6 +309,17 @@ def _resolve_daily_mode_next_batch_at(
             get_session_info(market, current_batch_started_at).session_id
             == expected_regular_session_id
         ):
+            # Last regular-session batch for this market: schedule the next
+            # check right at market close so the close event fires promptly
+            # instead of waiting a full session_interval.
+            market_close_local = datetime.combine(
+                current_batch_started_at.astimezone(market.timezone).date(),
+                market.close_time,
+                tzinfo=market.timezone,
+            )
+            market_close_utc = market_close_local.astimezone(UTC)
+            if market_close_utc > batch_completed_at:
+                next_batch_candidates.append(market_close_utc)
             continue
 
         market_close_local = datetime.combine(
