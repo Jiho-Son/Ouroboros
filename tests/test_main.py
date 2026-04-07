@@ -353,8 +353,12 @@ def test_daily_mode_batch_cadence_uses_is_market_open_for_future_batches() -> No
     assert is_market_open_mock.call_count == 2
 
 
-def test_resolve_daily_mode_next_batch_at_keeps_default_when_dst_regular_session_is_active(
+def test_resolve_daily_mode_next_batch_at_schedules_at_close_when_last_regular_batch(
 ) -> None:
+    # Batch at 14:12 UTC = 10:12 EDT (US_NASDAQ regular session).
+    # Default next batch (14:13 + 6h = 20:13 UTC) lands after close (20:00 UTC),
+    # so this is the last regular-session batch.  The scheduler should pin the
+    # next check to market close (20:00 UTC) so the close event fires promptly.
     current_batch_started_at = datetime(2026, 3, 25, 14, 12, tzinfo=UTC)
     batch_completed_at = datetime(2026, 3, 25, 14, 13, tzinfo=UTC)
 
@@ -363,7 +367,24 @@ def test_resolve_daily_mode_next_batch_at_keeps_default_when_dst_regular_session
         current_batch_started_at=current_batch_started_at,
         batch_completed_at=batch_completed_at,
         session_interval=timedelta(hours=6),
-    ) == datetime(2026, 3, 25, 20, 13, tzinfo=UTC)
+    ) == datetime(2026, 3, 25, 20, 0, tzinfo=UTC)
+
+
+def test_resolve_daily_mode_next_batch_at_schedules_at_kr_close_on_last_regular_batch(
+) -> None:
+    # Reproduces the 2026-04-07 production incident: KR batch completed at
+    # 06:26 UTC (15:26 KST, KRX_REG).  Default next batch was 12:26 UTC —
+    # 5h56m after the actual close (06:30 UTC / 15:30 KST).
+    # After the fix the scheduler must select 06:30 UTC instead.
+    current_batch_started_at = datetime(2026, 4, 7, 6, 25, tzinfo=UTC)
+    batch_completed_at = datetime(2026, 4, 7, 6, 26, tzinfo=UTC)
+
+    assert main_module._resolve_daily_mode_next_batch_at(
+        open_markets=[MARKETS["KR"]],
+        current_batch_started_at=current_batch_started_at,
+        batch_completed_at=batch_completed_at,
+        session_interval=timedelta(hours=6),
+    ) == datetime(2026, 4, 7, 6, 30, tzinfo=UTC)
 
 
 def test_resolve_daily_mode_next_batch_at_caps_live_regular_session_gap() -> None:
@@ -14651,9 +14672,9 @@ async def test_run_daily_mode_warning_logs_startup_anchor_and_last_regular_batch
     assert "market=KR" in caplog.text
     assert "markets_open_at_batch_start=true" in caplog.text
     assert "current_batch=2026-03-23T09:31:00+09:00" in caplog.text
-    assert "next_scheduled_batch=2026-03-23T15:31:00+09:00" in caplog.text
-    # The next scheduled batch is already after KR regular-session close, so the
-    # helper exits on the close-boundary check before consulting is_market_open().
+    assert "next_scheduled_batch=2026-03-23T15:30:00+09:00" in caplog.text
+    # The next scheduled batch is pinned to KR regular-session close time so
+    # the close event fires promptly instead of waiting a full session_interval.
     is_market_open_mock.assert_not_called()
 
 
@@ -14914,7 +14935,7 @@ async def test_run_daily_mode_keeps_default_wait_when_dst_regular_session_is_act
     run_daily_session.assert_awaited_once()
     telegram.assert_called_once()
     assert "Daily batch cadence anchored to process start" in caplog.text
-    assert "Next session in 6.0 hours" in caplog.text
+    assert "Next session in 5.8 hours" in caplog.text
     assert "Daily mode has no additional regular-session batch before close" in caplog.text
 
 
@@ -15201,7 +15222,7 @@ async def test_late_start_daily_cycle_logs_last_regular_batch_and_deferred_close
     assert "last_regular_batch_markets=KR" in caplog.text
     assert "Daily mode has no additional regular-session batch before close" in caplog.text
     assert "current_batch=2026-03-23T09:31:00+09:00" in caplog.text
-    assert "next_scheduled_batch=2026-03-23T15:31:00+09:00" in caplog.text
+    assert "next_scheduled_batch=2026-03-23T15:30:00+09:00" in caplog.text
     assert "daily_cycle phase=5" in caplog.text
     assert "daily_cycle phase=6" in caplog.text
     assert "daily_cycle phase=1" in caplog.text
