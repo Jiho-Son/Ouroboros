@@ -1418,7 +1418,7 @@ class TestGeneratePlaybooksMultiExchange:
 
         call_count = 0
 
-        async def _decide_side_effect(market_data: dict) -> "TradeDecision":
+        async def _decide_side_effect(market_data: dict) -> TradeDecision:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -1483,7 +1483,7 @@ class TestGeneratePlaybooksMultiExchange:
             ]
         )
 
-        async def _decide_side_effect(market_data: dict) -> "TradeDecision":
+        async def _decide_side_effect(market_data: dict) -> TradeDecision:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
