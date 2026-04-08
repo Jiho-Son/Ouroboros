@@ -4198,11 +4198,18 @@ async def run_daily_session(
             )
             return m.code, candidates, holdings
 
-        for code, candidates, holdings in await asyncio.gather(
-            *(_load_one(m) for m in us_markets)
-        ):
-            preloaded_us_candidates[code] = candidates
-            preloaded_us_holdings[code] = holdings
+        try:
+            for code, candidates, holdings in await asyncio.gather(
+                *(_load_one(m) for m in us_markets)
+            ):
+                preloaded_us_candidates[code] = candidates
+                preloaded_us_holdings[code] = holdings
+        except Exception:
+            logger.exception(
+                "US exchange pre-loading failed — falling back to per-market loading"
+            )
+            preloaded_us_candidates.clear()
+            preloaded_us_holdings.clear()
 
         holdings_for_planner = {
             code: holdings
