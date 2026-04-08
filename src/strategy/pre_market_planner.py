@@ -219,6 +219,273 @@ class PreMarketPlanner:
                 )
             return self._empty_playbook(today, market, session_id=session_id)
 
+    async def generate_playbooks_multi_exchange(
+        self,
+        candidates_per_exchange: dict[str, list[ScanCandidate]],
+        holdings_per_exchange: dict[str, list[dict]],
+        today: date | None = None,
+        session_id: str = "UNKNOWN",
+    ) -> dict[str, DayPlaybook]:
+        """Generate DayPlaybooks for multiple exchanges in a single LLM call.
+
+        Makes one combined LLM call for all exchanges. Falls back to individual
+        generate_playbook calls for any exchange that fails to parse from the
+        combined response.
+
+        Args:
+            candidates_per_exchange: Scanner candidates keyed by exchange code.
+            holdings_per_exchange: Current holdings keyed by exchange code.
+            today: Override date (defaults to date.today()). Use market-local date.
+            session_id: Session identifier stamped onto each returned playbook.
+
+        Returns:
+            Dict mapping exchange code to DayPlaybook.
+        """
+        if today is None:
+            today = date.today()
+
+        exchange_codes = list(candidates_per_exchange.keys())
+        if not exchange_codes:
+            return {}
+
+        try:
+            context_data = self._gather_context()
+        except Exception:
+            logger.warning("Context unavailable for multi-exchange call; using empty context")
+            context_data = {}
+
+        # Cross-market context is identical for all US exchanges (all look at KR)
+        cross_market = self.build_cross_market_context("US", today)
+
+        prompt = self._build_multi_exchange_prompt(
+            exchange_codes=exchange_codes,
+            candidates_per_exchange=candidates_per_exchange,
+            holdings_per_exchange=holdings_per_exchange,
+            context_data=context_data,
+            cross_market=cross_market,
+        )
+
+        market_data = {
+            "stock_code": "PLANNER_MULTI",
+            "current_price": 0,
+            "prompt_override": prompt,
+        }
+        try:
+            decision = await self._decision_engine.decide(market_data)
+        except Exception:
+            logger.exception(
+                "Multi-exchange LLM call failed — falling back to individual calls"
+            )
+            return await self._generate_individual_playbooks_for(
+                exchange_codes=exchange_codes,
+                candidates_per_exchange=candidates_per_exchange,
+                holdings_per_exchange=holdings_per_exchange,
+                today=today,
+                session_id=session_id,
+            )
+
+        token_count = decision.token_count
+        try:
+            outer = json.loads(self._extract_json(decision.rationale))
+        except Exception:
+            logger.exception(
+                "Failed to parse multi-exchange JSON response — falling back to individual calls"
+            )
+            return await self._generate_individual_playbooks_for(
+                exchange_codes=exchange_codes,
+                candidates_per_exchange=candidates_per_exchange,
+                holdings_per_exchange=holdings_per_exchange,
+                today=today,
+                session_id=session_id,
+            )
+
+        result: dict[str, DayPlaybook] = {}
+        failed_exchanges: list[str] = []
+
+        for exchange_code in exchange_codes:
+            exchange_data = outer.get(exchange_code)
+            if not isinstance(exchange_data, dict):
+                logger.warning(
+                    "Multi-exchange response missing %s — falling back to individual call",
+                    exchange_code,
+                )
+                failed_exchanges.append(exchange_code)
+                continue
+            try:
+                playbook = self._parse_response(
+                    json.dumps(exchange_data),
+                    today,
+                    exchange_code,
+                    candidates_per_exchange.get(exchange_code, []),
+                    cross_market,
+                    current_holdings=holdings_per_exchange.get(exchange_code, []),
+                    session_id=session_id,
+                )
+                result[exchange_code] = playbook.model_copy(
+                    update={"token_count": token_count}
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to parse playbook for %s — falling back to individual call",
+                    exchange_code,
+                )
+                failed_exchanges.append(exchange_code)
+
+        if failed_exchanges:
+            fallbacks = await self._generate_individual_playbooks_for(
+                exchange_codes=failed_exchanges,
+                candidates_per_exchange=candidates_per_exchange,
+                holdings_per_exchange=holdings_per_exchange,
+                today=today,
+                session_id=session_id,
+            )
+            result.update(fallbacks)
+
+        logger.info(
+            "Multi-exchange playbook generated: %s (%d tokens)",
+            ", ".join(
+                f"{c}={result[c].stock_count}stk" for c in exchange_codes if c in result
+            ),
+            token_count,
+        )
+        return result
+
+    async def _generate_individual_playbooks_for(
+        self,
+        exchange_codes: list[str],
+        candidates_per_exchange: dict[str, list[ScanCandidate]],
+        holdings_per_exchange: dict[str, list[dict]],
+        today: date,
+        session_id: str,
+    ) -> dict[str, DayPlaybook]:
+        """Generate individual playbooks for each given exchange code."""
+        result: dict[str, DayPlaybook] = {}
+        for code in exchange_codes:
+            try:
+                playbook = await self.generate_playbook(
+                    market=code,
+                    candidates=candidates_per_exchange.get(code, []),
+                    today=today,
+                    current_holdings=holdings_per_exchange.get(code, []),
+                    session_id=session_id,
+                )
+                result[code] = playbook
+            except Exception:
+                logger.exception("Individual playbook generation failed for %s", code)
+                result[code] = self._empty_playbook(today, code, session_id=session_id)
+        return result
+
+    def _build_multi_exchange_prompt(
+        self,
+        exchange_codes: list[str],
+        candidates_per_exchange: dict[str, list[ScanCandidate]],
+        holdings_per_exchange: dict[str, list[dict]],
+        context_data: dict[str, Any],
+        cross_market: CrossMarketContext | None,
+    ) -> str:
+        """Build a combined prompt for multiple US exchanges."""
+        max_scenarios = self._settings.MAX_SCENARIOS_PER_STOCK
+
+        exchange_sections = ""
+        for exchange_code in exchange_codes:
+            candidates = candidates_per_exchange.get(exchange_code, [])
+            holdings = holdings_per_exchange.get(exchange_code, [])
+
+            candidates_text = (
+                "\n".join(
+                    f"  - {c.stock_code} ({c.name}): price={c.price}, "
+                    f"RSI={c.rsi:.1f}, volume_ratio={c.volume_ratio:.1f}, "
+                    f"signal={c.signal}, score={c.score:.1f}"
+                    for c in candidates
+                )
+                or "  (none)"
+            )
+
+            holdings_lines = ""
+            if holdings:
+                lines = []
+                for h in holdings:
+                    code = h.get("stock_code", "")
+                    name = h.get("name", "")
+                    qty = h.get("qty", 0)
+                    entry_price = h.get("entry_price", 0.0)
+                    pnl_pct = h.get("unrealized_pnl_pct", 0.0)
+                    holding_days = h.get("holding_days", 0)
+                    lines.append(
+                        f"  - {code} ({name}): {qty} shares @ {entry_price:,.2f}, "
+                        f"unrealized {pnl_pct:+.2f}%, held {holding_days}d"
+                    )
+                holdings_lines = "\n### Current Holdings\n" + "\n".join(lines) + "\n"
+
+            exchange_sections += (
+                f"\n## {exchange_code} Candidates\n{candidates_text}\n{holdings_lines}"
+            )
+
+        cross_market_text = ""
+        if cross_market:
+            cross_market_text = (
+                f"\n## Other Market ({cross_market.market}) Summary\n"
+                f"- Realized PnL (USD, raw): {cross_market.total_pnl:+.2f}\n"
+                f"- Win Rate: {cross_market.win_rate:.0f}%\n"
+                f"- Index Change: {cross_market.index_change_pct:+.2f}%\n"
+            )
+            if cross_market.lessons:
+                cross_market_text += f"- Lessons: {'; '.join(cross_market.lessons[:3])}\n"
+
+        context_text = ""
+        if context_data:
+            context_text = "\n## Strategic Context\n"
+            for layer_name, layer_data in context_data.items():
+                if layer_data:
+                    context_text += f"### {layer_name}\n"
+                    for key, value in list(layer_data.items())[:5]:
+                        context_text += f"  - {key}: {value}\n"
+
+        exchange_json_lines = []
+        for exchange_code in exchange_codes:
+            exchange_json_lines.append(
+                f'  "{exchange_code}": {{"market_outlook": "...", '
+                f'"global_rules": [...], "stocks": [...]}}'
+            )
+        response_structure = "{\n" + ",\n".join(exchange_json_lines) + "\n}"
+
+        holding_instructions = ""
+        for exchange_code in exchange_codes:
+            holdings = holdings_per_exchange.get(exchange_code, [])
+            if holdings:
+                held_codes = [h.get("stock_code", "") for h in holdings if h.get("stock_code")]
+                if held_codes:
+                    holding_instructions += (
+                        f"- Include SELL/HOLD scenarios for {exchange_code} held stocks: "
+                        f"{', '.join(held_codes)}\n"
+                    )
+
+        return (
+            f"You are a pre-market trading strategist for US markets.\n"
+            f"Generate trading scenarios for the following US exchanges simultaneously.\n"
+            f"{exchange_sections}"
+            f"{cross_market_text}"
+            f"{context_text}\n"
+            f"## Instructions\n"
+            f"Return a JSON object with this exact structure:\n"
+            f"{response_structure}\n\n"
+            f"Each exchange value must contain:\n"
+            f'  "market_outlook": "bullish|neutral_to_bullish|neutral'
+            f'|neutral_to_bearish|bearish"\n'
+            f'  "global_rules": [{{"condition": "portfolio_pnl_pct < -2.0",'
+            f' "action": "REDUCE_ALL", "rationale": "..."}}]\n'
+            f'  "stocks": [{{"stock_code": "...", "scenarios": [{{'
+            f'"condition": {{"rsi_below": 30}}, "action": "BUY|SELL|HOLD",'
+            f' "confidence": 85, "allocation_pct": 10.0, "stop_loss_pct": -2.0,'
+            f' "take_profit_pct": 3.0, "rationale": "..."}}]}}]\n\n'
+            f"Rules:\n"
+            f"- Max {max_scenarios} scenarios per stock\n"
+            f"- Confidence 0-100 (80+ for actionable trades)\n"
+            f"- stop_loss_pct must be <= 0, take_profit_pct must be >= 0\n"
+            f"{holding_instructions}"
+            f"- Return ONLY the JSON, no markdown fences or explanation\n"
+        )
+
     def build_cross_market_context(
         self,
         target_market: str,

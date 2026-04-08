@@ -1318,3 +1318,212 @@ class TestHoldingsInPrompt:
         codes = [sp.stock_code for sp in pb.stock_playbooks]
         assert "005930" in codes
         assert holding_code in codes
+
+
+# ---------------------------------------------------------------------------
+# generate_playbooks_multi_exchange
+# ---------------------------------------------------------------------------
+
+
+def _multi_exchange_response_json(
+    exchanges: list[str],
+    outlook: str = "neutral_to_bullish",
+) -> str:
+    """Build a combined multi-exchange JSON response."""
+    result = {}
+    for exchange in exchanges:
+        result[exchange] = json.loads(
+            _gemini_response_json(
+                outlook=outlook,
+                stocks=[
+                    {
+                        "stock_code": "AAPL",
+                        "scenarios": [
+                            {
+                                "condition": {"rsi_below": 35},
+                                "action": "BUY",
+                                "confidence": 82,
+                                "allocation_pct": 10.0,
+                                "stop_loss_pct": -2.0,
+                                "take_profit_pct": 4.0,
+                                "rationale": f"{exchange} oversold bounce",
+                            }
+                        ],
+                    }
+                ],
+            )
+        )
+    return json.dumps(result)
+
+
+class TestGeneratePlaybooksMultiExchange:
+    @pytest.mark.asyncio
+    async def test_happy_path_all_exchanges_parsed(self) -> None:
+        exchanges = ["US_NASDAQ", "US_NYSE", "US_AMEX"]
+        planner = _make_planner(
+            gemini_response=_multi_exchange_response_json(exchanges),
+            token_count=600,
+        )
+        candidates = {
+            code: [
+                _candidate(code="AAPL", name="Apple", price=175.0, signal="oversold")
+            ]
+            for code in exchanges
+        }
+        holdings: dict[str, list[dict]] = {code: [] for code in exchanges}
+
+        result = await planner.generate_playbooks_multi_exchange(
+            candidates_per_exchange=candidates,
+            holdings_per_exchange=holdings,
+            today=date(2026, 4, 8),
+            session_id="TEST",
+        )
+
+        assert set(result.keys()) == set(exchanges)
+        for code, pb in result.items():
+            assert isinstance(pb, DayPlaybook)
+            assert pb.market == code
+            assert pb.stock_count >= 1
+            assert pb.token_count == 600
+
+    @pytest.mark.asyncio
+    async def test_partial_failure_falls_back_to_individual_call(self) -> None:
+        """If one exchange is missing from combined response, fall back for that exchange."""
+        # Response only has NASDAQ and NYSE, missing AMEX
+        partial_response = json.dumps(
+            {
+                "US_NASDAQ": json.loads(_gemini_response_json()),
+                "US_NYSE": json.loads(_gemini_response_json()),
+                # US_AMEX is absent
+            }
+        )
+        fallback_response = _gemini_response_json(
+            stocks=[
+                {
+                    "stock_code": "AAPL",
+                    "scenarios": [
+                        {
+                            "condition": {"rsi_below": 35},
+                            "action": "BUY",
+                            "confidence": 80,
+                            "allocation_pct": 10.0,
+                            "stop_loss_pct": -2.0,
+                            "take_profit_pct": 4.0,
+                            "rationale": "fallback",
+                        }
+                    ],
+                }
+            ]
+        )
+
+        call_count = 0
+
+        async def _decide_side_effect(market_data: dict) -> "TradeDecision":
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return TradeDecision(
+                    action="HOLD",
+                    confidence=0,
+                    rationale=partial_response,
+                    token_count=400,
+                )
+            # Second call is the individual fallback for US_AMEX
+            return TradeDecision(
+                action="HOLD",
+                confidence=0,
+                rationale=fallback_response,
+                token_count=150,
+            )
+
+        planner = _make_planner()
+        planner._decision_engine.decide = AsyncMock(side_effect=_decide_side_effect)
+
+        exchanges = ["US_NASDAQ", "US_NYSE", "US_AMEX"]
+        candidates = {
+            code: [
+                _candidate(code="AAPL", name="Apple", price=175.0, signal="oversold")
+            ]
+            for code in exchanges
+        }
+        holdings: dict[str, list[dict]] = {code: [] for code in exchanges}
+
+        result = await planner.generate_playbooks_multi_exchange(
+            candidates_per_exchange=candidates,
+            holdings_per_exchange=holdings,
+            today=date(2026, 4, 8),
+            session_id="TEST",
+        )
+
+        assert set(result.keys()) == set(exchanges)
+        assert call_count == 2  # 1 combined + 1 individual fallback
+        # AMEX came from fallback — must also be a valid playbook
+        assert isinstance(result["US_AMEX"], DayPlaybook)
+
+    @pytest.mark.asyncio
+    async def test_full_llm_failure_falls_back_to_individual_calls(self) -> None:
+        """On total LLM failure, falls back to individual generate_playbook calls."""
+        call_count = 0
+        per_exchange_response = _gemini_response_json(
+            stocks=[
+                {
+                    "stock_code": "AAPL",
+                    "scenarios": [
+                        {
+                            "condition": {"rsi_below": 35},
+                            "action": "BUY",
+                            "confidence": 80,
+                            "allocation_pct": 10.0,
+                            "stop_loss_pct": -2.0,
+                            "take_profit_pct": 4.0,
+                            "rationale": "fallback",
+                        }
+                    ],
+                }
+            ]
+        )
+
+        async def _decide_side_effect(market_data: dict) -> "TradeDecision":
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("LLM unavailable")
+            return TradeDecision(
+                action="HOLD",
+                confidence=0,
+                rationale=per_exchange_response,
+                token_count=100,
+            )
+
+        planner = _make_planner()
+        planner._decision_engine.decide = AsyncMock(side_effect=_decide_side_effect)
+
+        exchanges = ["US_NASDAQ", "US_NYSE"]
+        candidates = {
+            code: [
+                _candidate(code="AAPL", name="Apple", price=175.0, signal="oversold")
+            ]
+            for code in exchanges
+        }
+        holdings: dict[str, list[dict]] = {code: [] for code in exchanges}
+
+        result = await planner.generate_playbooks_multi_exchange(
+            candidates_per_exchange=candidates,
+            holdings_per_exchange=holdings,
+            today=date(2026, 4, 8),
+            session_id="TEST",
+        )
+
+        assert set(result.keys()) == set(exchanges)
+        # 1 combined attempt + 1 per exchange fallback = 3 total
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_empty_exchange_codes_returns_empty_dict(self) -> None:
+        planner = _make_planner()
+        result = await planner.generate_playbooks_multi_exchange(
+            candidates_per_exchange={},
+            holdings_per_exchange={},
+            today=date(2026, 4, 8),
+        )
+        assert result == {}
