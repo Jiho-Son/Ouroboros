@@ -9298,6 +9298,171 @@ async def test_live_daily_poll_preserves_current_session_playbook() -> None:
     playbook_store.save.assert_not_called()
 
 
+# ---------------------------------------------------------------------------
+# Daily mid-session refresh helpers
+# ---------------------------------------------------------------------------
+
+
+def test_market_refresh_group_maps_us_variants_to_us() -> None:
+    assert main_module._market_refresh_group("US_NASDAQ") == "US"
+    assert main_module._market_refresh_group("US_NYSE") == "US"
+    assert main_module._market_refresh_group("US_AMEX") == "US"
+    assert main_module._market_refresh_group("KR") == "KR"
+    assert main_module._market_refresh_group("JP") == "JP"
+
+
+def test_should_force_daily_playbook_refresh_returns_false_outside_live_daily() -> None:
+    """Force-refresh must be a no-op in paper/backtest modes and realtime."""
+    from src.markets.schedule import MARKETS
+
+    market = MARKETS["KR"]
+    # paper mode
+    assert not main_module._should_force_daily_playbook_refresh(
+        market=market,
+        settings=_make_settings(MODE="paper", TRADE_MODE="daily"),
+        now=datetime(2026, 4, 8, 12, 0, tzinfo=ZoneInfo("Asia/Seoul")).astimezone(UTC),
+    )
+    # realtime trade_mode
+    assert not main_module._should_force_daily_playbook_refresh(
+        market=market,
+        settings=_make_settings(MODE="live", TRADE_MODE="realtime"),
+        now=datetime(2026, 4, 8, 12, 0, tzinfo=ZoneInfo("Asia/Seoul")).astimezone(UTC),
+    )
+
+
+def test_should_force_daily_playbook_refresh_time_trigger_fires_at_noon_local() -> None:
+    """Time-based trigger: first batch at or after 12:00 local each day."""
+    from src.markets.schedule import MARKETS
+
+    market = MARKETS["KR"]
+    settings = _make_settings(TRADE_MODE="daily")
+    main_module._reset_daily_mid_refresh_state()
+
+    # 11:59 local — too early
+    before_noon = datetime(2026, 4, 8, 11, 59, tzinfo=ZoneInfo("Asia/Seoul")).astimezone(UTC)
+    assert not main_module._should_force_daily_playbook_refresh(
+        market=market, settings=settings, now=before_noon
+    )
+
+    # 12:00 local — fires
+    at_noon = datetime(2026, 4, 8, 12, 0, tzinfo=ZoneInfo("Asia/Seoul")).astimezone(UTC)
+    assert main_module._should_force_daily_playbook_refresh(
+        market=market, settings=settings, now=at_noon
+    )
+
+    # After recording the refresh, should no longer fire
+    main_module._record_daily_playbook_refreshed("KR", now=at_noon)
+    assert not main_module._should_force_daily_playbook_refresh(
+        market=market, settings=settings, now=at_noon
+    )
+    main_module._reset_daily_mid_refresh_state()
+
+
+def test_should_force_daily_playbook_refresh_post_sell_trigger() -> None:
+    """Post-sell trigger fires after delay has elapsed, respects last refresh."""
+    from src.markets.schedule import MARKETS
+
+    market = MARKETS["KR"]
+    settings = _make_settings(TRADE_MODE="daily", POST_SELL_REFRESH_DELAY_MINUTES=30)
+    main_module._reset_daily_mid_refresh_state()
+
+    sell_time = datetime(2026, 4, 8, 10, 0, tzinfo=UTC)
+    main_module._schedule_post_sell_playbook_refresh("KR", settings, now=sell_time)
+
+    # Mark time-based trigger as already done so only post-sell trigger is under test
+    main_module._daily_mid_refreshed.add("KR")
+
+    # Before delay elapses — should not fire
+    before_due = sell_time + timedelta(minutes=29)
+    assert not main_module._should_force_daily_playbook_refresh(
+        market=market, settings=settings, now=before_due
+    )
+
+    # At exactly the due time — should fire
+    at_due = sell_time + timedelta(minutes=30)
+    assert main_module._should_force_daily_playbook_refresh(
+        market=market, settings=settings, now=at_due
+    )
+
+    # After recording refresh, should no longer fire
+    main_module._record_daily_playbook_refreshed("KR", now=at_due)
+    assert not main_module._should_force_daily_playbook_refresh(
+        market=market, settings=settings, now=at_due + timedelta(minutes=1)
+    )
+    main_module._reset_daily_mid_refresh_state()
+
+
+def test_schedule_post_sell_refresh_advances_on_repeated_sells() -> None:
+    """Each sell advances the scheduled refresh time."""
+    settings = _make_settings(TRADE_MODE="daily", POST_SELL_REFRESH_DELAY_MINUTES=30)
+    main_module._reset_daily_mid_refresh_state()
+
+    t1 = datetime(2026, 4, 8, 10, 0, tzinfo=UTC)
+    t2 = t1 + timedelta(minutes=10)
+
+    main_module._schedule_post_sell_playbook_refresh("KR", settings, now=t1)
+    main_module._schedule_post_sell_playbook_refresh("KR", settings, now=t2)
+
+    expected_due = t2 + timedelta(minutes=30)
+    assert main_module._post_sell_refresh_at["KR"] == expected_due
+    main_module._reset_daily_mid_refresh_state()
+
+
+@pytest.mark.asyncio
+async def test_load_or_generate_daily_playbook_force_refresh_bypasses_preserve() -> None:
+    """force_refresh=True must regenerate even when preserve_current_session_playbook=True."""
+    market = MagicMock()
+    market.code = "KR"
+
+    candidate = ScanCandidate(
+        stock_code="005930",
+        name="Samsung",
+        price=75000.0,
+        volume=3_000_000.0,
+        volume_ratio=2.5,
+        rsi=55.0,
+        signal="breakout",
+        score=88.0,
+    )
+    stored_playbook = _make_stock_playbook("KR", "005930").model_copy(
+        update={"session_id": "KRX_REG"}
+    )
+    new_playbook = _make_stock_playbook("KR", "005930").model_copy(
+        update={"session_id": "KRX_REG"}
+    )
+    playbook_store = MagicMock()
+    playbook_store.load_latest_entry = MagicMock(
+        return_value=StoredPlaybookEntry(
+            playbook=stored_playbook,
+            slot="open",
+            generated_at=stored_playbook.generated_at,
+        )
+    )
+    playbook_store.save = MagicMock()
+    pre_market_planner = MagicMock()
+    pre_market_planner.generate_playbook = AsyncMock(return_value=new_playbook)
+    telegram = MagicMock()
+    telegram.notify_playbook_generated = AsyncMock()
+
+    result = await main_module._load_or_generate_daily_playbook(
+        candidates_list=[candidate],
+        current_holdings=[],
+        market=market,
+        market_today=date(2026, 4, 8),
+        session_id="KRX_REG",
+        playbook_store=playbook_store,
+        pre_market_planner=pre_market_planner,
+        telegram=telegram,
+        preserve_current_session_playbook=True,
+        force_refresh=True,
+    )
+
+    # Must have generated a fresh playbook, not returned the stored one
+    pre_market_planner.generate_playbook.assert_awaited_once()
+    playbook_store.save.assert_called_once()
+    assert result is not stored_playbook
+
+
 @pytest.mark.asyncio
 async def test_run_daily_session_passes_runtime_session_id_to_decision_and_trade_logs() -> None:
     """Daily session must explicitly forward runtime session_id to decision/trade logs."""

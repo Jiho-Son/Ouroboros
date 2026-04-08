@@ -1244,6 +1244,11 @@ _BUY_COOLDOWN_SECONDS = 600  # 10-minute cooldown after insufficient-balance rej
 DAILY_TRADE_SESSIONS = 4  # Number of trading sessions per day
 TRADE_SESSION_INTERVAL_HOURS = 6  # Hours between sessions
 
+# Daily mid-session playbook refresh state (keyed by refresh group: "KR" or "US")
+_daily_mid_refreshed: set[str] = set()  # groups that had their 12:00 refresh today
+_post_sell_refresh_at: dict[str, datetime] = {}  # UTC time when next post-sell refresh is due
+_last_refresh_at: dict[str, datetime] = {}  # UTC time of last refresh per group
+
 
 async def _retry_connection(coro_factory: Any, *args: Any, label: str = "", **kwargs: Any) -> Any:
     """Call an async function retrying on ConnectionError with exponential backoff.
@@ -2925,6 +2930,79 @@ def _should_preserve_current_session_playbook_for_live_daily_session(
     )
 
 
+def _market_refresh_group(market_code: str) -> str:
+    """Map a market code to its mid-session refresh group ("KR" or "US")."""
+    return "US" if market_code.startswith("US") else market_code
+
+
+def _should_force_daily_playbook_refresh(
+    *, market: MarketInfo, settings: Settings, now: datetime | None = None
+) -> bool:
+    """Return True when a mid-session playbook refresh should be forced for *market*.
+
+    Two triggers (daily mode + live only):
+    1. Time-based: first batch on or after 12:00 local time each day.
+    2. Condition-based: a sell was executed and the post-sell delay has elapsed
+       since the last refresh for this group.
+    """
+    if settings.MODE != "live" or settings.TRADE_MODE != "daily":
+        return False
+    if now is None:
+        now = datetime.now(UTC)
+    group = _market_refresh_group(market.code)
+
+    # Time-based trigger: once per day, first batch at or after noon local time
+    local_now = now.astimezone(market.timezone)
+    if local_now.hour >= 12 and group not in _daily_mid_refreshed:
+        return True
+
+    # Condition-based trigger: scheduled post-sell refresh is due
+    refresh_at = _post_sell_refresh_at.get(group)
+    if refresh_at is not None and now >= refresh_at:
+        last = _last_refresh_at.get(group)
+        if last is None or last < refresh_at:
+            return True
+
+    return False
+
+
+def _record_daily_playbook_refreshed(market_code: str, now: datetime | None = None) -> None:
+    """Mark a refresh group as having completed its mid-session refresh."""
+    if now is None:
+        now = datetime.now(UTC)
+    group = _market_refresh_group(market_code)
+    _daily_mid_refreshed.add(group)
+    _last_refresh_at[group] = now
+
+
+def _schedule_post_sell_playbook_refresh(
+    market_code: str, settings: Settings, now: datetime | None = None
+) -> None:
+    """Schedule a post-sell playbook refresh for *market_code*'s group.
+
+    If multiple sells occur, each one advances the scheduled time so the
+    refresh always happens after the most recent sell.
+    """
+    if now is None:
+        now = datetime.now(UTC)
+    group = _market_refresh_group(market_code)
+    refresh_at = now + timedelta(minutes=settings.POST_SELL_REFRESH_DELAY_MINUTES)
+    _post_sell_refresh_at[group] = refresh_at
+    logger.debug(
+        "Post-sell refresh scheduled for group %s at %s (+%dmin)",
+        group,
+        refresh_at.isoformat(),
+        settings.POST_SELL_REFRESH_DELAY_MINUTES,
+    )
+
+
+def _reset_daily_mid_refresh_state() -> None:
+    """Clear daily mid-session refresh state at the start of a new trading day."""
+    _daily_mid_refreshed.clear()
+    _post_sell_refresh_at.clear()
+    _last_refresh_at.clear()
+
+
 async def _load_or_generate_daily_playbook(
     *,
     candidates_list: list[ScanCandidate],
@@ -2936,11 +3014,17 @@ async def _load_or_generate_daily_playbook(
     pre_market_planner: PreMarketPlanner,
     telegram: TelegramClient,
     preserve_current_session_playbook: bool = False,
+    force_refresh: bool = False,
 ) -> DayPlaybook:
-    """Load the market playbook or generate it for the current trading day."""
+    """Load the market playbook or generate it for the current trading day.
+
+    When *force_refresh* is True the sticky-playbook guard is bypassed so a
+    fresh LLM playbook is generated even during a live regular session.
+    """
+    effective_preserve = preserve_current_session_playbook and not force_refresh
     candidate_codes = (
         None
-        if preserve_current_session_playbook
+        if effective_preserve
         else {candidate.stock_code for candidate in candidates_list}
     )
     selection = _decide_playbook_selection(
@@ -2951,7 +3035,7 @@ async def _load_or_generate_daily_playbook(
         selection_intent=PlaybookSelectionIntent.RESUME_CURRENT_SESSION,
         current_candidate_codes=candidate_codes,
     )
-    if selection.stored_entry is not None:
+    if selection.stored_entry is not None and not force_refresh:
         return _with_playbook_session_id(selection.stored_entry.playbook, session_id)
 
     if not candidates_list and current_holdings:
@@ -3710,6 +3794,8 @@ async def _process_daily_session_stock(
             )
 
         if decision.action == "SELL" and order_succeeded:
+            if settings.TRADE_MODE == "daily":
+                _schedule_post_sell_playbook_refresh(market.code, settings)
             buy_trade = get_latest_buy_trade(
                 db_conn,
                 stock_code,
@@ -3875,6 +3961,7 @@ async def _run_daily_session_market(
         )
     logger.info("Processing market: %s (%d stocks)", market.name, len(watchlist))
 
+    force_refresh = _should_force_daily_playbook_refresh(market=market, settings=settings)
     playbook = await _load_or_generate_daily_playbook(
         candidates_list=candidates_list,
         current_holdings=current_holdings,
@@ -3890,7 +3977,15 @@ async def _run_daily_session_market(
                 session_id=runtime_session_id,
             )
         ),
+        force_refresh=force_refresh,
     )
+    if force_refresh:
+        _record_daily_playbook_refreshed(market.code)
+        logger.info(
+            "Mid-session playbook refresh completed for %s (group=%s)",
+            market.code,
+            _market_refresh_group(market.code),
+        )
 
     stocks_data = await _collect_daily_session_market_data(
         broker=broker,
@@ -5321,11 +5416,12 @@ async def run(settings: Settings) -> None:
                 )
                 _run_context_scheduler(context_scheduler, now=datetime.now(UTC))
 
-                # Reset intra-day CB baseline on a new calendar date
+                # Reset intra-day CB baseline and mid-session refresh state on a new calendar date
                 today_str = datetime.now(UTC).date().isoformat()
                 if today_str != _cb_last_date:
                     _cb_last_date = today_str
                     _cb_daily_start_eval = 0.0
+                    _reset_daily_mid_refresh_state()
                     logger.info("New trading day %s — daily CB baseline reset", today_str)
 
                 current_batch_started_at = datetime.now(UTC)
