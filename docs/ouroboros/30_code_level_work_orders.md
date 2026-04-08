@@ -64,6 +64,11 @@ Updated: 2026-03-15
 - `TASK-CODE-014` (`REQ-OPS-007`,`TEST-CODE-010`): `PreMarketPlanner.generate_playbooks_multi_exchange()`를 추가하여 US 복수 거래소를 단일 LLM 호출로 통합 처리하고, `run_daily_session()`에서 2개 이상 US 거래소 오픈 시 통합 호출 경로를 사용하도록 구현
 - `TEST-CODE-010` (`REQ-OPS-007`): 멀티-익스체인지 통합 LLM 호출 성공/부분실패 fallback/전체실패 fallback 테스트
 
+## 구현 단위 H: 불필요 LLM 재호출 방지
+
+- `TASK-CODE-015` (`REQ-OPS-008`,`TEST-CODE-011`): `run_daily_session()`의 US 멀티 익스체인지 블록에 guard 추가 — 모든 거래소에 당일 유효 플레이북이 존재하고 `force_refresh` 조건이 없으면 `generate_playbooks_multi_exchange()` 호출을 생략
+- `TEST-CODE-011` (`REQ-OPS-008`): 플레이북 전체 존재 시 LLM 생략 / 일부 누락 시 LLM 호출 / `force_refresh` 시 LLM 호출 테스트
+
 ## 커밋 규칙
 
 - 커밋 메시지에 `TASK-*` 포함

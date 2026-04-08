@@ -4173,64 +4173,93 @@ async def run_daily_session(
     ] = {}
 
     if len(us_markets) >= 2:
-        logger.info(
-            "Multiple US exchanges open (%s) — pre-loading for combined LLM call",
-            ", ".join(m.code for m in us_markets),
-        )
-
-        async def _load_one(
-            m: MarketInfo,
-        ) -> tuple[str, list[ScanCandidate], tuple[dict[str, Any] | None, list[dict[str, Any]]]]:
-            candidates, holdings = await asyncio.gather(
-                _load_daily_session_market_candidates(
-                    db_conn=db_conn,
-                    market=m,
-                    overseas_broker=overseas_broker,
-                    smart_scanner=smart_scanner,
-                ),
-                _load_daily_session_market_holdings(
-                    broker=broker,
-                    db_conn=db_conn,
-                    market=m,
-                    market_today=datetime.now(m.timezone).date(),
-                    overseas_broker=overseas_broker,
-                ),
-            )
-            return m.code, candidates, holdings
-
-        try:
-            for code, candidates, holdings in await asyncio.gather(
-                *(_load_one(m) for m in us_markets)
-            ):
-                preloaded_us_candidates[code] = candidates
-                preloaded_us_holdings[code] = holdings
-        except Exception:
-            logger.exception(
-                "US exchange pre-loading failed — falling back to per-market loading"
-            )
-            preloaded_us_candidates.clear()
-            preloaded_us_holdings.clear()
-
-        holdings_for_planner = {
-            code: holdings
-            for code, (_, holdings) in preloaded_us_holdings.items()
-        }
         # All US exchanges share the same timezone; use the first market's local date.
         us_today = datetime.now(us_markets[0].timezone).date()
-        try:
-            pregenerated_us_playbooks = (
-                await pre_market_planner.generate_playbooks_multi_exchange(
-                    candidates_per_exchange=preloaded_us_candidates,
-                    holdings_per_exchange=holdings_for_planner,
-                    today=us_today,
-                    session_id="MULTI",
+
+        def _us_market_needs_new_playbook(m: MarketInfo) -> bool:
+            """Return True if *m* has no stored playbook or a refresh is due.
+
+            On any unexpected error (e.g. get_session_info raises), returns True
+            so the LLM call is allowed as a safe fallback.
+            """
+            try:
+                stored = playbook_store.load_latest(
+                    us_today, m.code, session_id=get_session_info(m).session_id
                 )
+                return stored is None or _should_force_daily_playbook_refresh(
+                    market=m, settings=settings
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to check stored playbook for %s — assuming new playbook needed",
+                    m.code,
+                )
+                return True
+
+        if not any(_us_market_needs_new_playbook(m) for m in us_markets):
+            logger.info(
+                "All US exchanges have valid stored playbooks and no refresh due"
+                " — skipping combined LLM call (OOR-898)"
             )
-        except Exception:
-            logger.exception(
-                "Multi-exchange playbook pre-generation failed — "
-                "will fall back to per-market LLM calls"
+        else:
+            logger.info(
+                "Multiple US exchanges open (%s) — pre-loading for combined LLM call",
+                ", ".join(m.code for m in us_markets),
             )
+
+            async def _load_one(
+                m: MarketInfo,
+            ) -> (  # noqa: E501
+                tuple[str, list[ScanCandidate], tuple[dict[str, Any] | None, list[dict[str, Any]]]]
+            ):
+                candidates, holdings = await asyncio.gather(
+                    _load_daily_session_market_candidates(
+                        db_conn=db_conn,
+                        market=m,
+                        overseas_broker=overseas_broker,
+                        smart_scanner=smart_scanner,
+                    ),
+                    _load_daily_session_market_holdings(
+                        broker=broker,
+                        db_conn=db_conn,
+                        market=m,
+                        market_today=datetime.now(m.timezone).date(),
+                        overseas_broker=overseas_broker,
+                    ),
+                )
+                return m.code, candidates, holdings
+
+            try:
+                for code, candidates, holdings in await asyncio.gather(
+                    *(_load_one(m) for m in us_markets)
+                ):
+                    preloaded_us_candidates[code] = candidates
+                    preloaded_us_holdings[code] = holdings
+            except Exception:
+                logger.exception(
+                    "US exchange pre-loading failed — falling back to per-market loading"
+                )
+                preloaded_us_candidates.clear()
+                preloaded_us_holdings.clear()
+
+            holdings_for_planner = {
+                code: holdings
+                for code, (_, holdings) in preloaded_us_holdings.items()
+            }
+            try:
+                pregenerated_us_playbooks = (
+                    await pre_market_planner.generate_playbooks_multi_exchange(
+                        candidates_per_exchange=preloaded_us_candidates,
+                        holdings_per_exchange=holdings_for_planner,
+                        today=us_today,
+                        session_id="MULTI",
+                    )
+                )
+            except Exception:
+                logger.exception(
+                    "Multi-exchange playbook pre-generation failed — "
+                    "will fall back to per-market LLM calls"
+                )
 
     for market in open_markets:
         daily_start_eval = await _run_daily_session_market(

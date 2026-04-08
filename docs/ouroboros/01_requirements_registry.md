@@ -1,6 +1,6 @@
 <!--
 Doc-ID: DOC-REQ-001
-Version: 1.0.15
+Version: 1.0.16
 Status: active
 Owner: strategy
 Updated: 2026-04-08
@@ -41,6 +41,7 @@ Updated: 2026-04-08
 - `REQ-OPS-005`: canonical `main` 런타임 재시작 자동화는 Symphony `before_remove` 훅에서 관리되어야 하며, merged worktree 삭제 시 canonical `main` checkout만 정확히 한 번 재시작하고 non-`main` runtime 경계를 침범하지 않아야 한다.
 - `REQ-OPS-006`: LLM provider는 OpenAI-compatible API(`/v1/chat/completions`)를 지원하는 모든 서빙 백엔드(MLX, vLLM, llama.cpp 등)를 `.env` 설정만으로 전환할 수 있어야 한다.
 - `REQ-OPS-007`: US 마켓 복수 거래소(NASDAQ/NYSE/AMEX)가 동시 개장 시, LLM 호출은 단일 통합 호출로 처리해야 한다. 부분 파싱 실패 시 해당 거래소만 개별 fallback 재시도가 허용된다.
+- `REQ-OPS-008`: 복수 US 거래소 세션에서 모든 거래소의 당일 플레이북이 이미 저장돼 있고 강제 갱신 조건(`force_refresh`)이 없을 경우, LLM 재호출을 생략해야 한다.
 
 ## 변경 이력
 
@@ -48,3 +49,4 @@ Updated: 2026-04-08
 - 2026-03-15: `v1.0.13` canonical main 재시작 자동화를 Symphony `before_remove` 훅 기준으로 명시하고 runtime 경계/정확히-한-번 요구를 추가했다. (`REQ-OPS-005`)
 - 2026-03-29: `v1.0.14` OpenAI-compatible LLM provider 요구사항 추가. (`REQ-OPS-006`)
 - 2026-04-08: `v1.0.15` US 복수 거래소 LLM 통합 호출 요구사항 추가. (`REQ-OPS-007`)
+- 2026-04-08: `v1.0.16` 유효 플레이북 존재 시 LLM 재호출 생략 요구사항 추가. (`REQ-OPS-008`)

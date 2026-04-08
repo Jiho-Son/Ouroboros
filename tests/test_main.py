@@ -16220,3 +16220,172 @@ async def test_register_post_buy_for_hard_stop_survives_subscribe_failure() -> N
     tracked = monitor.get("KR", "005930")
     assert tracked is not None, "monitor.register() must succeed even if subscribe() raises"
     ws_client.subscribe.assert_awaited_once_with("KR", "005930")
+
+
+# ---------------------------------------------------------------------------
+# run_daily_session — US multi-exchange combined LLM call guard (OOR-898)
+# ---------------------------------------------------------------------------
+
+
+class TestUsMultiExchangePlaybookGuard:
+    """Tests for OOR-898: skip combined LLM call when valid playbooks already exist.
+
+    The guard in run_daily_session() must:
+    - Skip generate_playbooks_multi_exchange when ALL US exchanges have stored
+      playbooks and no force_refresh is due.
+    - Call generate_playbooks_multi_exchange when ANY exchange is missing a
+      stored playbook.
+    - Call generate_playbooks_multi_exchange when force_refresh is due for ANY
+      exchange even if stored playbooks exist.
+    """
+
+    def _make_settings(self) -> Settings:
+        return Settings(
+            KIS_APP_KEY="k",
+            KIS_APP_SECRET="s",
+            KIS_ACCOUNT_NO="12345678-01",
+            GEMINI_API_KEY="g",
+            MODE="paper",
+            PAPER_OVERSEAS_CASH=0,
+        )
+
+    def _make_us_market(self, code: str) -> MagicMock:
+        m = MagicMock()
+        m.code = code
+        m.timezone = ZoneInfo("America/New_York")
+        return m
+
+    def _stored_playbook(self, market: str) -> DayPlaybook:
+        return DayPlaybook(
+            date=date(2026, 4, 8),
+            market=market,
+            session_id="US_REG",
+            stocks=[],
+            generated_at="2026-04-08T13:30:00+00:00",
+        )
+
+    @pytest.mark.asyncio
+    async def test_skips_llm_call_when_all_playbooks_exist(self) -> None:
+        """generate_playbooks_multi_exchange must NOT be called when all US
+        exchanges have stored playbooks and no force_refresh is due."""
+        nasdaq = self._make_us_market("US_NASDAQ")
+        nyse = self._make_us_market("US_NYSE")
+
+        playbook_store = MagicMock()
+        playbook_store.load_latest.side_effect = (
+            lambda d, code, session_id: self._stored_playbook(code)
+        )
+
+        pre_market_planner = MagicMock()
+        pre_market_planner.generate_playbooks_multi_exchange = AsyncMock()
+
+        with (
+            patch("src.main.get_open_markets", return_value=[nasdaq, nyse]),
+            patch("src.main._run_daily_session_market", new=AsyncMock(return_value=0.0)),
+            patch("src.main._should_force_daily_playbook_refresh", return_value=False),
+            patch("src.main.get_session_info", return_value=MagicMock(session_id="US_REG")),
+        ):
+            await run_daily_session(
+                broker=MagicMock(),
+                overseas_broker=MagicMock(),
+                scenario_engine=MagicMock(),
+                playbook_store=playbook_store,
+                pre_market_planner=pre_market_planner,
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(),
+                criticality_assessor=MagicMock(),
+                telegram=MagicMock(),
+                settings=self._make_settings(),
+            )
+
+        pre_market_planner.generate_playbooks_multi_exchange.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_calls_llm_when_any_playbook_missing(self) -> None:
+        """generate_playbooks_multi_exchange IS called when at least one exchange
+        has no stored playbook."""
+        nasdaq = self._make_us_market("US_NASDAQ")
+        nyse = self._make_us_market("US_NYSE")
+
+        playbook_store = MagicMock()
+        playbook_store.load_latest.side_effect = (
+            lambda d, code, session_id: self._stored_playbook(code)
+            if code == "US_NASDAQ"
+            else None
+        )
+
+        pre_market_planner = MagicMock()
+        pre_market_planner.generate_playbooks_multi_exchange = AsyncMock(return_value={})
+
+        with (
+            patch("src.main.get_open_markets", return_value=[nasdaq, nyse]),
+            patch("src.main._run_daily_session_market", new=AsyncMock(return_value=0.0)),
+            patch("src.main._should_force_daily_playbook_refresh", return_value=False),
+            patch("src.main.get_session_info", return_value=MagicMock(session_id="US_REG")),
+            patch("src.main._load_daily_session_market_candidates", new=AsyncMock(return_value=[])),
+            patch(
+                "src.main._load_daily_session_market_holdings",
+                new=AsyncMock(return_value=(None, [])),
+            ),
+        ):
+            await run_daily_session(
+                broker=MagicMock(),
+                overseas_broker=MagicMock(),
+                scenario_engine=MagicMock(),
+                playbook_store=playbook_store,
+                pre_market_planner=pre_market_planner,
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(),
+                criticality_assessor=MagicMock(),
+                telegram=MagicMock(),
+                settings=self._make_settings(),
+            )
+
+        pre_market_planner.generate_playbooks_multi_exchange.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_calls_llm_when_force_refresh_due(self) -> None:
+        """generate_playbooks_multi_exchange IS called when force_refresh is True
+        for at least one exchange, even if stored playbooks exist."""
+        nasdaq = self._make_us_market("US_NASDAQ")
+        nyse = self._make_us_market("US_NYSE")
+
+        playbook_store = MagicMock()
+        playbook_store.load_latest.return_value = self._stored_playbook("US_NASDAQ")
+
+        pre_market_planner = MagicMock()
+        pre_market_planner.generate_playbooks_multi_exchange = AsyncMock(return_value={})
+
+        with (
+            patch("src.main.get_open_markets", return_value=[nasdaq, nyse]),
+            patch("src.main._run_daily_session_market", new=AsyncMock(return_value=0.0)),
+            patch("src.main._should_force_daily_playbook_refresh", return_value=True),
+            patch("src.main.get_session_info", return_value=MagicMock(session_id="US_REG")),
+            patch("src.main._load_daily_session_market_candidates", new=AsyncMock(return_value=[])),
+            patch(
+                "src.main._load_daily_session_market_holdings",
+                new=AsyncMock(return_value=(None, [])),
+            ),
+        ):
+            await run_daily_session(
+                broker=MagicMock(),
+                overseas_broker=MagicMock(),
+                scenario_engine=MagicMock(),
+                playbook_store=playbook_store,
+                pre_market_planner=pre_market_planner,
+                risk=MagicMock(),
+                db_conn=MagicMock(),
+                decision_logger=MagicMock(),
+                context_store=MagicMock(),
+                criticality_assessor=MagicMock(),
+                telegram=MagicMock(),
+                settings=self._make_settings(),
+            )
+
+        pre_market_planner.generate_playbooks_multi_exchange.assert_awaited_once()
+
+
