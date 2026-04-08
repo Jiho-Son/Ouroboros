@@ -1416,19 +1416,18 @@ class TestGeneratePlaybooksMultiExchange:
             ]
         )
 
-        call_count = 0
+        captured_calls: list[dict] = []
 
         async def _decide_side_effect(market_data: dict) -> TradeDecision:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
+            captured_calls.append(market_data)
+            if len(captured_calls) == 1:
                 return TradeDecision(
                     action="HOLD",
                     confidence=0,
                     rationale=partial_response,
                     token_count=400,
                 )
-            # Second call is the individual fallback for US_AMEX
+            # Subsequent calls are individual fallbacks
             return TradeDecision(
                 action="HOLD",
                 confidence=0,
@@ -1456,7 +1455,9 @@ class TestGeneratePlaybooksMultiExchange:
         )
 
         assert set(result.keys()) == set(exchanges)
-        assert call_count == 2  # 1 combined + 1 individual fallback
+        assert len(captured_calls) == 2  # 1 combined + 1 individual fallback for AMEX
+        # The fallback call must be for PLANNER (individual generate_playbook), not PLANNER_MULTI
+        assert captured_calls[1].get("stock_code") == "PLANNER"
         # AMEX came from fallback — must also be a valid playbook
         assert isinstance(result["US_AMEX"], DayPlaybook)
 

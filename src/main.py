@@ -3023,12 +3023,35 @@ async def _load_or_generate_daily_playbook(
     fresh LLM playbook is generated even during a live regular session.
 
     When *pregenerated_playbook* is supplied (e.g. from a multi-exchange combined
-    LLM call), it is used instead of calling the LLM again — unless a stored
-    playbook already covers the session or *force_refresh* is True.
+    LLM call), it takes priority and is used directly — skipping both the stored
+    playbook check and the LLM call — unless *force_refresh* is True.
     """
-    effective_preserve = (
-        preserve_current_session_playbook and not force_refresh and pregenerated_playbook is None
-    )
+    # Fast path: pre-generated playbook from a combined multi-exchange call.
+    # Skips stored-playbook lookup — the combined call already produced a fresh
+    # result, so there is nothing to resume.
+    if pregenerated_playbook is not None and not force_refresh:
+        playbook = _with_playbook_session_id(pregenerated_playbook, session_id)
+        playbook_store.save(playbook)
+        try:
+            await telegram.notify_playbook_generated(
+                market=market.code,
+                stock_count=playbook.stock_count,
+                scenario_count=playbook.scenario_count,
+                token_count=playbook.token_count,
+                slot="open",
+            )
+        except Exception as exc:
+            logger.warning("Playbook notification failed: %s", exc)
+        logger.info(
+            "Using pre-generated playbook for %s: %d stocks, %d scenarios",
+            market.code,
+            playbook.stock_count,
+            playbook.scenario_count,
+        )
+        return playbook
+
+    # Standard path: check stored, exit-only fallback, or LLM generation.
+    effective_preserve = preserve_current_session_playbook and not force_refresh
     candidate_codes = (
         None
         if effective_preserve
@@ -3042,7 +3065,7 @@ async def _load_or_generate_daily_playbook(
         selection_intent=PlaybookSelectionIntent.RESUME_CURRENT_SESSION,
         current_candidate_codes=candidate_codes,
     )
-    if selection.stored_entry is not None and not force_refresh and pregenerated_playbook is None:
+    if selection.stored_entry is not None and not force_refresh:
         return _with_playbook_session_id(selection.stored_entry.playbook, session_id)
 
     if not candidates_list and current_holdings:
@@ -3065,27 +3088,6 @@ async def _load_or_generate_daily_playbook(
             logger.warning("Playbook notification failed: %s", exc)
         logger.info(
             "Generated held-only fallback playbook for %s: %d stocks, %d scenarios",
-            market.code,
-            playbook.stock_count,
-            playbook.scenario_count,
-        )
-        return playbook
-
-    if pregenerated_playbook is not None:
-        playbook = _with_playbook_session_id(pregenerated_playbook, session_id)
-        playbook_store.save(playbook)
-        try:
-            await telegram.notify_playbook_generated(
-                market=market.code,
-                stock_count=playbook.stock_count,
-                scenario_count=playbook.scenario_count,
-                token_count=playbook.token_count,
-                slot="open",
-            )
-        except Exception as exc:
-            logger.warning("Playbook notification failed: %s", exc)
-        logger.info(
-            "Using pre-generated playbook for %s: %d stocks, %d scenarios",
             market.code,
             playbook.stock_count,
             playbook.scenario_count,
@@ -4175,30 +4177,45 @@ async def run_daily_session(
             "Multiple US exchanges open (%s) — pre-loading for combined LLM call",
             ", ".join(m.code for m in us_markets),
         )
-        for m in us_markets:
-            preloaded_us_candidates[m.code] = await _load_daily_session_market_candidates(
-                db_conn=db_conn,
-                market=m,
-                overseas_broker=overseas_broker,
-                smart_scanner=smart_scanner,
+
+        async def _load_one(
+            m: MarketInfo,
+        ) -> tuple[str, list[ScanCandidate], tuple[dict[str, Any] | None, list[dict[str, Any]]]]:
+            candidates, holdings = await asyncio.gather(
+                _load_daily_session_market_candidates(
+                    db_conn=db_conn,
+                    market=m,
+                    overseas_broker=overseas_broker,
+                    smart_scanner=smart_scanner,
+                ),
+                _load_daily_session_market_holdings(
+                    broker=broker,
+                    db_conn=db_conn,
+                    market=m,
+                    market_today=datetime.now(m.timezone).date(),
+                    overseas_broker=overseas_broker,
+                ),
             )
-            preloaded_us_holdings[m.code] = await _load_daily_session_market_holdings(
-                broker=broker,
-                db_conn=db_conn,
-                market=m,
-                market_today=datetime.now(m.timezone).date(),
-                overseas_broker=overseas_broker,
-            )
+            return m.code, candidates, holdings
+
+        for code, candidates, holdings in await asyncio.gather(
+            *(_load_one(m) for m in us_markets)
+        ):
+            preloaded_us_candidates[code] = candidates
+            preloaded_us_holdings[code] = holdings
 
         holdings_for_planner = {
             code: holdings
             for code, (_, holdings) in preloaded_us_holdings.items()
         }
+        # All US exchanges share the same timezone; use the first market's local date.
+        us_today = datetime.now(us_markets[0].timezone).date()
         try:
             pregenerated_us_playbooks = (
                 await pre_market_planner.generate_playbooks_multi_exchange(
                     candidates_per_exchange=preloaded_us_candidates,
                     holdings_per_exchange=holdings_for_planner,
+                    today=us_today,
                     session_id="MULTI",
                 )
             )

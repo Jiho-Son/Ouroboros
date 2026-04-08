@@ -235,7 +235,10 @@ class PreMarketPlanner:
         Args:
             candidates_per_exchange: Scanner candidates keyed by exchange code.
             holdings_per_exchange: Current holdings keyed by exchange code.
-            today: Override date (defaults to date.today()). Use market-local date.
+            today: Market-local date for the playbook. Callers should pass
+                ``datetime.now(market.timezone).date()`` — falling back to
+                ``date.today()`` risks a one-day offset when the server runs in
+                a different timezone (e.g. KST server generating US playbooks).
             session_id: Session identifier stamped onto each returned playbook.
 
         Returns:
