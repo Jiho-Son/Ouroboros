@@ -675,6 +675,25 @@ class TelegramCommandHandler:
                             "Disabling Telegram commands for this process. "
                             "Ensure only one instance of The Ouroboros is running at a time.",
                         )
+                    elif resp.status == 429:
+                        # Rate limited — honour the retry_after hint to avoid hammering.
+                        retry_after = 5
+                        try:
+                            body = await resp.json(content_type=None)
+                            retry_after = int(
+                                (body.get("parameters") or {}).get("retry_after", retry_after)
+                            )
+                        except Exception:
+                            pass
+                        logger.warning(
+                            "getUpdates rate-limited (429): retry after %ds", retry_after
+                        )
+                        await asyncio.sleep(retry_after)
+                    elif resp.status in (500, 502, 503, 504):
+                        logger.warning(
+                            "getUpdates transient server error (status=%d) — will retry",
+                            resp.status,
+                        )
                     else:
                         logger.error(
                             "getUpdates API error (status=%d): %s", resp.status, error_text
