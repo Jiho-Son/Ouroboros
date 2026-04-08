@@ -4177,13 +4177,24 @@ async def run_daily_session(
         us_today = datetime.now(us_markets[0].timezone).date()
 
         def _us_market_needs_new_playbook(m: MarketInfo) -> bool:
-            """Return True if *m* has no stored playbook or a refresh is due."""
-            stored = playbook_store.load_latest(
-                us_today, m.code, session_id=get_session_info(m).session_id
-            )
-            return stored is None or _should_force_daily_playbook_refresh(
-                market=m, settings=settings
-            )
+            """Return True if *m* has no stored playbook or a refresh is due.
+
+            On any unexpected error (e.g. get_session_info raises), returns True
+            so the LLM call is allowed as a safe fallback.
+            """
+            try:
+                stored = playbook_store.load_latest(
+                    us_today, m.code, session_id=get_session_info(m).session_id
+                )
+                return stored is None or _should_force_daily_playbook_refresh(
+                    market=m, settings=settings
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to check stored playbook for %s — assuming new playbook needed",
+                    m.code,
+                )
+                return True
 
         if not any(_us_market_needs_new_playbook(m) for m in us_markets):
             logger.info(

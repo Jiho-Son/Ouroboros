@@ -16272,7 +16272,9 @@ class TestUsMultiExchangePlaybookGuard:
         nyse = self._make_us_market("US_NYSE")
 
         playbook_store = MagicMock()
-        playbook_store.load_latest.return_value = self._stored_playbook("US_NASDAQ")
+        playbook_store.load_latest.side_effect = (
+            lambda d, code, session_id: self._stored_playbook(code)
+        )
 
         pre_market_planner = MagicMock()
         pre_market_planner.generate_playbooks_multi_exchange = AsyncMock()
