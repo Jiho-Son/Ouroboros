@@ -925,7 +925,11 @@ class TestGetUpdates:
         mock_resp = AsyncMock()
         mock_resp.status = 429
         mock_resp.text = AsyncMock(
-            return_value='{"ok":false,"error_code":429,"description":"Too Many Requests: retry after 7","parameters":{"retry_after":7}}'
+            return_value=(
+                '{"ok":false,"error_code":429,'
+                '"description":"Too Many Requests: retry after 7",'
+                '"parameters":{"retry_after":7}}'
+            )
         )
         mock_resp.json = AsyncMock(
             return_value={
