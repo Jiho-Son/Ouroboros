@@ -59,6 +59,11 @@ Updated: 2026-03-15
 - `TASK-CODE-013` (`REQ-OPS-006`,`TEST-CODE-009`): OpenAI-compatible LLM provider(`OpenAICompatProvider`)를 `src/brain/llm_client.py`에 추가하고 `build_llm_provider` factory에 `openai_compat` 분기 구현
 - `TEST-CODE-009` (`REQ-OPS-006`): `OpenAICompatProvider` provider wiring 및 config `llm_model` 프로퍼티 테스트
 
+## 구현 단위 G: US 거래소 LLM 통합
+
+- `TASK-CODE-014` (`REQ-OPS-007`,`TEST-CODE-010`): `PreMarketPlanner.generate_playbooks_multi_exchange()`를 추가하여 US 복수 거래소를 단일 LLM 호출로 통합 처리하고, `run_daily_session()`에서 2개 이상 US 거래소 오픈 시 통합 호출 경로를 사용하도록 구현
+- `TEST-CODE-010` (`REQ-OPS-007`): 멀티-익스체인지 통합 LLM 호출 성공/부분실패 fallback/전체실패 fallback 테스트
+
 ## 커밋 규칙
 
 - 커밋 메시지에 `TASK-*` 포함
