@@ -916,6 +916,66 @@ class TestGetUpdates:
         assert call_count == 1
         assert handler._running is False
 
+    @pytest.mark.asyncio
+    async def test_get_updates_429_sleeps_retry_after_and_returns_empty(self) -> None:
+        """429 rate-limit response honoured: sleeps for retry_after seconds, returns []."""
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 429
+        mock_resp.text = AsyncMock(
+            return_value='{"ok":false,"error_code":429,"description":"Too Many Requests: retry after 7","parameters":{"retry_after":7}}'
+        )
+        mock_resp.json = AsyncMock(
+            return_value={
+                "ok": False,
+                "error_code": 429,
+                "description": "Too Many Requests: retry after 7",
+                "parameters": {"retry_after": 7},
+            }
+        )
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        slept: list[float] = []
+
+        async def fake_sleep(seconds: float) -> None:
+            slept.append(seconds)
+
+        with (
+            patch("aiohttp.ClientSession.post", return_value=mock_resp),
+            patch("asyncio.sleep", side_effect=fake_sleep),
+        ):
+            updates = await handler._get_updates()
+
+        assert updates == []
+        assert 7 in slept, f"Expected retry_after=7 sleep, got {slept}"
+
+    @pytest.mark.asyncio
+    async def test_get_updates_502_logs_warning_not_error(self, caplog) -> None:
+        """502 Bad Gateway is logged as WARNING (transient), not ERROR."""
+        import logging
+
+        client = TelegramClient(bot_token="123:abc", chat_id="456", enabled=True)
+        handler = TelegramCommandHandler(client)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 502
+        mock_resp.text = AsyncMock(return_value='{"ok":false,"error_code":502}')
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("aiohttp.ClientSession.post", return_value=mock_resp),
+            caplog.at_level(logging.WARNING),
+        ):
+            updates = await handler._get_updates()
+
+        assert updates == []
+        assert any("502" in r.message and r.levelname == "WARNING" for r in caplog.records)
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+
 
 class TestCommandWithArgs:
     """Test register_command_with_args and argument dispatch."""
