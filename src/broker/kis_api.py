@@ -295,15 +295,14 @@ class KISBroker:
             # issued just before midnight.  Schedule the next refresh for
             # _KIS_POST_MIDNIGHT_BUFFER_SECONDS after midnight so the new token
             # is issued on the new calendar day and valid for the full next day.
-            midnight_refresh_at = (
-                now + self._seconds_until_midnight_kst() + _KIS_POST_MIDNIGHT_BUFFER_SECONDS
-            )
+            secs_to_midnight = self._seconds_until_midnight_kst()
+            midnight_refresh_at = now + secs_to_midnight + _KIS_POST_MIDNIGHT_BUFFER_SECONDS
             if midnight_refresh_at < self._token_refresh_at:
                 self._token_refresh_at = midnight_refresh_at
                 logger.info(
                     "Token refresh scheduled for KST midnight +%.0fs (in %.0fs)",
                     _KIS_POST_MIDNIGHT_BUFFER_SECONDS,
-                    self._seconds_until_midnight_kst() + _KIS_POST_MIDNIGHT_BUFFER_SECONDS,
+                    secs_to_midnight + _KIS_POST_MIDNIGHT_BUFFER_SECONDS,
                 )
             logger.info("Token refreshed successfully")
             return cast(str, self._access_token)
