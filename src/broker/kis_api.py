@@ -6,8 +6,10 @@ Handles token refresh, rate limiting (leaky bucket), and hash key generation.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import ssl
+import zoneinfo
 from typing import Any, cast
 
 import aiohttp
@@ -25,6 +27,14 @@ logger = logging.getLogger(__name__)
 _TOKEN_REFRESH_LEAD_RATIO = 0.1
 _TOKEN_REFRESH_MIN_LEAD_SECONDS = 60.0
 _TOKEN_REFRESH_MAX_LEAD_SECONDS = 1800.0
+
+# KIS invalidates all tokens at midnight KST regardless of when they were
+# issued or what expires_in says.  A token issued just before midnight is also
+# immediately invalidated, so we must refresh AFTER midnight, not before.
+# Wait this many seconds past midnight before requesting a new token so that
+# KIS has completed its reset before we ask for a fresh one.
+_KIS_POST_MIDNIGHT_BUFFER_SECONDS = 30.0
+_KIS_TIMEZONE = zoneinfo.ZoneInfo("Asia/Seoul")
 
 
 def _normalize_domestic_exchange_code(value: Any) -> str:
@@ -163,6 +173,38 @@ class KISBroker:
             return issued_at + ttl
         return issued_at + ttl - lead_time
 
+    @staticmethod
+    def _seconds_until_midnight_kst() -> float:
+        """Return seconds until the next midnight KST (minimum 1 second)."""
+        now_kst = datetime.datetime.now(tz=_KIS_TIMEZONE)
+        next_midnight = (now_kst + datetime.timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        return max(1.0, (next_midnight - now_kst).total_seconds())
+
+    def invalidate_token(self) -> None:
+        """Force token expiry so the next _ensure_token() call re-issues.
+
+        Call this when an API response indicates the server has invalidated the
+        token (e.g. EGW00123 — 기간이 만료된 token) before our local expiry
+        timestamp.  Resetting _token_expires_at to 0 makes _has_usable_token
+        return False on the next call, which triggers a fresh token fetch.
+        """
+        self._token_expires_at = 0.0
+        self._token_refresh_at = 0.0
+
+    def _maybe_invalidate_token(self, text: str) -> None:
+        """Invalidate cached token if *text* signals a server-side expiry.
+
+        KIS returns EGW00123 when the token has been invalidated server-side
+        (e.g. midnight KST reset) before our local _token_expires_at.  Calling
+        this before re-raising a ConnectionError ensures that the next retry
+        (or the next trading cycle) will fetch a fresh token.
+        """
+        if "EGW00123" in text:
+            logger.warning("KIS token invalidated server-side (EGW00123); forcing token refresh")
+            self.invalidate_token()
+
     def _has_unexpired_token(self, *, now: float) -> bool:
         return self._access_token is not None and now < self._token_expires_at
 
@@ -249,6 +291,20 @@ class KISBroker:
                 issued_at=now,
                 expires_in=expires_in,
             )
+            # KIS invalidates all tokens at midnight KST — including tokens
+            # issued just before midnight.  Schedule the next refresh for
+            # _KIS_POST_MIDNIGHT_BUFFER_SECONDS after midnight so the new token
+            # is issued on the new calendar day and valid for the full next day.
+            midnight_refresh_at = (
+                now + self._seconds_until_midnight_kst() + _KIS_POST_MIDNIGHT_BUFFER_SECONDS
+            )
+            if midnight_refresh_at < self._token_refresh_at:
+                self._token_refresh_at = midnight_refresh_at
+                logger.info(
+                    "Token refresh scheduled for KST midnight +%.0fs (in %.0fs)",
+                    _KIS_POST_MIDNIGHT_BUFFER_SECONDS,
+                    self._seconds_until_midnight_kst() + _KIS_POST_MIDNIGHT_BUFFER_SECONDS,
+                )
             logger.info("Token refreshed successfully")
             return cast(str, self._access_token)
 
@@ -349,6 +405,7 @@ class KISBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._maybe_invalidate_token(text)
                     raise ConnectionError(f"get_orderbook failed ({resp.status}): {text}")
                 return cast(dict[str, Any], await resp.json())
         except (TimeoutError, aiohttp.ClientError) as exc:
@@ -459,6 +516,7 @@ class KISBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._maybe_invalidate_token(text)
                     raise ConnectionError(f"get_current_price failed ({resp.status}): {text}")
                 data = await resp.json()
                 out = data.get("output", {})
@@ -512,6 +570,7 @@ class KISBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._maybe_invalidate_token(text)
                     raise ConnectionError(f"get_balance failed ({resp.status}): {text}")
                 return cast(dict[str, Any], await resp.json())
         except (TimeoutError, aiohttp.ClientError) as exc:
@@ -594,6 +653,7 @@ class KISBroker:
             async with session.post(url, headers=headers, json=body) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._maybe_invalidate_token(text)
                     raise ConnectionError(f"send_order failed ({resp.status}): {text}")
                 data = cast(dict[str, Any], await resp.json())
                 logger.info(
@@ -679,6 +739,7 @@ class KISBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._maybe_invalidate_token(text)
                     raise ConnectionError(f"fetch_market_rankings failed ({resp.status}): {text}")
                 data = await resp.json()
 
@@ -746,6 +807,7 @@ class KISBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._maybe_invalidate_token(text)
                     raise ConnectionError(
                         f"get_domestic_pending_orders failed ({resp.status}): {text}"
                     )
@@ -815,6 +877,7 @@ class KISBroker:
             async with session.post(url, headers=headers, json=body) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._maybe_invalidate_token(text)
                     raise ConnectionError(f"cancel_domestic_order failed ({resp.status}): {text}")
                 return cast(dict[str, Any], await resp.json())
         except (TimeoutError, aiohttp.ClientError) as exc:
@@ -864,6 +927,7 @@ class KISBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._maybe_invalidate_token(text)
                     raise ConnectionError(f"get_daily_prices failed ({resp.status}): {text}")
                 data = await resp.json()
 
