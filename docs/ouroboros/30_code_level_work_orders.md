@@ -69,6 +69,11 @@ Updated: 2026-03-15
 - `TASK-CODE-015` (`REQ-OPS-008`,`TEST-CODE-011`): `run_daily_session()`의 US 멀티 익스체인지 블록에 guard 추가 — 모든 거래소에 당일 유효 플레이북이 존재하고 `force_refresh` 조건이 없으면 `generate_playbooks_multi_exchange()` 호출을 생략
 - `TEST-CODE-011` (`REQ-OPS-008`): 플레이북 전체 존재 시 LLM 생략 / 일부 누락 시 LLM 호출 / `force_refresh` 시 LLM 호출 테스트
 
+## 구현 단위 I: KIS 자정 KST 토큰 만료 대응
+
+- `TASK-CODE-016` (`REQ-OPS-009`,`TEST-CODE-012`): `KISBroker`에 `invalidate_token()`/`_maybe_invalidate_token()` 추가, 토큰 발급 시 자정 KST +30s 선제 갱신 스케줄 적용, `kis_api.py` 및 `overseas.py` 전체 API 에러 핸들러에 EGW00123 감지 후 토큰 무효화 적용
+- `TEST-CODE-012` (`REQ-OPS-009`): `invalidate_token()` 후 `_has_usable_token()` False 반환 / EGW00123 포함 응답에서 `_maybe_invalidate_token()` 호출 시 토큰 무효화 / 자정 KST 선제 갱신 스케줄 계산 테스트
+
 ## 커밋 규칙
 
 - 커밋 메시지에 `TASK-*` 포함

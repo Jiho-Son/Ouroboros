@@ -91,6 +91,7 @@ class OverseasBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._broker._maybe_invalidate_token(text)
                     raise ConnectionError(f"get_daily_prices failed ({resp.status}): {text}")
                 data = await resp.json()
 
@@ -151,6 +152,7 @@ class OverseasBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._broker._maybe_invalidate_token(text)
                     raise ConnectionError(f"get_overseas_price failed ({resp.status}): {text}")
                 return await resp.json()
         except (TimeoutError, aiohttp.ClientError) as exc:
@@ -181,6 +183,7 @@ class OverseasBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._broker._maybe_invalidate_token(text)
                     raise ConnectionError(
                         f"get_overseas_orderbook failed ({resp.status}): {text}"
                     )
@@ -244,6 +247,7 @@ class OverseasBroker:
                             ranking_type,
                         )
                         return []
+                    self._broker._maybe_invalidate_token(text)
                     raise ConnectionError(f"fetch_overseas_rankings failed ({resp.status}): {text}")
 
                 data = await resp.json()
@@ -295,6 +299,7 @@ class OverseasBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._broker._maybe_invalidate_token(text)
                     raise ConnectionError(f"get_overseas_balance failed ({resp.status}): {text}")
                 return await resp.json()
         except (TimeoutError, aiohttp.ClientError) as exc:
@@ -322,6 +327,7 @@ class OverseasBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._broker._maybe_invalidate_token(text)
                     raise ConnectionError(
                         f"get_present_balance_fx_rate failed ({resp.status}): {text}"
                     )
@@ -371,6 +377,7 @@ class OverseasBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._broker._maybe_invalidate_token(text)
                     raise ConnectionError(
                         f"get_overseas_buying_power failed ({resp.status}): {text}"
                     )
@@ -433,6 +440,7 @@ class OverseasBroker:
             async with session.post(url, headers=headers, json=body) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._broker._maybe_invalidate_token(text)
                     raise ConnectionError(f"send_overseas_order failed ({resp.status}): {text}")
                 data = await resp.json()
                 rt_cd = data.get("rt_cd", "")
@@ -499,6 +507,7 @@ class OverseasBroker:
             async with session.get(url, headers=headers, params=params) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._broker._maybe_invalidate_token(text)
                     raise ConnectionError(
                         f"get_overseas_pending_orders failed ({resp.status}): {text}"
                     )
@@ -566,6 +575,7 @@ class OverseasBroker:
             async with session.post(url, headers=headers, json=body) as resp:
                 if resp.status != 200:
                     text = await resp.text()
+                    self._broker._maybe_invalidate_token(text)
                     raise ConnectionError(f"cancel_overseas_order failed ({resp.status}): {text}")
                 return await resp.json()
         except (TimeoutError, aiohttp.ClientError) as exc:

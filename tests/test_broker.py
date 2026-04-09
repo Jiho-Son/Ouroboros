@@ -306,6 +306,81 @@ class TestTokenManagement:
 
         await broker.close()
 
+    # ------------------------------------------------------------------
+    # TEST-CODE-012: KIS midnight KST token expiry handling
+    # ------------------------------------------------------------------
+
+    def test_invalidate_token_makes_token_unusable(self, settings):
+        """invalidate_token() must make _has_usable_token return False (REQ-OPS-009)."""
+        broker = KISBroker(settings)
+        now = asyncio.get_event_loop().time()
+        broker._access_token = "tok"
+        broker._token_expires_at = now + 3600
+        broker._token_refresh_at = now + 1800
+
+        assert broker._has_usable_token(now=now)
+        broker.invalidate_token()
+        assert not broker._has_usable_token(now=now)
+
+    def test_maybe_invalidate_token_clears_on_egw00123(self, settings):
+        """_maybe_invalidate_token() must zero out expiry when EGW00123 present (REQ-OPS-009)."""
+        broker = KISBroker(settings)
+        now = asyncio.get_event_loop().time()
+        broker._access_token = "tok"
+        broker._token_expires_at = now + 3600
+        broker._token_refresh_at = now + 1800
+
+        broker._maybe_invalidate_token(
+            '{"rt_cd":"1","msg_cd":"EGW00123","msg1":"기간이 만료된 token 입니다."}'
+        )
+
+        assert broker._token_expires_at == 0.0
+        assert broker._token_refresh_at == 0.0
+
+    def test_maybe_invalidate_token_ignores_other_errors(self, settings):
+        """_maybe_invalidate_token() must not touch the token for unrelated errors."""
+        broker = KISBroker(settings)
+        now = asyncio.get_event_loop().time()
+        broker._access_token = "tok"
+        broker._token_expires_at = now + 3600
+        broker._token_refresh_at = now + 1800
+
+        broker._maybe_invalidate_token(
+            '{"rt_cd":"1","msg_cd":"EGW00133","msg1":"초당 거래건수를 초과하였습니다."}'
+        )
+
+        assert broker._token_expires_at == now + 3600
+        assert broker._token_refresh_at == now + 1800
+
+    @pytest.mark.asyncio
+    async def test_token_refresh_at_clamped_to_midnight_kst(self, settings):
+        """_token_refresh_at must be clamped to midnight KST +30s when earlier (REQ-OPS-009).
+
+        Force secs_to_midnight=60 so the clamp (60+30=90s) is always earlier than
+        the standard TTL-based deadline (~84600s), making the assertion time-independent.
+        """
+        broker = KISBroker(settings)
+
+        mock_resp = AsyncMock()
+        mock_resp.status = 200
+        mock_resp.json = AsyncMock(
+            return_value={"access_token": "tok_new", "expires_in": 86400}
+        )
+        mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+        mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+        # Force "60 seconds until midnight" so clamp always fires
+        with patch.object(KISBroker, "_seconds_until_midnight_kst", return_value=60.0):
+            with patch("aiohttp.ClientSession.post", return_value=mock_resp):
+                before = asyncio.get_event_loop().time()
+                await broker._ensure_token()
+                after = asyncio.get_event_loop().time()
+
+        # Expected: before+90 <= _token_refresh_at <= after+90  (60s + 30s buffer, ±1s)
+        assert before + 90.0 - 1 <= broker._token_refresh_at <= after + 90.0 + 1
+
+        await broker.close()
+
 
 # ---------------------------------------------------------------------------
 # Network Error Handling
