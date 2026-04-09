@@ -350,10 +350,11 @@ class TestTokenManagement:
 
     @pytest.mark.asyncio
     async def test_token_refresh_at_clamped_to_midnight_kst(self, settings):
-        """After token refresh, _token_refresh_at must not exceed midnight KST +30s (REQ-OPS-009)."""
-        import datetime
-        import zoneinfo
+        """_token_refresh_at must be clamped to midnight KST +30s when that is earlier (REQ-OPS-009).
 
+        Force secs_to_midnight=60 so the clamp (60+30=90s) is always earlier than
+        the standard TTL-based deadline (~84600s), making the assertion time-independent.
+        """
         broker = KISBroker(settings)
 
         mock_resp = AsyncMock()
@@ -364,20 +365,15 @@ class TestTokenManagement:
         mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
         mock_resp.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("aiohttp.ClientSession.post", return_value=mock_resp):
-            await broker._ensure_token()
+        # Force "60 seconds until midnight" so clamp always fires
+        with patch.object(KISBroker, "_seconds_until_midnight_kst", return_value=60.0):
+            with patch("aiohttp.ClientSession.post", return_value=mock_resp):
+                before = asyncio.get_event_loop().time()
+                await broker._ensure_token()
+                after = asyncio.get_event_loop().time()
 
-        KST = zoneinfo.ZoneInfo("Asia/Seoul")
-        now_kst = datetime.datetime.now(tz=KST)
-        next_midnight = (now_kst + datetime.timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        secs_to_midnight = (next_midnight - now_kst).total_seconds()
-
-        loop_now = asyncio.get_event_loop().time()
-        expected_midnight_refresh = loop_now + secs_to_midnight + 30.0
-        # Allow 5s tolerance for test execution time
-        assert broker._token_refresh_at <= expected_midnight_refresh + 5
+        # Expected: before+90 <= _token_refresh_at <= after+90  (60s + 30s buffer, ±1s)
+        assert before + 90.0 - 1 <= broker._token_refresh_at <= after + 90.0 + 1
 
         await broker.close()
 
