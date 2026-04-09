@@ -330,7 +330,9 @@ class TestTokenManagement:
         broker._token_expires_at = now + 3600
         broker._token_refresh_at = now + 1800
 
-        broker._maybe_invalidate_token('{"rt_cd":"1","msg_cd":"EGW00123","msg1":"기간이 만료된 token 입니다."}')
+        broker._maybe_invalidate_token(
+            '{"rt_cd":"1","msg_cd":"EGW00123","msg1":"기간이 만료된 token 입니다."}'
+        )
 
         assert broker._token_expires_at == 0.0
         assert broker._token_refresh_at == 0.0
@@ -343,14 +345,16 @@ class TestTokenManagement:
         broker._token_expires_at = now + 3600
         broker._token_refresh_at = now + 1800
 
-        broker._maybe_invalidate_token('{"rt_cd":"1","msg_cd":"EGW00133","msg1":"초당 거래건수를 초과하였습니다."}')
+        broker._maybe_invalidate_token(
+            '{"rt_cd":"1","msg_cd":"EGW00133","msg1":"초당 거래건수를 초과하였습니다."}'
+        )
 
         assert broker._token_expires_at == now + 3600
         assert broker._token_refresh_at == now + 1800
 
     @pytest.mark.asyncio
     async def test_token_refresh_at_clamped_to_midnight_kst(self, settings):
-        """_token_refresh_at must be clamped to midnight KST +30s when that is earlier (REQ-OPS-009).
+        """_token_refresh_at must be clamped to midnight KST +30s when earlier (REQ-OPS-009).
 
         Force secs_to_midnight=60 so the clamp (60+30=90s) is always earlier than
         the standard TTL-based deadline (~84600s), making the assertion time-independent.
